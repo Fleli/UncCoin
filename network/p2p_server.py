@@ -1,5 +1,6 @@
 import asyncio
 import json
+import hashlib
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -21,11 +22,13 @@ class P2PServer:
     port: int
     on_transaction: Callable[[Transaction], bool] | None = None
     on_block: Callable[[Block], str] | None = None
+    on_wallet_message: Callable[[dict], bool] | None = None
     on_chain_request: Callable[[], list[Block]] | None = None
     on_chain_response: Callable[[list[Block]], None] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     seen_block_hashes: set[str] = field(default_factory=set)
+    seen_wallet_message_ids: set[str] = field(default_factory=set)
     server: asyncio.base_events.Server | None = field(default=None, init=False)
     active_connections: dict[PeerAddress, asyncio.StreamWriter] = field(
         default_factory=dict,
@@ -124,6 +127,30 @@ class P2PServer:
             }
         )
         print(f"Broadcast block {block_hash[:12]} at height {block.block_id}")
+
+    async def broadcast_wallet_message(self, wallet_message: dict) -> None:
+        message_id = wallet_message["message_id"]
+        if message_id in self.seen_wallet_message_ids:
+            print(f"Message {message_id[:12]} already seen. Skipping broadcast.")
+            return
+
+        if self.on_wallet_message is not None and not self.on_wallet_message(wallet_message):
+            print(f"Rejected local message {message_id[:12]}.")
+            return
+
+        self.seen_wallet_message_ids.add(message_id)
+        await self._broadcast_to_peers(
+            {
+                "type": "wallet_message",
+                "message_id": message_id,
+                "message": wallet_message,
+            }
+        )
+        print(
+            "Broadcast message "
+            f"{message_id[:12]} from {wallet_message['sender']} "
+            f"to {wallet_message['receiver']}"
+        )
 
     async def _broadcast_to_peers(
         self,
@@ -311,6 +338,22 @@ class P2PServer:
             print(f"Rejected block {block_hash[:12]} from {peer.host}:{peer.port}")
             return peer
 
+        if message_type == "wallet_message":
+            wallet_message = message["message"]
+            message_id = message.get("message_id", _wallet_message_id(wallet_message))
+
+            if message_id in self.seen_wallet_message_ids:
+                print(f"Ignoring duplicate message {message_id[:12]}")
+                return peer
+
+            if self.on_wallet_message is not None and not self.on_wallet_message(wallet_message):
+                print(f"Rejected message {message_id[:12]} from {peer.host}:{peer.port}")
+                return peer
+
+            self.seen_wallet_message_ids.add(message_id)
+            await self._broadcast_to_peers(message, exclude_peer=peer)
+            return peer
+
         print(f"Received {message_type} from {peer.host}:{peer.port}: {message}")
         return peer
 
@@ -355,3 +398,9 @@ class P2PServer:
     ) -> None:
         writer.write(json.dumps(message).encode("utf-8") + b"\n")
         await writer.drain()
+
+
+def _wallet_message_id(wallet_message: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(wallet_message, sort_keys=True).encode("utf-8")
+    ).hexdigest()

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -39,6 +40,7 @@ class Node:
             port=self.port,
             on_transaction=self._handle_incoming_transaction,
             on_block=self._handle_incoming_block,
+            on_wallet_message=self._handle_wallet_message,
             on_chain_request=self._handle_chain_request,
             on_chain_response=self._handle_chain_response,
         )
@@ -71,6 +73,9 @@ class Node:
 
     async def broadcast_block(self, block: Block) -> None:
         await self.p2p_server.broadcast_block(block)
+
+    async def broadcast_wallet_message(self, wallet_message: dict) -> None:
+        await self.p2p_server.broadcast_wallet_message(wallet_message)
 
     async def discover_peers(self) -> None:
         await self.p2p_server.discover_peers()
@@ -109,6 +114,29 @@ class Node:
         )
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
+
+    def create_signed_wallet_message(self, receiver: str, content: str) -> dict:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to send messages.")
+
+        timestamp = datetime.now().isoformat()
+        message_id = str(uuid.uuid4())
+        payload = (
+            f"{self.wallet.address}|{receiver}|{content}|{timestamp}|{message_id}"
+        )
+        signature = self.wallet.sign_message(payload)
+        return {
+            "message_id": message_id,
+            "sender": self.wallet.address,
+            "receiver": receiver,
+            "content": content,
+            "timestamp": timestamp,
+            "sender_public_key": {
+                "exponent": str(self.wallet.public_key[0]),
+                "modulus": str(self.wallet.public_key[1]),
+            },
+            "signature": signature,
+        }
 
     def default_block_description(self, prefix: str) -> str:
         if self.wallet is None or not self.wallet.name:
@@ -196,6 +224,7 @@ class Node:
             'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
             '"discover" to ask peers for more peers, "tx receiver amount fee" '
+            '"msg wallet content" to send a wallet message, '
             'to broadcast a transaction, "mine [description]" to mine pending transactions, '
             '"automine [description]" to mine continuously, "stop" to stop automining, '
             '"blockchain" to print the canonical chain, "balance [address]" to print a balance, '
@@ -272,6 +301,15 @@ class Node:
                     await self.broadcast_transaction(transaction)
                 except ValueError as error:
                     print(f"Invalid tx command: {error}")
+                continue
+
+            if line.startswith("msg "):
+                try:
+                    receiver, content = line[len("msg "):].split(" ", maxsplit=1)
+                    wallet_message = self.create_signed_wallet_message(receiver, content)
+                    await self.broadcast_wallet_message(wallet_message)
+                except ValueError as error:
+                    print(f"Invalid msg command: {error}")
                 continue
 
             if line.startswith("mine"):
@@ -353,6 +391,46 @@ class Node:
                 accepted_blocks += 1
 
         print(f"Synchronized {accepted_blocks} block(s) from peer.")
+
+    def _handle_wallet_message(self, wallet_message: dict) -> bool:
+        sender_public_key_data = wallet_message.get("sender_public_key")
+        signature = wallet_message.get("signature")
+        sender = wallet_message.get("sender", "")
+        receiver = wallet_message.get("receiver", "")
+        content = wallet_message.get("content", "")
+        timestamp = wallet_message.get("timestamp", "")
+        message_id = wallet_message.get("message_id", "")
+
+        if (
+            not sender_public_key_data
+            or signature is None
+            or not sender
+            or not receiver
+            or not content
+            or not timestamp
+            or not message_id
+        ):
+            return False
+
+        sender_public_key = (
+            int(sender_public_key_data["exponent"]),
+            int(sender_public_key_data["modulus"]),
+        )
+        if sender != Wallet.address_from_public_key(sender_public_key):
+            return False
+
+        payload = f"{sender}|{receiver}|{content}|{timestamp}|{message_id}"
+        if not Wallet.verify_signature_with_public_key(
+            message=payload,
+            signature=signature,
+            public_key=sender_public_key,
+        ):
+            return False
+
+        if self.wallet is not None and receiver == self.wallet.address:
+            print(f"\nMessage from {sender}: {content}", flush=True)
+
+        return True
 
     def _ensure_genesis_block(self) -> None:
         if self.blockchain is None or self.blockchain.blocks_by_hash:

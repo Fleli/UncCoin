@@ -1,5 +1,30 @@
 # UncCoin
 
+UncCoin is a toy proof-of-work cryptocurrency written in Python, with the mining loop moved into C for speed.
+
+GitHub repository:
+
+- https://github.com/Fleli/UncCoin
+
+## What It Has
+
+- signed transactions
+- balances and nonces
+- fixed mining rewards and miner fees
+- proof of work
+- P2P transaction and block relay
+- chain sync on connect
+- orphan block handling
+- canonical-chain persistence
+- interactive node CLI
+
+## Docs
+
+- [GettingStarted.md](/Users/frederikedvardsen/Desktop/unccoin/GettingStarted.md)
+  First local setup, wallet creation, native build, and running nodes.
+- [Tailscale.md](/Users/frederikedvardsen/Desktop/unccoin/Tailscale.md)
+  Running UncCoin across multiple devices over Tailscale.
+
 ## Interactive Node Commands
 
 ```text
@@ -7,6 +32,7 @@ peers
 known-peers
 discover
 tx <receiver> <amount> <fee>
+msg <wallet> <content>
 mine [description]
 automine [description]
 stop
@@ -18,29 +44,14 @@ quit
 <raw json>
 ```
 
-## Commands
+## Local Convenience Commands
+
+These are mainly for local testing on one machine.
 
 ```bash
-make wallet NAME=alice
-make show-wallet NAME=alice
+make wallet name=alice
+make show-wallet name=alice
 make 9000
 make 9001
 make 9002
-```
-
-## Scripts
-
-```bash
-./scripts/build_native_pow.sh
-./scripts/build_native_pow.sh --force
-./scripts/run_node.sh <wallet-name> <port> [peer-host:peer-port ...]
-```
-
-## Direct CLI
-
-```bash
-python3 -m wallet.cli create --name alice
-python3 -m wallet.cli show --name alice
-python3 -m core.native_pow --force
-python3 -m node.cli --wallet-name <wallet-name> --port <port> [--peer <host:port> ...]
 ```
