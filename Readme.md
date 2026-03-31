@@ -28,12 +28,19 @@ make 9001
 make 9002
 ```
 
+## Scripts
+
+```bash
+./scripts/build_native_pow.sh
+./scripts/build_native_pow.sh --force
+./scripts/run_node.sh <wallet-name> <port> [peer-host:peer-port ...]
+```
+
 ## Direct CLI
 
 ```bash
 python3 -m wallet.cli create --name alice
 python3 -m wallet.cli show --name alice
-python3 -m node.cli --port 9000 --wallet-name alice
-python3 -m node.cli --port 9001 --peer 127.0.0.1:9000 --wallet-name bob
-python3 -m node.cli --port 9002 --peer 127.0.0.1:9000 --wallet-name charlie
+python3 -m core.native_pow --force
+python3 -m node.cli --wallet-name <wallet-name> --port <port> [--peer <host:port> ...]
 ```

@@ -1,4 +1,5 @@
 import importlib.util
+import argparse
 import platform
 import subprocess
 import sysconfig
@@ -22,14 +23,19 @@ def mine_pow(
     return module.mine_pow(prefix, difficulty_bits, start_nonce, progress_interval)
 
 
+def build_native_pow_extension(force: bool = False) -> Path:
+    if force or _extension_needs_rebuild():
+        _build_native_pow_extension()
+    return EXTENSION_PATH
+
+
 def _load_native_pow_module():
     global _native_pow_module
 
     if _native_pow_module is not None:
         return _native_pow_module
 
-    if _extension_needs_rebuild():
-        _build_native_pow_extension()
+    build_native_pow_extension()
 
     spec = importlib.util.spec_from_file_location(MODULE_NAME, EXTENSION_PATH)
     if spec is None or spec.loader is None:
@@ -93,3 +99,20 @@ def _build_native_pow_extension() -> None:
         check=True,
         cwd=ROOT_DIR,
     )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build or load the native proof-of-work module.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild the native module even if it looks up to date.",
+    )
+    args = parser.parse_args()
+
+    extension_path = build_native_pow_extension(force=args.force)
+    print(f"Native proof-of-work module ready at {extension_path}")
+
+
+if __name__ == "__main__":
+    main()
