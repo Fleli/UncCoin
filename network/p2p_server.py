@@ -1,13 +1,10 @@
-import argparse
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Callable
 
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
-from wallet import Wallet, load_wallet
 
 
 @dataclass(frozen=True)
@@ -20,9 +17,7 @@ class PeerAddress:
 class P2PServer:
     host: str
     port: int
-    wallet: Wallet | None = None
     on_transaction: Callable[[Transaction], None] | None = None
-    get_next_nonce: Callable[[str], int] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     server: asyncio.base_events.Server | None = field(default=None, init=False)
@@ -38,9 +33,6 @@ class P2PServer:
             self.port,
         )
         print(f"P2P server listening on {self.host}:{self.port}")
-        if self.wallet is not None:
-            wallet_name = self.wallet.name or "unnamed"
-            print(f"Loaded wallet '{wallet_name}' with address {self.wallet.address}")
 
     async def serve_forever(self) -> None:
         if self.server is None:
@@ -275,144 +267,3 @@ class P2PServer:
     ) -> None:
         writer.write(json.dumps(message).encode("utf-8") + b"\n")
         await writer.drain()
-
-
-async def _interactive_console(server: P2PServer) -> None:
-    print("Interactive mode enabled.")
-    print(
-        'Enter JSON to broadcast, "/send host:port {...}" for a direct message, '
-        '"/peers" to list connected peers, "/known-peers" to list discovered peers, '
-        '"/discover" to ask peers for more peers, "/tx receiver amount fee" '
-        'to broadcast a transaction, "/clear" to clear the screen, or "/quit" to exit.'
-    )
-
-    while True:
-        try:
-            raw_input_line = await asyncio.to_thread(input, "p2p> ")
-        except EOFError:
-            return
-
-        line = raw_input_line.strip()
-        if not line:
-            continue
-
-        if line == "/quit":
-            return
-
-        if line == "/clear":
-            print("\033[2J\033[H", end="")
-            continue
-
-        if line == "/peers":
-            peers = server.list_peers()
-            print("Connected peers:" if peers else "No connected peers.")
-            for peer in peers:
-                print(peer)
-            continue
-
-        if line == "/known-peers":
-            peers = server.list_known_peers()
-            print("Known peers:" if peers else "No known peers.")
-            for peer in peers:
-                print(peer)
-            continue
-
-        if line == "/discover":
-            await server.discover_peers()
-            print("Peer discovery request sent.")
-            continue
-
-        if line.startswith("/tx "):
-            if server.wallet is None:
-                print("A loaded wallet is required to create signed transactions.")
-                continue
-
-            try:
-                receiver, amount, fee = line[len("/tx "):].split(" ", maxsplit=2)
-                transaction = Transaction(
-                    sender=server.wallet.address,
-                    receiver=receiver,
-                    amount=amount,
-                    fee=fee,
-                    timestamp=datetime.now(),
-                    nonce=(
-                        server.get_next_nonce(server.wallet.address)
-                        if server.get_next_nonce is not None
-                        else 0
-                    ),
-                    sender_public_key=server.wallet.public_key,
-                )
-                transaction.signature = server.wallet.sign_message(transaction.signing_payload())
-                await server.broadcast_transaction(transaction)
-            except ValueError as error:
-                print(f"Invalid /tx command: {error}")
-            continue
-
-        if line.startswith("/send "):
-            try:
-                peer_part, message_part = line[len("/send "):].split(" ", maxsplit=1)
-                host, port = peer_part.split(":", maxsplit=1)
-                message = json.loads(message_part)
-                await server.send_to_peer(host, int(port), message)
-                print(f"Sent direct message to {host}:{port}")
-            except (ValueError, json.JSONDecodeError) as error:
-                print(f"Invalid /send command: {error}")
-            continue
-
-        try:
-            message = json.loads(line)
-        except json.JSONDecodeError as error:
-            print(f"Invalid JSON: {error}")
-            continue
-
-        await server.broadcast(message)
-        print("Broadcast message sent.")
-
-
-async def _run_from_cli() -> None:
-    parser = argparse.ArgumentParser(description="Run an UncCoin P2P server.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument(
-        "--peer",
-        action="append",
-        default=[],
-        help="Optional peer in host:port form. Can be passed multiple times.",
-    )
-    parser.add_argument(
-        "--no-interactive",
-        action="store_true",
-        help="Disable the interactive JSON console.",
-    )
-    parser.add_argument(
-        "--wallet-name",
-        help="Optional wallet name to load from the wallets directory.",
-    )
-    args = parser.parse_args()
-
-    wallet = load_wallet(args.wallet_name) if args.wallet_name else None
-    server = P2PServer(host=args.host, port=args.port, wallet=wallet)
-    await server.start()
-
-    for peer in args.peer:
-        peer_host, peer_port = peer.split(":", maxsplit=1)
-        await server.connect_to_peer(peer_host, int(peer_port))
-
-    server_task = asyncio.create_task(server.serve_forever())
-
-    try:
-        if args.no_interactive:
-            await server_task
-        else:
-            await _interactive_console(server)
-    finally:
-        server_task.cancel()
-        await server.stop()
-
-
-def main() -> None:
-    asyncio.run(_run_from_cli())
-
-
-if __name__ == "__main__":
-    main()

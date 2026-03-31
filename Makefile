@@ -18,7 +18,7 @@ show-wallet:
 	$(PYTHON) -m wallet.cli show --name $(NAME)
 
 9000:
-	$(PYTHON) -m network.p2p_server --port 9000 --wallet-name alice
+	$(PYTHON) -m node.cli --port 9000 --wallet-name alice
 
 9001:
-	$(PYTHON) -m network.p2p_server --port 9001 --peer 127.0.0.1:9000 --wallet-name bob
+	$(PYTHON) -m node.cli --port 9001 --peer 127.0.0.1:9000 --wallet-name bob

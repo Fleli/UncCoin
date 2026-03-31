@@ -27,6 +27,6 @@ make 9001
 ```bash
 python3 -m wallet.cli create --name alice
 python3 -m wallet.cli show --name alice
-python3 -m network.p2p_server --port 9000 --wallet-name alice
-python3 -m network.p2p_server --port 9001 --peer 127.0.0.1:9000 --wallet-name bob
+python3 -m node.cli --port 9000 --wallet-name alice
+python3 -m node.cli --port 9001 --peer 127.0.0.1:9000 --wallet-name bob
 ```
