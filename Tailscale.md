@@ -106,6 +106,8 @@ Once connected, useful interactive commands include:
 peers
 known-peers
 discover
+self
+add-peer <host:port>
 tx <receiver> <amount> <fee>
 msg <wallet> <content>
 mine [description]

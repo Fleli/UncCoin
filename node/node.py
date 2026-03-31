@@ -3,6 +3,7 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from config import DEFAULT_DIFFICULTY_BITS
 from core.block import Block, proof_of_work
@@ -62,8 +63,11 @@ class Node:
         await self.p2p_server.stop()
 
     async def connect_to_peer(self, host: str, port: int) -> None:
-        await self.p2p_server.connect_to_peer(host, port)
-        await self.p2p_server.request_chain(host, port)
+        try:
+            await self.p2p_server.connect_to_peer(host, port)
+            await self.p2p_server.request_chain(host, port)
+        except OSError as error:
+            raise ValueError(f"Could not connect to peer {host}:{port}: {error.strerror or error}") from error
 
     async def broadcast(self, message: dict) -> None:
         await self.p2p_server.broadcast(message)
@@ -103,11 +107,17 @@ class Node:
         if self.wallet is None:
             raise ValueError("A loaded wallet is required to create signed transactions.")
 
+        try:
+            parsed_amount = Decimal(str(amount))
+            parsed_fee = Decimal(str(fee))
+        except InvalidOperation as error:
+            raise ValueError("Amount and fee must be valid decimal numbers.") from error
+
         transaction = Transaction(
             sender=self.wallet.address,
             receiver=receiver,
-            amount=amount,
-            fee=fee,
+            amount=parsed_amount,
+            fee=parsed_fee,
             timestamp=datetime.now(),
             nonce=self.get_next_nonce(self.wallet.address),
             sender_public_key=self.wallet.public_key,
@@ -223,7 +233,9 @@ class Node:
         print(
             'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
-            '"discover" to ask peers for more peers, "tx receiver amount fee" '
+            '"discover" to ask peers for more peers, "add-peer host:port" to connect manually, '
+            '"self" to print this node\'s address, '
+            '"tx receiver amount fee" '
             '"msg wallet content" to send a wallet message, '
             'to broadcast a transaction, "mine [description]" to mine pending transactions, '
             '"automine [description]" to mine continuously, "stop" to stop automining, '
@@ -265,6 +277,19 @@ class Node:
             if line == "discover":
                 await self.discover_peers()
                 print("Peer discovery request sent.")
+                continue
+
+            if line == "self":
+                print(self.self_peer_address())
+                continue
+
+            if line.startswith("add-peer "):
+                try:
+                    host, port = line[len("add-peer "):].split(":", maxsplit=1)
+                    await self.connect_to_peer(host, int(port))
+                    print(f"Connected to peer {host}:{port}")
+                except ValueError as error:
+                    print(f"Invalid add-peer command: {error}")
                 continue
 
             if line == "stop":
@@ -488,6 +513,9 @@ class Node:
         if self.blockchain is None:
             return "0.0"
         return str(self.blockchain.get_balance(address))
+
+    def self_peer_address(self) -> str:
+        return f"{self.host}:{self.port}"
 
     def _accept_or_store_block(self, block: Block) -> str:
         assert self.blockchain is not None

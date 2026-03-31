@@ -35,7 +35,10 @@ async def _run_from_cli() -> None:
         print("Connecting to peers...", flush=True)
     for peer in args.peer:
         peer_host, peer_port = peer.split(":", maxsplit=1)
-        await node.connect_to_peer(peer_host, int(peer_port))
+        try:
+            await node.connect_to_peer(peer_host, int(peer_port))
+        except ValueError as error:
+            print(error, flush=True)
 
     print("Node ready.", flush=True)
 
