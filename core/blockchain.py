@@ -102,7 +102,12 @@ class Blockchain:
 
         self.pending_transactions.append(transaction)
 
-    def mine_pending_transactions(self, miner_address: str, description: str) -> Block:
+    def mine_pending_transactions(
+        self,
+        miner_address: str,
+        description: str,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> Block:
         if self.main_tip_hash is None:
             raise ValueError("Genesis block must be created before mining.")
 
@@ -124,7 +129,11 @@ class Blockchain:
             description=description,
             previous_hash=self.main_tip_hash,
         )
-        proof_of_work(block, self.difficulty_bits)
+        proof_of_work(
+            block,
+            self.difficulty_bits,
+            progress_callback=progress_callback,
+        )
 
         if not self.add_block(block):
             raise ValueError("Mined block failed validation.")

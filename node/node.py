@@ -3,8 +3,12 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from config import DEFAULT_DIFFICULTY_BITS
+from core.block import Block, proof_of_work
 from core.blockchain import Blockchain
+from core.hashing import sha256_block_hash
 from core.transaction import Transaction
+from core.utils.constants import GENESIS_PREVIOUS_HASH
 from network.p2p_server import P2PServer
 from wallet import Wallet
 
@@ -15,16 +19,24 @@ class Node:
     port: int
     wallet: Wallet | None = None
     blockchain: Blockchain | None = None
+    difficulty_bits: int = DEFAULT_DIFFICULTY_BITS
     p2p_server: P2PServer = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.blockchain is None:
+            self.blockchain = Blockchain(
+                difficulty_bits=self.difficulty_bits,
+                hash_function=sha256_block_hash,
+            )
         self.p2p_server = P2PServer(
             host=self.host,
             port=self.port,
             on_transaction=self._handle_incoming_transaction,
+            on_block=self._handle_incoming_block,
         )
 
     async def start(self) -> None:
+        self._ensure_genesis_block()
         await self.p2p_server.start()
         if self.wallet is not None:
             wallet_name = self.wallet.name or "unnamed"
@@ -44,6 +56,9 @@ class Node:
 
     async def broadcast_transaction(self, transaction: Transaction) -> None:
         await self.p2p_server.broadcast_transaction(transaction)
+
+    async def broadcast_block(self, block: Block) -> None:
+        await self.p2p_server.broadcast_block(block)
 
     async def discover_peers(self) -> None:
         await self.p2p_server.discover_peers()
@@ -83,13 +98,46 @@ class Node:
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
 
+    async def mine_pending_transactions(self, description: str) -> Block:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to mine.")
+        if self.blockchain is None:
+            raise ValueError("A blockchain is required to mine.")
+
+        block = self.blockchain.mine_pending_transactions(
+            miner_address=self.wallet.address,
+            description=description,
+        )
+        await self.broadcast_block(block)
+        return block
+
+    async def mine_pending_transactions_with_progress(self, description: str) -> Block:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to mine.")
+        if self.blockchain is None:
+            raise ValueError("A blockchain is required to mine.")
+
+        def report_progress(nonce: int) -> None:
+            print(f"\rTried {nonce:,} nonces...", end="", flush=True)
+
+        print("Mining...", flush=True)
+        block = self.blockchain.mine_pending_transactions(
+            miner_address=self.wallet.address,
+            description=description,
+            progress_callback=report_progress,
+        )
+        print("\r" + (" " * 40) + "\r", end="", flush=True)
+        await self.broadcast_block(block)
+        return block
+
     async def interactive_console(self) -> None:
         print("Interactive mode enabled.")
         print(
             'Enter JSON to broadcast, "/send host:port {...}" for a direct message, '
             '"/peers" to list connected peers, "/known-peers" to list discovered peers, '
             '"/discover" to ask peers for more peers, "/tx receiver amount fee" '
-            'to broadcast a transaction, "/clear" to clear the screen, or "/quit" to exit.'
+            'to broadcast a transaction, "/mine [description]" to mine pending transactions, '
+            '"/clear" to clear the screen, or "/quit" to exit.'
         )
 
         while True:
@@ -141,6 +189,15 @@ class Node:
                     print(f"Invalid /tx command: {error}")
                 continue
 
+            if line.startswith("/mine"):
+                description = line[len("/mine"):].strip() or "Mined block"
+                try:
+                    block = await self.mine_pending_transactions_with_progress(description)
+                    print(f"Mined and broadcast block {block.block_hash[:12]} at height {block.block_id}")
+                except ValueError as error:
+                    print(f"Mining failed: {error}")
+                continue
+
             if line.startswith("/send "):
                 try:
                     peer_part, message_part = line[len("/send "):].split(" ", maxsplit=1)
@@ -161,7 +218,34 @@ class Node:
             await self.broadcast(message)
             print("Broadcast message sent.")
 
-    def _handle_incoming_transaction(self, transaction: Transaction) -> None:
-        # Cleanup-only step: keep network transport and core orchestration separate for now.
-        # The actual node-to-blockchain integration comes next.
-        return
+    def _handle_incoming_transaction(self, transaction: Transaction) -> bool:
+        if self.blockchain is None:
+            return False
+
+        try:
+            self.blockchain.add_transaction(transaction)
+        except ValueError as error:
+            print(f"Rejected transaction from network: {error}")
+            return False
+
+        return True
+
+    def _handle_incoming_block(self, block: Block) -> bool:
+        if self.blockchain is None:
+            return False
+
+        return self.blockchain.add_block(block)
+
+    def _ensure_genesis_block(self) -> None:
+        if self.blockchain is None or self.blockchain.blocks_by_hash:
+            return
+
+        genesis_block = Block(
+            block_id=0,
+            transactions=[],
+            hash_function=sha256_block_hash,
+            description="Genesis block",
+            previous_hash=GENESIS_PREVIOUS_HASH,
+        )
+        proof_of_work(genesis_block, self.blockchain.difficulty_bits)
+        self.blockchain.add_block(genesis_block)

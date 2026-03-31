@@ -3,6 +3,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from core.block import Block
+from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 
@@ -17,9 +19,11 @@ class PeerAddress:
 class P2PServer:
     host: str
     port: int
-    on_transaction: Callable[[Transaction], None] | None = None
+    on_transaction: Callable[[Transaction], bool] | None = None
+    on_block: Callable[[Block], bool] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
+    seen_block_hashes: set[str] = field(default_factory=set)
     server: asyncio.base_events.Server | None = field(default=None, init=False)
     active_connections: dict[PeerAddress, asyncio.StreamWriter] = field(
         default_factory=dict,
@@ -85,10 +89,11 @@ class P2PServer:
             print(f"Transaction {transaction_id[:12]} already seen. Skipping broadcast.")
             return
 
-        self.seen_transaction_ids.add(transaction_id)
+        if self.on_transaction is not None and not self.on_transaction(transaction):
+            print(f"Rejected local transaction {transaction_id[:12]}.")
+            return
 
-        if self.on_transaction is not None:
-            self.on_transaction(transaction)
+        self.seen_transaction_ids.add(transaction_id)
 
         await self._broadcast_to_peers(
             {
@@ -101,6 +106,22 @@ class P2PServer:
             "Broadcast transaction "
             f"{transaction_id[:12]} from {transaction.sender} to {transaction.receiver}"
         )
+
+    async def broadcast_block(self, block: Block) -> None:
+        block_hash = block.block_hash
+        if block_hash in self.seen_block_hashes:
+            print(f"Block {block_hash[:12]} already seen. Skipping broadcast.")
+            return
+
+        self.seen_block_hashes.add(block_hash)
+        await self._broadcast_to_peers(
+            {
+                "type": "block",
+                "block_hash": block_hash,
+                "block": block.to_dict(),
+            }
+        )
+        print(f"Broadcast block {block_hash[:12]} at height {block.block_id}")
 
     async def _broadcast_to_peers(
         self,
@@ -221,15 +242,37 @@ class P2PServer:
                 print(f"Ignoring duplicate transaction {transaction_id[:12]}")
                 return peer
 
+            if self.on_transaction is not None and not self.on_transaction(transaction):
+                print(f"Rejected transaction {transaction_id[:12]} from {peer.host}:{peer.port}")
+                return peer
+
             self.seen_transaction_ids.add(transaction_id)
-            if self.on_transaction is not None:
-                self.on_transaction(transaction)
 
             print(
                 "Received transaction "
                 f"{transaction_id[:12]} from {peer.host}:{peer.port}: "
                 f"{transaction.sender} -> {transaction.receiver} "
                 f"({transaction.amount}, fee {transaction.fee})"
+            )
+            await self._broadcast_to_peers(message, exclude_peer=peer)
+            return peer
+
+        if message_type == "block":
+            block = Block.from_dict(message["block"], hash_function=sha256_block_hash)
+            block_hash = message.get("block_hash", block.block_hash)
+
+            if block_hash in self.seen_block_hashes:
+                print(f"Ignoring duplicate block {block_hash[:12]}")
+                return peer
+
+            if self.on_block is not None and not self.on_block(block):
+                print(f"Rejected block {block_hash[:12]} from {peer.host}:{peer.port}")
+                return peer
+
+            self.seen_block_hashes.add(block_hash)
+            print(
+                f"Received block {block_hash[:12]} from {peer.host}:{peer.port} "
+                f"at height {block.block_id}"
             )
             await self._broadcast_to_peers(message, exclude_peer=peer)
             return peer

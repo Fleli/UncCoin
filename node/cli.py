@@ -26,13 +26,18 @@ async def _run_from_cli() -> None:
     )
     args = parser.parse_args()
 
+    print("Loading node...", flush=True)
     wallet = load_wallet(args.wallet_name) if args.wallet_name else None
     node = Node(host=args.host, port=args.port, wallet=wallet)
     await node.start()
 
+    if args.peer:
+        print("Connecting to peers...", flush=True)
     for peer in args.peer:
         peer_host, peer_port = peer.split(":", maxsplit=1)
         await node.connect_to_peer(peer_host, int(peer_port))
+
+    print("Node ready.", flush=True)
 
     server_task = asyncio.create_task(node.serve_forever())
 

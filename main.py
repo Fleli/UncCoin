@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import datetime
 
+from config import DEFAULT_DIFFICULTY_BITS
 from core.block import Block, proof_of_work
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
@@ -30,7 +31,7 @@ def create_signed_transaction(
 
 
 def main() -> None:
-    difficulty_bits = 1
+    difficulty_bits = DEFAULT_DIFFICULTY_BITS
     alice_wallet = create_wallet(name="alice")
     bob_wallet = create_wallet(name="bob")
     charlie_wallet = create_wallet(name="charlie")

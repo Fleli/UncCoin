@@ -17,6 +17,36 @@ class Block:
     def __post_init__(self) -> None:
         self.block_hash = self.hash_function(self)
 
+    def to_dict(self) -> dict:
+        return {
+            "block_id": self.block_id,
+            "transactions": [transaction.to_dict() for transaction in self.transactions],
+            "description": self.description,
+            "previous_hash": self.previous_hash,
+            "nonce": self.nonce,
+            "block_hash": self.block_hash,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        block_data: dict,
+        hash_function: Callable[["Block"], str],
+    ) -> "Block":
+        block = cls(
+            block_id=int(block_data["block_id"]),
+            transactions=[
+                Transaction.from_dict(transaction_data)
+                for transaction_data in block_data["transactions"]
+            ],
+            hash_function=hash_function,
+            description=block_data["description"],
+            previous_hash=block_data["previous_hash"],
+            nonce=int(block_data.get("nonce", 0)),
+        )
+        block.block_hash = block_data.get("block_hash", block.block_hash)
+        return block
+
 
 def has_leading_zero_bits(block_hash: str, difficulty_bits: int) -> bool:
     binary_hash = bin(int(block_hash, 16))[2:].zfill(len(block_hash) * 4)
@@ -32,9 +62,16 @@ def short_binary_hash(block_hash: str, difficulty_bits: int) -> str:
     return f"{hash_to_binary(block_hash)[:preview_length]}..."
 
 
-def proof_of_work(block: Block, difficulty_bits: int) -> str:
+def proof_of_work(
+    block: Block,
+    difficulty_bits: int,
+    progress_callback: Callable[[int], None] | None = None,
+    progress_interval: int = 10_000,
+) -> str:
     while not has_leading_zero_bits(block.block_hash, difficulty_bits):
         block.nonce += 1
+        if progress_callback is not None and block.nonce % progress_interval == 0:
+            progress_callback(block.nonce)
         block.block_hash = block.hash_function(block)
 
     return block.block_hash

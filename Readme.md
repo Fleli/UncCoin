@@ -7,6 +7,7 @@
 /known-peers
 /discover
 /tx <receiver> <amount> <fee>
+/mine [description]
 /send <host:port> <json>
 /clear
 /quit
