@@ -1,5 +1,6 @@
 import importlib.util
 import argparse
+import os
 import platform
 import subprocess
 import sysconfig
@@ -55,50 +56,87 @@ def _extension_needs_rebuild() -> bool:
 
 
 def _build_native_pow_extension() -> None:
-    if platform.system() != "Darwin":
-        raise RuntimeError("Native proof-of-work build currently supports only macOS.")
-
     include_dir = sysconfig.get_paths()["include"]
     platform_include_dir = sysconfig.get_paths().get("platinclude")
-    sdk_path = subprocess.check_output(
-        ["xcrun", "--show-sdk-path"],
-        text=True,
-    ).strip()
+    system = platform.system()
 
-    compile_command = [
-        "clang",
-        "-O3",
-        "-Werror",
-        "-Wall",
-        "-Wextra",
-        "-std=c11",
-        "-bundle",
-        "-undefined",
-        "dynamic_lookup",
-        "-arch",
-        platform.machine(),
-        "-isysroot",
-        sdk_path,
-        "-I",
-        include_dir,
-    ]
-
-    if platform_include_dir:
-        compile_command.extend(["-I", platform_include_dir])
-
-    compile_command.extend(
-        [
-            "-o",
-            str(EXTENSION_PATH),
-            str(SOURCE_PATH),
+    if system == "Darwin":
+        sdk_path = subprocess.check_output(
+            ["xcrun", "--show-sdk-path"],
+            text=True,
+        ).strip()
+        compile_command = [
+            "clang",
+            "-O3",
+            "-Werror",
+            "-Wall",
+            "-Wextra",
+            "-std=c11",
+            "-bundle",
+            "-undefined",
+            "dynamic_lookup",
+            "-arch",
+            platform.machine(),
+            "-isysroot",
+            sdk_path,
+            "-I",
+            include_dir,
         ]
-    )
+        if platform_include_dir:
+            compile_command.extend(["-I", platform_include_dir])
+        compile_command.extend(
+            [
+                "-o",
+                str(EXTENSION_PATH),
+                str(SOURCE_PATH),
+            ]
+        )
+    elif system == "Linux":
+        compiler = os.environ.get("CC", "cc")
+        compile_command = [
+            compiler,
+            "-O3",
+            "-Werror",
+            "-Wall",
+            "-Wextra",
+            "-std=c11",
+            "-shared",
+            "-fPIC",
+            "-I",
+            include_dir,
+        ]
+        if platform_include_dir:
+            compile_command.extend(["-I", platform_include_dir])
+        compile_command.extend(
+            [
+                "-o",
+                str(EXTENSION_PATH),
+                str(SOURCE_PATH),
+            ]
+        )
+    elif system == "Windows":
+        compiler = os.environ.get("CC", "cl")
+        compile_command = [
+            compiler,
+            "/O2",
+            "/W4",
+            "/WX",
+            "/LD",
+            f"/I{include_dir}",
+        ]
+        if platform_include_dir:
+            compile_command.append(f"/I{platform_include_dir}")
+        compile_command.extend(
+            [
+                str(SOURCE_PATH),
+                "/link",
+                f"/OUT:{EXTENSION_PATH}",
+            ]
+        )
+    else:
+        raise RuntimeError(f"Unsupported platform for native proof-of-work build: {system}")
 
-    subprocess.run(
-        compile_command,
-        check=True,
-        cwd=ROOT_DIR,
-    )
+    subprocess.run(compile_command, check=True, cwd=ROOT_DIR)
 
 
 def main() -> None:

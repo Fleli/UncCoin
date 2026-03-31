@@ -1,6 +1,5 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include <CommonCrypto/CommonDigest.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,8 +7,171 @@
 #include <string.h>
 
 #define SHA256_HEX_LENGTH 64
-#define SHA256_BINARY_LENGTH CC_SHA256_DIGEST_LENGTH
+#define SHA256_BINARY_LENGTH 32
 #define NONCE_BUFFER_LENGTH 32
+
+typedef struct {
+    uint8_t data[64];
+    uint32_t state[8];
+    uint64_t bit_length;
+    size_t data_length;
+} sha256_context;
+
+static const uint32_t SHA256_K[64] = {
+    0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
+    0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+    0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
+    0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+    0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+    0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+    0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
+    0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+    0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
+    0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+    0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
+    0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+    0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
+    0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+    0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+    0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
+};
+
+#define SHA256_RIGHT_ROTATE(value, bits) (((value) >> (bits)) | ((value) << (32U - (bits))))
+
+static void sha256_transform(sha256_context *context, const uint8_t data[64]) {
+    uint32_t schedule[64];
+    uint32_t a, b, c, d, e, f, g, h;
+
+    for (size_t index = 0; index < 16; index++) {
+        schedule[index] = ((uint32_t)data[index * 4] << 24) |
+                          ((uint32_t)data[index * 4 + 1] << 16) |
+                          ((uint32_t)data[index * 4 + 2] << 8) |
+                          ((uint32_t)data[index * 4 + 3]);
+    }
+
+    for (size_t index = 16; index < 64; index++) {
+        uint32_t sigma0 = SHA256_RIGHT_ROTATE(schedule[index - 15], 7) ^
+                          SHA256_RIGHT_ROTATE(schedule[index - 15], 18) ^
+                          (schedule[index - 15] >> 3);
+        uint32_t sigma1 = SHA256_RIGHT_ROTATE(schedule[index - 2], 17) ^
+                          SHA256_RIGHT_ROTATE(schedule[index - 2], 19) ^
+                          (schedule[index - 2] >> 10);
+        schedule[index] = schedule[index - 16] + sigma0 + schedule[index - 7] + sigma1;
+    }
+
+    a = context->state[0];
+    b = context->state[1];
+    c = context->state[2];
+    d = context->state[3];
+    e = context->state[4];
+    f = context->state[5];
+    g = context->state[6];
+    h = context->state[7];
+
+    for (size_t index = 0; index < 64; index++) {
+        uint32_t sum1 = SHA256_RIGHT_ROTATE(e, 6) ^
+                        SHA256_RIGHT_ROTATE(e, 11) ^
+                        SHA256_RIGHT_ROTATE(e, 25);
+        uint32_t choose = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + sum1 + choose + SHA256_K[index] + schedule[index];
+        uint32_t sum0 = SHA256_RIGHT_ROTATE(a, 2) ^
+                        SHA256_RIGHT_ROTATE(a, 13) ^
+                        SHA256_RIGHT_ROTATE(a, 22);
+        uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = sum0 + majority;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    context->state[0] += a;
+    context->state[1] += b;
+    context->state[2] += c;
+    context->state[3] += d;
+    context->state[4] += e;
+    context->state[5] += f;
+    context->state[6] += g;
+    context->state[7] += h;
+}
+
+static void sha256_init(sha256_context *context) {
+    context->data_length = 0;
+    context->bit_length = 0;
+    context->state[0] = 0x6a09e667U;
+    context->state[1] = 0xbb67ae85U;
+    context->state[2] = 0x3c6ef372U;
+    context->state[3] = 0xa54ff53aU;
+    context->state[4] = 0x510e527fU;
+    context->state[5] = 0x9b05688cU;
+    context->state[6] = 0x1f83d9abU;
+    context->state[7] = 0x5be0cd19U;
+}
+
+static void sha256_update(sha256_context *context, const uint8_t *data, size_t length) {
+    for (size_t index = 0; index < length; index++) {
+        context->data[context->data_length] = data[index];
+        context->data_length += 1;
+
+        if (context->data_length == 64) {
+            sha256_transform(context, context->data);
+            context->bit_length += 512;
+            context->data_length = 0;
+        }
+    }
+}
+
+static void sha256_final(sha256_context *context, uint8_t hash[SHA256_BINARY_LENGTH]) {
+    size_t index = context->data_length;
+
+    context->data[index++] = 0x80;
+
+    if (index > 56) {
+        while (index < 64) {
+            context->data[index++] = 0x00;
+        }
+        sha256_transform(context, context->data);
+        index = 0;
+    }
+
+    while (index < 56) {
+        context->data[index++] = 0x00;
+    }
+
+    context->bit_length += (uint64_t)context->data_length * 8;
+    context->data[63] = (uint8_t)(context->bit_length);
+    context->data[62] = (uint8_t)(context->bit_length >> 8);
+    context->data[61] = (uint8_t)(context->bit_length >> 16);
+    context->data[60] = (uint8_t)(context->bit_length >> 24);
+    context->data[59] = (uint8_t)(context->bit_length >> 32);
+    context->data[58] = (uint8_t)(context->bit_length >> 40);
+    context->data[57] = (uint8_t)(context->bit_length >> 48);
+    context->data[56] = (uint8_t)(context->bit_length >> 56);
+    sha256_transform(context, context->data);
+
+    for (index = 0; index < 4; index++) {
+        hash[index]      = (uint8_t)((context->state[0] >> (24 - index * 8)) & 0xFF);
+        hash[index + 4]  = (uint8_t)((context->state[1] >> (24 - index * 8)) & 0xFF);
+        hash[index + 8]  = (uint8_t)((context->state[2] >> (24 - index * 8)) & 0xFF);
+        hash[index + 12] = (uint8_t)((context->state[3] >> (24 - index * 8)) & 0xFF);
+        hash[index + 16] = (uint8_t)((context->state[4] >> (24 - index * 8)) & 0xFF);
+        hash[index + 20] = (uint8_t)((context->state[5] >> (24 - index * 8)) & 0xFF);
+        hash[index + 24] = (uint8_t)((context->state[6] >> (24 - index * 8)) & 0xFF);
+        hash[index + 28] = (uint8_t)((context->state[7] >> (24 - index * 8)) & 0xFF);
+    }
+}
+
+static void sha256_digest(const uint8_t *data, size_t length, uint8_t hash[SHA256_BINARY_LENGTH]) {
+    sha256_context context;
+    sha256_init(&context);
+    sha256_update(&context, data, length);
+    sha256_final(&context, hash);
+}
 
 static bool has_leading_zero_bits(const unsigned char *digest, int difficulty_bits) {
     int full_zero_bytes = difficulty_bits / 8;
@@ -74,6 +236,7 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
     unsigned char digest[SHA256_BINARY_LENGTH];
     char hex_digest[SHA256_HEX_LENGTH + 1];
     unsigned long long nonce = start_nonce;
+    int nonce_error = 0;
 
     Py_BEGIN_ALLOW_THREADS
     while (true) {
@@ -85,14 +248,13 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
         );
 
         if (nonce_length < 0 || nonce_length >= NONCE_BUFFER_LENGTH) {
-            free(buffer);
-            PyErr_SetString(PyExc_RuntimeError, "Failed to serialize nonce.");
-            return NULL;
+            nonce_error = 1;
+            break;
         }
 
-        CC_SHA256(
-            buffer,
-            (CC_LONG)((size_t)prefix_length + (size_t)nonce_length),
+        sha256_digest(
+            (const uint8_t *)buffer,
+            (size_t)prefix_length + (size_t)nonce_length,
             digest
         );
 
@@ -108,6 +270,12 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
         }
     }
     Py_END_ALLOW_THREADS
+
+    if (nonce_error) {
+        free(buffer);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to serialize nonce.");
+        return NULL;
+    }
 
     digest_to_hex(digest, hex_digest);
     free(buffer);
