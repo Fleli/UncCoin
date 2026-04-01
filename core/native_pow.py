@@ -19,9 +19,19 @@ def mine_pow(
     difficulty_bits: int,
     start_nonce: int = 0,
     progress_interval: int = 0,
-) -> tuple[int, str]:
+) -> tuple[int, str, bool]:
     module = _load_native_pow_module()
     return module.mine_pow(prefix, difficulty_bits, start_nonce, progress_interval)
+
+
+def request_pow_cancel() -> None:
+    module = _load_native_pow_module()
+    module.request_cancel()
+
+
+def reset_pow_cancel() -> None:
+    module = _load_native_pow_module()
+    module.reset_cancel()
 
 
 def build_native_pow_extension(force: bool = False) -> Path:

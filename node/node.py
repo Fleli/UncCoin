@@ -6,12 +6,14 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from config import DEFAULT_DIFFICULTY_BITS
-from core.block import Block, proof_of_work
+from core.block import Block, ProofOfWorkCancelled, proof_of_work
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
+from core.native_pow import request_pow_cancel
 from core.transaction import Transaction
 from core.utils.constants import GENESIS_PREVIOUS_HASH
 from network.p2p_server import P2PServer
+from node.message_store import load_messages, save_messages
 from node.storage import load_blockchain_state, save_blockchain_state
 from wallet import Wallet
 
@@ -27,8 +29,11 @@ class Node:
     automine_task: asyncio.Task | None = field(default=None, init=False)
     automine_description: str = field(default="", init=False)
     _automine_stop_requested: bool = field(default=False, init=False)
+    _current_automine_tip_hash: str | None = field(default=None, init=False)
     orphan_blocks_by_parent_hash: dict[str, list[Block]] = field(default_factory=dict, init=False)
     orphan_block_hashes: set[str] = field(default_factory=set, init=False)
+    message_history: list[dict] = field(default_factory=list, init=False)
+    message_ids: set[str] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         if self.blockchain is None:
@@ -47,6 +52,7 @@ class Node:
         )
 
     async def start(self) -> None:
+        self._load_persisted_messages()
         self._load_persisted_blockchain()
         self._ensure_genesis_block()
         await self.p2p_server.start()
@@ -212,6 +218,7 @@ class Node:
 
         try:
             while not self._automine_stop_requested:
+                self._current_automine_tip_hash = self.blockchain.main_tip_hash
                 block = await asyncio.to_thread(
                     self.blockchain.mine_pending_transactions,
                     self.wallet.address,
@@ -222,10 +229,17 @@ class Node:
                     f"\nAuto-mined block {block.block_hash[:12]} at height {block.block_id}",
                     flush=True,
                 )
+        except ProofOfWorkCancelled:
+            if not self._automine_stop_requested:
+                print("\nRestarting automine on newer chain head.", flush=True)
+                self.automine_task = asyncio.create_task(self._automine_loop())
+                return
         except ValueError as error:
             print(f"\nAutomine stopped: {error}", flush=True)
         finally:
-            self.automine_task = None
+            self._current_automine_tip_hash = None
+            if self.automine_task is asyncio.current_task():
+                self.automine_task = None
             self._automine_stop_requested = False
 
     async def interactive_console(self) -> None:
@@ -234,9 +248,10 @@ class Node:
             'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
             '"discover" to ask peers for more peers, "add-peer host:port" to connect manually, '
-            '"self" to print this node\'s address, '
+            '"localself" to print this node\'s local address, '
             '"tx receiver amount fee" '
             '"msg wallet content" to send a wallet message, '
+            '"messages" to print the local message history, '
             'to broadcast a transaction, "mine [description]" to mine pending transactions, '
             '"automine [description]" to mine continuously, "stop" to stop automining, '
             '"blockchain" to print the canonical chain, "balance [address]" to print a balance, '
@@ -279,7 +294,7 @@ class Node:
                 print("Peer discovery request sent.")
                 continue
 
-            if line == "self":
+            if line == "localself":
                 print(self.self_peer_address())
                 continue
 
@@ -303,6 +318,10 @@ class Node:
 
             if line == "blockchain":
                 print(self.format_canonical_blockchain())
+                continue
+
+            if line == "messages":
+                print(self.format_message_history())
                 continue
 
             if line.startswith("balance"):
@@ -452,7 +471,28 @@ class Node:
         ):
             return False
 
-        if self.wallet is not None and receiver == self.wallet.address:
+        if self.wallet is not None and sender == self.wallet.address:
+            self._store_wallet_message(
+                {
+                    "direction": "sent",
+                    "message_id": message_id,
+                    "sender": sender,
+                    "receiver": receiver,
+                    "content": content,
+                    "timestamp": timestamp,
+                }
+            )
+        elif self.wallet is not None and receiver == self.wallet.address:
+            self._store_wallet_message(
+                {
+                    "direction": "received",
+                    "message_id": message_id,
+                    "sender": sender,
+                    "receiver": receiver,
+                    "content": content,
+                    "timestamp": timestamp,
+                }
+            )
             print(f"\nMessage from {sender}: {content}", flush=True)
 
         return True
@@ -517,12 +557,29 @@ class Node:
     def self_peer_address(self) -> str:
         return f"{self.host}:{self.port}"
 
+    def format_message_history(self) -> str:
+        if not self.message_history:
+            return "No stored messages."
+
+        lines = ["Message history:"]
+        for message in self.message_history:
+            peer = (
+                message["receiver"]
+                if message["direction"] == "sent"
+                else message["sender"]
+            )
+            lines.append(
+                f"[{message['timestamp']}] {message['direction']} {peer}: {message['content']}"
+            )
+        return "\n".join(lines)
+
     def _accept_or_store_block(self, block: Block) -> str:
         assert self.blockchain is not None
 
         status = self.blockchain.add_block_with_status(block)
         if status == "accepted":
             self.orphan_block_hashes.discard(block.block_hash)
+            self._cancel_stale_automine_if_needed()
             self._resolve_orphan_descendants(block.block_hash)
             return "accepted"
 
@@ -555,6 +612,7 @@ class Node:
                 status = self.blockchain.add_block_with_status(orphan_block)
                 if status == "accepted":
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
+                    self._cancel_stale_automine_if_needed()
                     print(
                         f"Accepted orphan block {orphan_block.block_hash[:12]} "
                         f"at height {orphan_block.block_id}"
@@ -567,3 +625,37 @@ class Node:
                 else:
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
                     print(f"Rejected orphan block {orphan_block.block_hash[:12]}")
+
+    def _cancel_stale_automine_if_needed(self) -> None:
+        if (
+            self.automine_task is None
+            or self.automine_task.done()
+            or self._current_automine_tip_hash is None
+            or self.blockchain is None
+            or self.blockchain.main_tip_hash == self._current_automine_tip_hash
+        ):
+            return
+
+        request_pow_cancel()
+
+    def _load_persisted_messages(self) -> None:
+        if self.wallet is None:
+            return
+
+        self.message_history = load_messages(self.wallet.address)
+        self.message_ids = {
+            message["message_id"]
+            for message in self.message_history
+        }
+
+    def _store_wallet_message(self, message_entry: dict) -> None:
+        if self.wallet is None:
+            return
+
+        message_id = message_entry["message_id"]
+        if message_id in self.message_ids:
+            return
+
+        self.message_history.append(message_entry)
+        self.message_ids.add(message_id)
+        save_messages(self.wallet.address, self.message_history)

@@ -5,12 +5,14 @@ from typing import Callable
 from core.block import Block
 from core.blockchain import Blockchain
 from core.transaction import Transaction
+from state_paths import ensure_state_dir
 
 
-BLOCKCHAINS_DIR = Path("blockchains")
+BLOCKCHAINS_DIR = ensure_state_dir() / "blockchains"
 
 
 def ensure_blockchains_dir() -> Path:
+    ensure_state_dir()
     BLOCKCHAINS_DIR.mkdir(exist_ok=True)
     return BLOCKCHAINS_DIR
 

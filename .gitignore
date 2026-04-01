@@ -1,6 +1,8 @@
 .venv
 __pycache__
-wallets/*
-!wallets/.gitkeep
-blockchains/*
-!blockchains/.gitkeep
+state/wallets/*
+!state/wallets/.gitkeep
+state/blockchains/*
+!state/blockchains/.gitkeep
+state/msgs/*
+!state/msgs/.gitkeep

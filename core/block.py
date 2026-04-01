@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from core.native_pow import mine_pow as native_mine_pow
+from core.native_pow import reset_pow_cancel
 from core.serialization import serialize_block_prefix
 from core.transaction import Transaction
 
@@ -50,6 +51,10 @@ class Block:
         return block
 
 
+class ProofOfWorkCancelled(Exception):
+    pass
+
+
 def has_leading_zero_bits(block_hash: str, difficulty_bits: int) -> bool:
     binary_hash = bin(int(block_hash, 16))[2:].zfill(len(block_hash) * 4)
     return binary_hash.startswith("0" * difficulty_bits)
@@ -78,12 +83,15 @@ def proof_of_work(
 
     prefix = serialize_block_prefix(block)
     native_progress_interval = progress_interval if progress_callback is not None else 0
-    nonce, block_hash = native_mine_pow(
+    reset_pow_cancel()
+    nonce, block_hash, cancelled = native_mine_pow(
         prefix,
         difficulty_bits,
         block.nonce,
         native_progress_interval,
     )
+    if cancelled:
+        raise ProofOfWorkCancelled("Proof of work was cancelled.")
     block.nonce = nonce
     block.block_hash = block_hash
 

@@ -22,7 +22,7 @@ async def _run_from_cli() -> None:
     )
     parser.add_argument(
         "--wallet-name",
-        help="Optional wallet name to load from the wallets directory.",
+        help="Optional wallet name to load from the state/wallets directory.",
     )
     args = parser.parse_args()
 

@@ -9,6 +9,9 @@
 #define SHA256_HEX_LENGTH 64
 #define SHA256_BINARY_LENGTH 32
 #define NONCE_BUFFER_LENGTH 32
+#define CANCEL_CHECK_INTERVAL 1024
+
+static volatile int cancel_requested = 0;
 
 typedef struct {
     uint8_t data[64];
@@ -237,9 +240,15 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
     char hex_digest[SHA256_HEX_LENGTH + 1];
     unsigned long long nonce = start_nonce;
     int nonce_error = 0;
+    int cancelled = 0;
 
     Py_BEGIN_ALLOW_THREADS
     while (true) {
+        if (cancel_requested && nonce % CANCEL_CHECK_INTERVAL == 0) {
+            cancelled = 1;
+            break;
+        }
+
         int nonce_length = snprintf(
             buffer + prefix_length,
             NONCE_BUFFER_LENGTH,
@@ -280,7 +289,17 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
     digest_to_hex(digest, hex_digest);
     free(buffer);
 
-    return Py_BuildValue("Ks", nonce, hex_digest);
+    return Py_BuildValue("Ksi", nonce, hex_digest, cancelled);
+}
+
+static PyObject *request_cancel(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
+    cancel_requested = 1;
+    Py_RETURN_NONE;
+}
+
+static PyObject *reset_cancel(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
+    cancel_requested = 0;
+    Py_RETURN_NONE;
 }
 
 static PyMethodDef NativePowMethods[] = {
@@ -289,6 +308,18 @@ static PyMethodDef NativePowMethods[] = {
         mine_pow,
         METH_VARARGS,
         "Run proof of work and return the winning nonce and SHA-256 hash."
+    },
+    {
+        "request_cancel",
+        request_cancel,
+        METH_NOARGS,
+        "Request cancellation of the current proof-of-work loop."
+    },
+    {
+        "reset_cancel",
+        reset_cancel,
+        METH_NOARGS,
+        "Reset the proof-of-work cancellation flag."
     },
     {NULL, NULL, 0, NULL}
 };

@@ -106,10 +106,11 @@ Once connected, useful interactive commands include:
 peers
 known-peers
 discover
-self
+localself
 add-peer <host:port>
 tx <receiver> <amount> <fee>
 msg <wallet> <content>
+messages
 mine [description]
 automine [description]
 stop

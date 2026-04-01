@@ -1,13 +1,15 @@
 import json
 from pathlib import Path
 
+from state_paths import ensure_state_dir
 from wallet.wallet import Wallet
 
 
-WALLETS_DIR = Path("wallets")
+WALLETS_DIR = ensure_state_dir() / "wallets"
 
 
 def ensure_wallets_dir() -> Path:
+    ensure_state_dir()
     WALLETS_DIR.mkdir(exist_ok=True)
     return WALLETS_DIR
 
