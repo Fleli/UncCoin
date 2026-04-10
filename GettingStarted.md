@@ -73,6 +73,7 @@ Useful commands:
 peers
 known-peers
 discover
+sync
 localself
 add-peer <host:port>
 tx <receiver> <amount> <fee>

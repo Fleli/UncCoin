@@ -20,9 +20,10 @@ class PeerAddress:
 class P2PServer:
     host: str
     port: int
-    on_transaction: Callable[[Transaction], bool] | None = None
-    on_block: Callable[[Block], str] | None = None
+    on_transaction: Callable[[Transaction], tuple[bool, str | None]] | None = None
+    on_block: Callable[[Block], tuple[str, str | None]] | None = None
     on_wallet_message: Callable[[dict], bool] | None = None
+    on_chain_summary: Callable[[], tuple[str | None, int]] | None = None
     on_chain_request: Callable[[], list[Block]] | None = None
     on_chain_response: Callable[[list[Block]], None] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
@@ -74,14 +75,7 @@ class P2PServer:
         self.peers.add(peer)
         self.active_connections[peer] = writer
 
-        await self._send_message(
-            writer,
-            {
-                "type": "handshake",
-                "host": self.host,
-                "port": self.port,
-            },
-        )
+        await self._send_message(writer, self._create_handshake_message())
         asyncio.create_task(self._read_messages(reader, writer, peer))
         print(f"Connected to peer {host}:{port}")
 
@@ -94,9 +88,14 @@ class P2PServer:
             print(f"Transaction {transaction_id[:12]} already seen. Skipping broadcast.")
             return
 
-        if self.on_transaction is not None and not self.on_transaction(transaction):
-            print(f"Rejected local transaction {transaction_id[:12]}.")
-            return
+        if self.on_transaction is not None:
+            accepted, reason = self.on_transaction(transaction)
+            if not accepted:
+                print(
+                    f"Rejected local transaction {transaction_id[:12]}: "
+                    f"{reason or 'unknown reason'}"
+                )
+                return
 
         self.seen_transaction_ids.add(transaction_id)
 
@@ -182,6 +181,12 @@ class P2PServer:
         for peer in list(self.active_connections):
             await self.request_peer_list(peer.host, peer.port)
 
+    async def request_chain_sync(self) -> int:
+        peers = list(self.active_connections)
+        for peer in peers:
+            await self.request_chain(peer.host, peer.port)
+        return len(peers)
+
     async def send_to_peer(self, host: str, port: int, message: dict) -> None:
         peer = PeerAddress(host=host, port=port)
         writer = self.active_connections.get(peer)
@@ -206,6 +211,7 @@ class P2PServer:
         self.peers.add(peer)
         self.active_connections[peer] = writer
         print(f"Accepted peer connection from {peer.host}:{peer.port}")
+        await self._send_message(writer, self._create_handshake_message())
 
         await self._read_messages(reader, writer, peer)
 
@@ -236,12 +242,23 @@ class P2PServer:
             advertised_host = message.get("host", peer.host)
             advertised_port = message.get("port", peer.port)
             advertised_peer = PeerAddress(advertised_host, advertised_port)
+            remote_tip_hash = message.get("tip_hash")
+            remote_height = int(message.get("height", -1))
             self.peers.discard(peer)
             self.peers.add(advertised_peer)
             writer = self.active_connections.pop(peer, None)
             if writer is not None:
                 self.active_connections[advertised_peer] = writer
-            print(f"Handshake received from {advertised_host}:{advertised_port}")
+            print(
+                f"Handshake received from {advertised_host}:{advertised_port} "
+                f"(height {remote_height}, tip {self._short_hash(remote_tip_hash)})"
+            )
+            if self._should_request_chain(remote_tip_hash, remote_height):
+                await self.request_chain(advertised_host, advertised_port)
+                print(
+                    f"Requesting chain sync from {advertised_host}:{advertised_port} "
+                    f"after handshake"
+                )
             return advertised_peer
 
         if message_type == "peer_request":
@@ -289,9 +306,14 @@ class P2PServer:
                 print(f"Ignoring duplicate transaction {transaction_id[:12]}")
                 return peer
 
-            if self.on_transaction is not None and not self.on_transaction(transaction):
-                print(f"Rejected transaction {transaction_id[:12]} from {peer.host}:{peer.port}")
-                return peer
+            if self.on_transaction is not None:
+                accepted, reason = self.on_transaction(transaction)
+                if not accepted:
+                    print(
+                        f"Rejected transaction {transaction_id[:12]} "
+                        f"from {peer.host}:{peer.port}: {reason or 'unknown reason'}"
+                    )
+                    return peer
 
             self.seen_transaction_ids.add(transaction_id)
 
@@ -312,7 +334,11 @@ class P2PServer:
                 print(f"Ignoring duplicate block {block_hash[:12]}")
                 return peer
 
-            block_status = self.on_block(block) if self.on_block is not None else "rejected"
+            block_status, reason = (
+                self.on_block(block)
+                if self.on_block is not None
+                else ("rejected", "no block handler is configured")
+            )
             if block_status == "accepted":
                 self.seen_block_hashes.add(block_hash)
                 print(
@@ -326,16 +352,22 @@ class P2PServer:
                 self.seen_block_hashes.add(block_hash)
                 print(
                     f"Stored orphan block {block_hash[:12]} from {peer.host}:{peer.port} "
-                    f"at height {block.block_id}"
+                    f"at height {block.block_id}: {reason or 'waiting for parent'}"
                 )
                 return peer
 
             if block_status == "duplicate":
                 self.seen_block_hashes.add(block_hash)
-                print(f"Ignoring duplicate block {block_hash[:12]}")
+                print(
+                    f"Ignoring duplicate block {block_hash[:12]}: "
+                    f"{reason or 'already known'}"
+                )
                 return peer
 
-            print(f"Rejected block {block_hash[:12]} from {peer.host}:{peer.port}")
+            print(
+                f"Rejected block {block_hash[:12]} from {peer.host}:{peer.port}: "
+                f"{reason or 'unknown reason'}"
+            )
             return peer
 
         if message_type == "wallet_message":
@@ -388,8 +420,45 @@ class P2PServer:
             for peer in peers
         ]
 
+    def _create_handshake_message(self) -> dict:
+        tip_hash, height = self._get_chain_summary()
+        return {
+            "type": "handshake",
+            "host": self.host,
+            "port": self.port,
+            "tip_hash": tip_hash,
+            "height": height,
+        }
+
+    def _get_chain_summary(self) -> tuple[str | None, int]:
+        if self.on_chain_summary is None:
+            return None, -1
+        return self.on_chain_summary()
+
+    def _should_request_chain(
+        self,
+        remote_tip_hash: str | None,
+        remote_height: int,
+    ) -> bool:
+        local_tip_hash, local_height = self._get_chain_summary()
+        if remote_height > local_height:
+            return True
+        if (
+            remote_tip_hash is not None
+            and remote_tip_hash != local_tip_hash
+            and remote_height == local_height
+        ):
+            return True
+        return False
+
     def _is_self_peer(self, peer: PeerAddress) -> bool:
         return peer.host == self.host and peer.port == self.port
+
+    @staticmethod
+    def _short_hash(hash_value: str | None) -> str:
+        if hash_value is None:
+            return "none"
+        return hash_value[:12]
 
     @staticmethod
     async def _send_message(

@@ -47,6 +47,7 @@ class Node:
             on_transaction=self._handle_incoming_transaction,
             on_block=self._handle_incoming_block,
             on_wallet_message=self._handle_wallet_message,
+            on_chain_summary=self._handle_chain_summary,
             on_chain_request=self._handle_chain_request,
             on_chain_response=self._handle_chain_response,
         )
@@ -71,7 +72,6 @@ class Node:
     async def connect_to_peer(self, host: str, port: int) -> None:
         try:
             await self.p2p_server.connect_to_peer(host, port)
-            await self.p2p_server.request_chain(host, port)
         except OSError as error:
             raise ValueError(f"Could not connect to peer {host}:{port}: {error.strerror or error}") from error
 
@@ -89,6 +89,9 @@ class Node:
 
     async def discover_peers(self) -> None:
         await self.p2p_server.discover_peers()
+
+    async def sync_chain(self) -> int:
+        return await self.p2p_server.request_chain_sync()
 
     async def send_to_peer(self, host: str, port: int, message: dict) -> None:
         await self.p2p_server.send_to_peer(host, port, message)
@@ -247,7 +250,8 @@ class Node:
         print(
             'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
-            '"discover" to ask peers for more peers, "add-peer host:port" to connect manually, '
+            '"discover" to ask peers for more peers, "sync" to request the latest chain from '
+            'connected peers, "add-peer host:port" to connect manually, '
             '"localself" to print this node\'s local address, '
             '"tx receiver amount fee" '
             '"msg wallet content" to send a wallet message, '
@@ -292,6 +296,11 @@ class Node:
             if line == "discover":
                 await self.discover_peers()
                 print("Peer discovery request sent.")
+                continue
+
+            if line == "sync":
+                peer_count = await self.sync_chain()
+                print(f"Requested chain sync from {peer_count} peer(s).")
                 continue
 
             if line == "localself":
@@ -400,21 +409,20 @@ class Node:
             await self.broadcast(message)
             print("Broadcast message sent.")
 
-    def _handle_incoming_transaction(self, transaction: Transaction) -> bool:
+    def _handle_incoming_transaction(self, transaction: Transaction) -> tuple[bool, str | None]:
         if self.blockchain is None:
-            return False
+            return False, "no blockchain is loaded"
 
         try:
             self.blockchain.add_transaction(transaction)
         except ValueError as error:
-            print(f"Rejected transaction from network: {error}")
-            return False
+            return False, str(error)
 
-        return True
+        return True, None
 
-    def _handle_incoming_block(self, block: Block) -> str:
+    def _handle_incoming_block(self, block: Block) -> tuple[str, str | None]:
         if self.blockchain is None:
-            return "rejected"
+            return "rejected", "no blockchain is loaded"
 
         return self._accept_or_store_block(block)
 
@@ -423,18 +431,46 @@ class Node:
             return []
         return self.blockchain.blocks
 
+    def _handle_chain_summary(self) -> tuple[str | None, int]:
+        if self.blockchain is None or self.blockchain.main_tip_hash is None:
+            return None, -1
+        return self.blockchain.main_tip_hash, self.blockchain.blocks[-1].block_id
+
     def _handle_chain_response(self, blocks: list[Block]) -> None:
         if self.blockchain is None:
             return
 
         accepted_blocks = 0
+        duplicate_blocks = 0
+        orphaned_blocks = 0
+        rejected_blocks = 0
         for block in blocks:
             if block.block_hash in self.blockchain.blocks_by_hash:
+                duplicate_blocks += 1
                 continue
-            if self._accept_or_store_block(block) == "accepted":
+            status, reason = self._accept_or_store_block(block)
+            if status == "accepted":
                 accepted_blocks += 1
+            elif status == "orphaned":
+                orphaned_blocks += 1
+                print(
+                    f"Deferred synced block {block.block_hash[:12]}: "
+                    f"{reason or 'waiting for parent'}"
+                )
+            elif status == "duplicate":
+                duplicate_blocks += 1
+            else:
+                rejected_blocks += 1
+                print(
+                    f"Rejected synced block {block.block_hash[:12]}: "
+                    f"{reason or 'unknown reason'}"
+                )
 
-        print(f"Synchronized {accepted_blocks} block(s) from peer.")
+        print(
+            "Chain sync complete: "
+            f"accepted {accepted_blocks}, duplicates {duplicate_blocks}, "
+            f"orphans {orphaned_blocks}, rejected {rejected_blocks}."
+        )
 
     def _handle_wallet_message(self, wallet_message: dict) -> bool:
         sender_public_key_data = wallet_message.get("sender_public_key")
@@ -573,26 +609,27 @@ class Node:
             )
         return "\n".join(lines)
 
-    def _accept_or_store_block(self, block: Block) -> str:
+    def _accept_or_store_block(self, block: Block) -> tuple[str, str | None]:
         assert self.blockchain is not None
 
-        status = self.blockchain.add_block_with_status(block)
+        result = self.blockchain.add_block_result(block)
+        status = result.status
         if status == "accepted":
             self.orphan_block_hashes.discard(block.block_hash)
             self._cancel_stale_automine_if_needed()
             self._resolve_orphan_descendants(block.block_hash)
-            return "accepted"
+            return "accepted", None
 
         if status == "duplicate":
             self.orphan_block_hashes.discard(block.block_hash)
-            return "duplicate"
+            return "duplicate", result.reason
 
         if status == "missing_parent":
             self._store_orphan_block(block)
-            return "orphaned"
+            return "orphaned", result.reason
 
         self.orphan_block_hashes.discard(block.block_hash)
-        return "rejected"
+        return "rejected", result.reason
 
     def _store_orphan_block(self, block: Block) -> None:
         if block.block_hash in self.orphan_block_hashes:
@@ -609,7 +646,8 @@ class Node:
             orphan_blocks = self.orphan_blocks_by_parent_hash.pop(current_parent_hash, [])
 
             for orphan_block in orphan_blocks:
-                status = self.blockchain.add_block_with_status(orphan_block)
+                result = self.blockchain.add_block_result(orphan_block)
+                status = result.status
                 if status == "accepted":
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
                     self._cancel_stale_automine_if_needed()
@@ -624,7 +662,10 @@ class Node:
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
                 else:
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
-                    print(f"Rejected orphan block {orphan_block.block_hash[:12]}")
+                    print(
+                        f"Rejected orphan block {orphan_block.block_hash[:12]}: "
+                        f"{result.reason or 'unknown reason'}"
+                    )
 
     def _cancel_stale_automine_if_needed(self) -> None:
         if (

@@ -24,6 +24,10 @@ def is_mining_reward_transaction(transaction: Transaction) -> bool:
 
 
 def validate_mining_reward_transaction(block: Block) -> bool:
+    return get_mining_reward_validation_error(block) is None
+
+
+def get_mining_reward_validation_error(block: Block) -> str | None:
     reward_transactions = [
         transaction
         for transaction in block.transactions
@@ -31,10 +35,14 @@ def validate_mining_reward_transaction(block: Block) -> bool:
     ]
 
     if block.block_id == 0:
-        return len(reward_transactions) == 0
+        if reward_transactions:
+            return "genesis block must not contain a mining reward transaction"
+        return None
 
     if len(reward_transactions) != 1:
-        return False
+        if not reward_transactions:
+            return "non-genesis block must contain exactly one mining reward transaction"
+        return "block contains multiple mining reward transactions"
 
     reward_transaction = reward_transactions[0]
     expected_reward_amount = MINING_REWARD_AMOUNT + sum(
@@ -45,9 +53,16 @@ def validate_mining_reward_transaction(block: Block) -> bool:
         ),
         start=Decimal("0.0"),
     )
-    return (
-        block.transactions[0] == reward_transaction
-        and reward_transaction.amount == expected_reward_amount
-        and reward_transaction.fee == Decimal("0.0")
-        and bool(reward_transaction.receiver)
-    )
+    if block.transactions[0] != reward_transaction:
+        return "mining reward transaction must be the first transaction in the block"
+    if reward_transaction.amount != expected_reward_amount:
+        return (
+            f"mining reward amount {reward_transaction.amount} does not match "
+            f"expected reward {expected_reward_amount}"
+        )
+    if reward_transaction.fee != Decimal("0.0"):
+        return "mining reward transaction fee must be 0.0"
+    if not reward_transaction.receiver:
+        return "mining reward transaction receiver is empty"
+
+    return None

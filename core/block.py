@@ -99,8 +99,16 @@ def proof_of_work(
 
 
 def verify_block(block: Block, difficulty_bits: int) -> bool:
+    return get_block_verification_error(block, difficulty_bits) is None
+
+
+def get_block_verification_error(block: Block, difficulty_bits: int) -> str | None:
     expected_hash = block.hash_function(block)
-    return (
-        block.block_hash == expected_hash
-        and has_leading_zero_bits(block.block_hash, difficulty_bits)
-    )
+    if block.block_hash != expected_hash:
+        return "block hash does not match block contents"
+    if not has_leading_zero_bits(block.block_hash, difficulty_bits):
+        return (
+            f"block hash does not satisfy proof-of-work difficulty "
+            f"{difficulty_bits}"
+        )
+    return None
