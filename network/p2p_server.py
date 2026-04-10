@@ -9,7 +9,7 @@ from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 
-CHAIN_SYNC_CHUNK_SIZE = 3
+CHAIN_SYNC_CHUNK_SIZE = 20
 
 
 @dataclass(frozen=True)
