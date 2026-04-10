@@ -38,6 +38,9 @@ class Node:
     message_ids: set[str] = field(default_factory=set, init=False)
     wallet_aliases: dict[str, str] = field(default_factory=dict, init=False)
     network_notifications_muted: bool = field(default=False, init=False)
+    autosend_target: str | None = field(default=None, init=False)
+    autosend_last_seen_balance: Decimal = field(default=Decimal("0.0"), init=False)
+    autosend_task: asyncio.Task | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.blockchain is None:
@@ -66,6 +69,7 @@ class Node:
         if self.wallet is not None:
             wallet_name = self.wallet.name or "unnamed"
             print(f"Loaded wallet '{wallet_name}' with address {self.wallet.address}")
+        self._reset_autosend_balance_baseline()
 
     async def serve_forever(self) -> None:
         await self.p2p_server.serve_forever()
@@ -180,6 +184,7 @@ class Node:
             description=description,
         )
         await self.broadcast_block(block)
+        self._maybe_schedule_autosend()
         return block
 
     async def mine_pending_transactions_with_progress(self, description: str) -> Block:
@@ -196,6 +201,7 @@ class Node:
         )
         self._clear_mining_progress()
         await self.broadcast_block(block)
+        self._maybe_schedule_autosend()
         return block
 
     async def start_automine(self, description: str) -> None:
@@ -235,6 +241,7 @@ class Node:
                 )
                 self._clear_mining_progress()
                 await self.broadcast_block(block)
+                self._maybe_schedule_autosend()
                 print(
                     f"\nAuto-mined block {block.block_hash[:12]} at height {block.block_id}",
                     flush=True,
@@ -270,6 +277,8 @@ class Node:
             '"discover" to ask peers for more peers, "sync" to request the latest chain from '
             'connected peers, "add-peer host:port" to connect manually, '
             '"alias wallet-id alias" to store a local wallet alias, '
+            '"autosend wallet-id" to forward future balance increases, '
+            '"autosend off" to disable autosend, '
             '"mute" or "unmute" to control incoming network notifications, '
             '"localself" to print this node\'s local address, '
             '"tx receiver amount fee" '
@@ -331,6 +340,24 @@ class Node:
             if line == "unmute":
                 self.network_notifications_muted = False
                 print("Incoming network notifications unmuted.")
+                continue
+
+            if line.startswith("autosend"):
+                try:
+                    autosend_target = line[len("autosend"):].strip()
+                    if not autosend_target:
+                        print(self.format_autosend_status())
+                    elif autosend_target.lower() == "off":
+                        self.disable_autosend()
+                        print("Autosend disabled.")
+                    else:
+                        resolved_target = self.enable_autosend(autosend_target)
+                        print(
+                            "Autosend enabled to "
+                            f"{self.format_wallet_reference(resolved_target)}."
+                        )
+                except ValueError as error:
+                    print(f"Invalid autosend command: {error}")
                 continue
 
             if line == "localself":
@@ -533,6 +560,7 @@ class Node:
             f"accepted {accepted_blocks}, duplicates {duplicate_blocks}, "
             f"orphans {orphaned_blocks}, rejected {rejected_blocks}."
         )
+        self._maybe_schedule_autosend()
         return {
             "accepted": accepted_blocks,
             "duplicates": duplicate_blocks,
@@ -710,6 +738,14 @@ class Node:
             )
         return "\n".join(lines)
 
+    def format_autosend_status(self) -> str:
+        if self.autosend_target is None:
+            return "Autosend is disabled."
+        return (
+            "Autosend is enabled to "
+            f"{self.format_wallet_reference(self.autosend_target)}."
+        )
+
     def resolve_wallet_reference(self, wallet_reference: str) -> str:
         stripped_reference = wallet_reference.strip()
         if not stripped_reference:
@@ -748,6 +784,24 @@ class Node:
         self.wallet_aliases[cleaned_alias] = wallet_address
         self._save_persisted_aliases()
         return wallet_address
+
+    def enable_autosend(self, wallet_reference: str) -> str:
+        if self.wallet is None or self.blockchain is None:
+            raise ValueError("A loaded wallet is required to enable autosend.")
+
+        wallet_address = self.resolve_wallet_reference(wallet_reference)
+        if not wallet_address:
+            raise ValueError("Autosend target must not be empty.")
+        if wallet_address == self.wallet.address:
+            raise ValueError("Autosend target must be different from the loaded wallet.")
+
+        self.autosend_target = wallet_address
+        self._reset_autosend_balance_baseline()
+        return wallet_address
+
+    def disable_autosend(self) -> None:
+        self.autosend_target = None
+        self._reset_autosend_balance_baseline()
 
     def _wallet_sort_key(self, wallet_address: str) -> tuple[str, str]:
         alias = self.alias_for_wallet(wallet_address)
@@ -795,6 +849,7 @@ class Node:
             self.orphan_block_hashes.discard(block.block_hash)
             self._cancel_stale_automine_if_needed()
             self._resolve_orphan_descendants(block.block_hash)
+            self._maybe_schedule_autosend()
             return "accepted", None
 
         if status == "duplicate":
@@ -901,3 +956,61 @@ class Node:
         if self.network_notifications_muted and not force:
             return
         print(message, flush=True)
+
+    def _maybe_schedule_autosend(self) -> None:
+        if (
+            self.autosend_target is None
+            or self.wallet is None
+            or self.blockchain is None
+        ):
+            self._reset_autosend_balance_baseline()
+            return
+
+        current_balance = self.blockchain.get_available_balance(self.wallet.address)
+        if current_balance < self.autosend_last_seen_balance:
+            self.autosend_last_seen_balance = current_balance
+
+        if current_balance <= self.autosend_last_seen_balance or current_balance <= Decimal("0.0"):
+            return
+
+        if self.autosend_task is not None and not self.autosend_task.done():
+            return
+
+        self.autosend_task = asyncio.create_task(self._autosend_available_balance())
+
+    async def _autosend_available_balance(self) -> None:
+        try:
+            if (
+                self.autosend_target is None
+                or self.wallet is None
+                or self.blockchain is None
+            ):
+                return
+
+            balance = self.blockchain.get_available_balance(self.wallet.address)
+            if balance <= Decimal("0.0"):
+                return
+
+            transaction = self.create_signed_transaction(
+                receiver=self.autosend_target,
+                amount=str(balance),
+                fee="0",
+            )
+            await self.broadcast_transaction(transaction)
+            print(
+                "Autosend queued "
+                f"{balance} to {self.format_wallet_reference(self.autosend_target)}."
+            )
+        except ValueError as error:
+            print(f"Autosend failed: {error}")
+        finally:
+            self._reset_autosend_balance_baseline()
+            self.autosend_task = None
+
+    def _reset_autosend_balance_baseline(self) -> None:
+        if self.wallet is None or self.blockchain is None:
+            self.autosend_last_seen_balance = Decimal("0.0")
+            return
+        self.autosend_last_seen_balance = self.blockchain.get_available_balance(
+            self.wallet.address
+        )

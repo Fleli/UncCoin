@@ -108,6 +108,8 @@ sync
 localself
 add-peer <host:port>
 alias <wallet-id> <alias>
+autosend <wallet-id>
+autosend off
 mute
 unmute
 tx <receiver> <amount> <fee>
