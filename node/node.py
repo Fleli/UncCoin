@@ -12,6 +12,7 @@ from core.hashing import sha256_block_hash
 from core.native_pow import request_pow_cancel
 from core.transaction import Transaction
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MINING_REWARD_SENDER
+from node.alias_store import load_aliases, save_aliases
 from network.p2p_server import P2PServer
 from node.message_store import load_messages, save_messages
 from node.storage import load_blockchain_state, save_blockchain_state
@@ -34,6 +35,7 @@ class Node:
     orphan_block_hashes: set[str] = field(default_factory=set, init=False)
     message_history: list[dict] = field(default_factory=list, init=False)
     message_ids: set[str] = field(default_factory=set, init=False)
+    wallet_aliases: dict[str, str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if self.blockchain is None:
@@ -53,6 +55,7 @@ class Node:
         )
 
     async def start(self) -> None:
+        self._load_persisted_aliases()
         self._load_persisted_messages()
         self._load_persisted_blockchain()
         self._ensure_genesis_block()
@@ -67,6 +70,7 @@ class Node:
     async def stop(self) -> None:
         await self.stop_automine(wait=True)
         self._save_persisted_blockchain()
+        self._save_persisted_aliases()
         await self.p2p_server.stop()
 
     async def connect_to_peer(self, host: str, port: int) -> None:
@@ -262,6 +266,7 @@ class Node:
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
             '"discover" to ask peers for more peers, "sync" to request the latest chain from '
             'connected peers, "add-peer host:port" to connect manually, '
+            '"alias wallet-id alias" to store a local wallet alias, '
             '"localself" to print this node\'s local address, '
             '"tx receiver amount fee" '
             '"msg wallet content" to send a wallet message, '
@@ -318,6 +323,18 @@ class Node:
                 print(self.self_peer_address())
                 continue
 
+            if line.startswith("alias "):
+                try:
+                    wallet_reference, alias = line[len("alias "):].split(" ", maxsplit=1)
+                    wallet_address = self.set_wallet_alias(wallet_reference, alias.strip())
+                    print(
+                        f"Stored alias {self.alias_for_wallet(wallet_address)} "
+                        f"for {wallet_address}"
+                    )
+                except ValueError as error:
+                    print(f"Invalid alias command: {error}")
+                continue
+
             if line.startswith("add-peer "):
                 try:
                     host, port = line[len("add-peer "):].split(":", maxsplit=1)
@@ -349,20 +366,25 @@ class Node:
                 continue
 
             if line.startswith("balance"):
-                address = line[len("balance"):].strip() or (
+                address = self.resolve_wallet_reference(
+                    line[len("balance"):].strip()
+                ) or (
                     self.wallet.address if self.wallet is not None else ""
                 )
                 if not address:
                     print("Balance command requires an address when no wallet is loaded.")
                     continue
-                print(f"Balance for {address}: {self.get_balance(address)}")
+                print(
+                    f"Balance for {self.format_wallet_reference(address)}: "
+                    f"{self.get_balance(address)}"
+                )
                 continue
 
             if line.startswith("tx "):
                 try:
                     receiver, amount, fee = line[len("tx "):].split(" ", maxsplit=2)
                     transaction = self.create_signed_transaction(
-                        receiver=receiver,
+                        receiver=self.resolve_wallet_reference(receiver),
                         amount=amount,
                         fee=fee,
                     )
@@ -374,7 +396,10 @@ class Node:
             if line.startswith("msg "):
                 try:
                     receiver, content = line[len("msg "):].split(" ", maxsplit=1)
-                    wallet_message = self.create_signed_wallet_message(receiver, content)
+                    wallet_message = self.create_signed_wallet_message(
+                        self.resolve_wallet_reference(receiver),
+                        content,
+                    )
                     await self.broadcast_wallet_message(wallet_message)
                 except ValueError as error:
                     print(f"Invalid msg command: {error}")
@@ -555,7 +580,10 @@ class Node:
                     "timestamp": timestamp,
                 }
             )
-            print(f"\nMessage from {sender}: {content}", flush=True)
+            print(
+                f"\nMessage from {self.format_wallet_reference(sender)}: {content}",
+                flush=True,
+            )
 
         return True
 
@@ -635,8 +663,10 @@ class Node:
             return "No wallet balances found."
 
         lines = ["Balances:"]
-        for address in sorted(addresses):
-            lines.append(f"{address}: {self.get_balance(address)}")
+        for address in sorted(addresses, key=self._wallet_balance_sort_key):
+            lines.append(
+                f"{self.format_wallet_reference(address)}: {self.get_balance(address)}"
+            )
         return "\n".join(lines)
 
     def self_peer_address(self) -> str:
@@ -654,9 +684,63 @@ class Node:
                 else message["sender"]
             )
             lines.append(
-                f"[{message['timestamp']}] {message['direction']} {peer}: {message['content']}"
+                f"[{message['timestamp']}] {message['direction']} "
+                f"{self.format_wallet_reference(peer)}: {message['content']}"
             )
         return "\n".join(lines)
+
+    def resolve_wallet_reference(self, wallet_reference: str) -> str:
+        stripped_reference = wallet_reference.strip()
+        if not stripped_reference:
+            return ""
+        return self.wallet_aliases.get(stripped_reference, stripped_reference)
+
+    def alias_for_wallet(self, wallet_address: str) -> str | None:
+        for alias, address in self.wallet_aliases.items():
+            if address == wallet_address:
+                return alias
+        return None
+
+    def format_wallet_reference(self, wallet_address: str) -> str:
+        alias = self.alias_for_wallet(wallet_address)
+        if alias is None:
+            return wallet_address
+        return f"{alias} ({wallet_address[:10]})"
+
+    def set_wallet_alias(self, wallet_reference: str, alias: str) -> str:
+        cleaned_alias = alias.strip()
+        if not cleaned_alias:
+            raise ValueError("Alias must not be empty.")
+
+        wallet_address = self.resolve_wallet_reference(wallet_reference)
+        if not wallet_address:
+            raise ValueError("Wallet id must not be empty.")
+
+        aliases_to_remove = [
+            existing_alias
+            for existing_alias, existing_address in self.wallet_aliases.items()
+            if existing_alias == cleaned_alias or existing_address == wallet_address
+        ]
+        for existing_alias in aliases_to_remove:
+            self.wallet_aliases.pop(existing_alias, None)
+
+        self.wallet_aliases[cleaned_alias] = wallet_address
+        self._save_persisted_aliases()
+        return wallet_address
+
+    def _wallet_sort_key(self, wallet_address: str) -> tuple[str, str]:
+        alias = self.alias_for_wallet(wallet_address)
+        return (
+            alias.lower() if alias is not None else wallet_address.lower(),
+            wallet_address,
+        )
+
+    def _wallet_balance_sort_key(self, wallet_address: str) -> tuple[Decimal, str, str]:
+        assert self.blockchain is not None
+        return (
+            self.blockchain.get_balance(wallet_address),
+            *self._wallet_sort_key(wallet_address),
+        )
 
     def _accept_or_store_block(self, block: Block) -> tuple[str, str | None]:
         assert self.blockchain is not None
@@ -749,3 +833,22 @@ class Node:
         self.message_history.append(message_entry)
         self.message_ids.add(message_id)
         save_messages(self.wallet.address, self.message_history)
+
+    def _load_persisted_aliases(self) -> None:
+        owner_key = self._alias_owner_key()
+        if owner_key is None:
+            return
+
+        self.wallet_aliases = load_aliases(owner_key)
+
+    def _save_persisted_aliases(self) -> None:
+        owner_key = self._alias_owner_key()
+        if owner_key is None:
+            return
+
+        save_aliases(owner_key, self.wallet_aliases)
+
+    def _alias_owner_key(self) -> str | None:
+        if self.wallet is None:
+            return None
+        return self.wallet.address

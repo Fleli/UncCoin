@@ -6,3 +6,6 @@ state/blockchains/*
 !state/blockchains/.gitkeep
 state/msgs/*
 !state/msgs/.gitkeep
+state/aliases/*
+!state/aliases/.gitkeep
+scripts/run_auto.sh

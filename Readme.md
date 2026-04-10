@@ -34,6 +34,7 @@ discover
 sync
 localself
 add-peer <host:port>
+alias <wallet-id> <alias>
 tx <receiver> <amount> <fee>
 msg <wallet> <content>
 messages
@@ -48,6 +49,8 @@ clear
 quit
 <raw json>
 ```
+
+Commands that take wallet ids such as `tx`, `msg`, `balance`, and `alias` accept either a raw wallet address or a locally stored alias.
 
 ## Local Convenience Commands
 

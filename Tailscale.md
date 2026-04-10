@@ -107,6 +107,7 @@ discover
 sync
 localself
 add-peer <host:port>
+alias <wallet-id> <alias>
 tx <receiver> <amount> <fee>
 msg <wallet> <content>
 messages

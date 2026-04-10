@@ -86,6 +86,7 @@ discover
 sync
 localself
 add-peer <host:port>
+alias <wallet-id> <alias>
 tx <receiver> <amount> <fee>
 msg <wallet> <content>
 messages
@@ -101,6 +102,7 @@ quit
 
 Notes:
 
+- `tx`, `msg`, `balance`, and `alias` accept either a raw wallet address or a locally stored alias.
 - `balance` uses the loaded wallet address if no address is given.
 - `mine` mines one block.
 - `automine` keeps mining until `stop` is entered.
