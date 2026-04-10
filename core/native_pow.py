@@ -19,9 +19,16 @@ def mine_pow(
     difficulty_bits: int,
     start_nonce: int = 0,
     progress_interval: int = 0,
+    nonce_step: int = 1,
 ) -> tuple[int, str, bool]:
     module = _load_native_pow_module()
-    return module.mine_pow(prefix, difficulty_bits, start_nonce, progress_interval)
+    return module.mine_pow(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        progress_interval,
+        nonce_step,
+    )
 
 
 def request_pow_cancel() -> None:

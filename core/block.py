@@ -1,7 +1,10 @@
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable
 
 from core.native_pow import mine_pow as native_mine_pow
+from core.native_pow import request_pow_cancel
 from core.native_pow import reset_pow_cancel
 from core.serialization import serialize_block_prefix
 from core.transaction import Transaction
@@ -82,18 +85,46 @@ def proof_of_work(
         raise ValueError("Native proof-of-work only supports core.hashing.sha256_block_hash.")
 
     prefix = serialize_block_prefix(block)
+    worker_count = max(1, os.cpu_count() or 1)
     native_progress_interval = progress_interval if progress_callback is not None else 0
     reset_pow_cancel()
-    nonce, block_hash, cancelled = native_mine_pow(
-        prefix,
-        difficulty_bits,
-        block.nonce,
-        native_progress_interval,
-    )
-    if cancelled:
+
+    def mine_range(worker_index: int) -> tuple[int, str, bool]:
+        worker_progress_interval = 0
+        if native_progress_interval > 0 and worker_index == 0:
+            worker_progress_interval = native_progress_interval * worker_count
+        return native_mine_pow(
+            prefix,
+            difficulty_bits,
+            block.nonce + worker_index,
+            worker_progress_interval,
+            worker_count,
+        )
+
+    winner: tuple[int, str] | None = None
+    cancelled_workers = 0
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(mine_range, worker_index) for worker_index in range(worker_count)]
+        try:
+            for future in as_completed(futures):
+                nonce, block_hash, cancelled = future.result()
+                if cancelled:
+                    cancelled_workers += 1
+                    continue
+
+                winner = (nonce, block_hash)
+                request_pow_cancel()
+                break
+        finally:
+            request_pow_cancel()
+            for future in futures:
+                future.result()
+
+    if winner is None or cancelled_workers == worker_count:
         raise ProofOfWorkCancelled("Proof of work was cancelled.")
-    block.nonce = nonce
-    block.block_hash = block_hash
+
+    block.nonce, block.block_hash = winner
 
     return block.block_hash
 

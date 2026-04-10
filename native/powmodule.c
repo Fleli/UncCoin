@@ -6,12 +6,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <windows.h>
+#else
+#include <stdatomic.h>
+#endif
+
 #define SHA256_HEX_LENGTH 64
 #define SHA256_BINARY_LENGTH 32
 #define NONCE_BUFFER_LENGTH 32
 #define CANCEL_CHECK_INTERVAL 1024
 
-static volatile int cancel_requested = 0;
+#if defined(_MSC_VER) && !defined(__clang__)
+static volatile LONG cancel_requested = 0;
+#define LOAD_CANCEL_REQUESTED() InterlockedCompareExchange(&cancel_requested, 0, 0)
+#define STORE_CANCEL_REQUESTED(value) InterlockedExchange(&cancel_requested, (LONG)(value))
+#else
+static atomic_int cancel_requested = 0;
+#define LOAD_CANCEL_REQUESTED() atomic_load_explicit(&cancel_requested, memory_order_relaxed)
+#define STORE_CANCEL_REQUESTED(value) atomic_store_explicit(&cancel_requested, (value), memory_order_relaxed)
+#endif
 
 typedef struct {
     uint8_t data[64];
@@ -169,13 +183,6 @@ static void sha256_final(sha256_context *context, uint8_t hash[SHA256_BINARY_LEN
     }
 }
 
-static void sha256_digest(const uint8_t *data, size_t length, uint8_t hash[SHA256_BINARY_LENGTH]) {
-    sha256_context context;
-    sha256_init(&context);
-    sha256_update(&context, data, length);
-    sha256_final(&context, hash);
-}
-
 static bool has_leading_zero_bits(const unsigned char *digest, int difficulty_bits) {
     int full_zero_bytes = difficulty_bits / 8;
     int remaining_bits = difficulty_bits % 8;
@@ -211,15 +218,17 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
     int difficulty_bits = 0;
     unsigned long long start_nonce = 0;
     unsigned long long progress_interval = 0;
+    unsigned long long nonce_step = 1;
 
     if (!PyArg_ParseTuple(
             args,
-            "s#i|KK",
+            "s#i|KKK",
             &prefix,
             &prefix_length,
             &difficulty_bits,
             &start_nonce,
-            &progress_interval)) {
+            &progress_interval,
+            &nonce_step)) {
         return NULL;
     }
 
@@ -227,30 +236,35 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "difficulty_bits must be between 0 and 256.");
         return NULL;
     }
-
-    size_t buffer_length = (size_t)prefix_length + NONCE_BUFFER_LENGTH;
-    char *buffer = malloc(buffer_length);
-    if (buffer == NULL) {
-        return PyErr_NoMemory();
+    if (nonce_step == 0) {
+        PyErr_SetString(PyExc_ValueError, "nonce_step must be at least 1.");
+        return NULL;
     }
 
-    memcpy(buffer, prefix, (size_t)prefix_length);
-
+    sha256_context prefix_context;
     unsigned char digest[SHA256_BINARY_LENGTH];
     char hex_digest[SHA256_HEX_LENGTH + 1];
+    char nonce_buffer[NONCE_BUFFER_LENGTH];
     unsigned long long nonce = start_nonce;
+    unsigned long long attempts = 0;
     int nonce_error = 0;
     int cancelled = 0;
 
+    sha256_init(&prefix_context);
+    sha256_update(&prefix_context, (const uint8_t *)prefix, (size_t)prefix_length);
+
     Py_BEGIN_ALLOW_THREADS
     while (true) {
-        if (cancel_requested && nonce % CANCEL_CHECK_INTERVAL == 0) {
+        if (
+            attempts % CANCEL_CHECK_INTERVAL == 0
+            && LOAD_CANCEL_REQUESTED()
+        ) {
             cancelled = 1;
             break;
         }
 
         int nonce_length = snprintf(
-            buffer + prefix_length,
+            nonce_buffer,
             NONCE_BUFFER_LENGTH,
             "%llu",
             nonce
@@ -261,19 +275,22 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
             break;
         }
 
-        sha256_digest(
-            (const uint8_t *)buffer,
-            (size_t)prefix_length + (size_t)nonce_length,
-            digest
+        sha256_context nonce_context = prefix_context;
+        sha256_update(
+            &nonce_context,
+            (const uint8_t *)nonce_buffer,
+            (size_t)nonce_length
         );
+        sha256_final(&nonce_context, digest);
 
         if (has_leading_zero_bits(digest, difficulty_bits)) {
             break;
         }
 
-        nonce += 1;
+        attempts += 1;
+        nonce += nonce_step;
 
-        if (progress_interval > 0 && nonce % progress_interval == 0) {
+        if (progress_interval > 0 && attempts > 0 && attempts % progress_interval == 0) {
             printf("\rTried %llu nonces...", nonce);
             fflush(stdout);
         }
@@ -281,24 +298,22 @@ static PyObject *mine_pow(PyObject *Py_UNUSED(self), PyObject *args) {
     Py_END_ALLOW_THREADS
 
     if (nonce_error) {
-        free(buffer);
         PyErr_SetString(PyExc_RuntimeError, "Failed to serialize nonce.");
         return NULL;
     }
 
     digest_to_hex(digest, hex_digest);
-    free(buffer);
 
     return Py_BuildValue("Ksi", nonce, hex_digest, cancelled);
 }
 
 static PyObject *request_cancel(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
-    cancel_requested = 1;
+    STORE_CANCEL_REQUESTED(1);
     Py_RETURN_NONE;
 }
 
 static PyObject *reset_cancel(PyObject *Py_UNUSED(self), PyObject *Py_UNUSED(args)) {
-    cancel_requested = 0;
+    STORE_CANCEL_REQUESTED(0);
     Py_RETURN_NONE;
 }
 
