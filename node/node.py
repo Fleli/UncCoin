@@ -451,9 +451,14 @@ class Node:
             return None, -1
         return self.blockchain.main_tip_hash, self.blockchain.blocks[-1].block_id
 
-    def _handle_chain_response(self, blocks: list[Block]) -> None:
+    def _handle_chain_response(self, blocks: list[Block]) -> dict[str, int]:
         if self.blockchain is None:
-            return
+            return {
+                "accepted": 0,
+                "duplicates": 0,
+                "orphans": 0,
+                "rejected": 0,
+            }
 
         accepted_blocks = 0
         duplicate_blocks = 0
@@ -482,10 +487,16 @@ class Node:
                 )
 
         print(
-            "Chain sync complete: "
+            "Chain sync chunk processed: "
             f"accepted {accepted_blocks}, duplicates {duplicate_blocks}, "
             f"orphans {orphaned_blocks}, rejected {rejected_blocks}."
         )
+        return {
+            "accepted": accepted_blocks,
+            "duplicates": duplicate_blocks,
+            "orphans": orphaned_blocks,
+            "rejected": rejected_blocks,
+        }
 
     def _handle_wallet_message(self, wallet_message: dict) -> bool:
         sender_public_key_data = wallet_message.get("sender_public_key")

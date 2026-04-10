@@ -9,6 +9,8 @@ from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 
+CHAIN_SYNC_CHUNK_SIZE = 3
+
 
 @dataclass(frozen=True)
 class PeerAddress:
@@ -25,7 +27,7 @@ class P2PServer:
     on_wallet_message: Callable[[dict], bool] | None = None
     on_chain_summary: Callable[[], tuple[str | None, int]] | None = None
     on_chain_request: Callable[[], list[Block]] | None = None
-    on_chain_response: Callable[[list[Block]], None] | None = None
+    on_chain_response: Callable[[list[Block]], dict[str, int] | None] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     seen_block_hashes: set[str] = field(default_factory=set)
@@ -174,8 +176,20 @@ class P2PServer:
     async def request_peer_list(self, host: str, port: int) -> None:
         await self.send_to_peer(host, port, {"type": "peer_request"})
 
-    async def request_chain(self, host: str, port: int) -> None:
-        await self.send_to_peer(host, port, {"type": "chain_request"})
+    async def request_chain(
+        self,
+        host: str,
+        port: int,
+        start_height: int = 0,
+    ) -> None:
+        await self.send_to_peer(
+            host,
+            port,
+            {
+                "type": "chain_request",
+                "start_height": max(start_height, 0),
+            },
+        )
 
     async def discover_peers(self) -> None:
         for peer in list(self.active_connections):
@@ -183,8 +197,10 @@ class P2PServer:
 
     async def request_chain_sync(self) -> int:
         peers = list(self.active_connections)
+        _, local_height = self._get_chain_summary()
+        start_height = max(local_height + 1, 0)
         for peer in peers:
-            await self.request_chain(peer.host, peer.port)
+            await self.request_chain(peer.host, peer.port, start_height=start_height)
         return len(peers)
 
     async def send_to_peer(self, host: str, port: int, message: dict) -> None:
@@ -254,10 +270,20 @@ class P2PServer:
                 f"(height {remote_height}, tip {self._short_hash(remote_tip_hash)})"
             )
             if self._should_request_chain(remote_tip_hash, remote_height):
-                await self.request_chain(advertised_host, advertised_port)
+                local_tip_hash, local_height = self._get_chain_summary()
+                start_height = 0
+                if remote_height > local_height:
+                    start_height = local_height + 1
+                elif remote_tip_hash == local_tip_hash:
+                    start_height = local_height + 1
+                await self.request_chain(
+                    advertised_host,
+                    advertised_port,
+                    start_height=max(start_height, 0),
+                )
                 print(
                     f"Requesting chain sync from {advertised_host}:{advertised_port} "
-                    f"after handshake"
+                    f"after handshake starting at height {max(start_height, 0)}"
                 )
             return advertised_peer
 
@@ -284,18 +310,72 @@ class P2PServer:
             return peer
 
         if message_type == "chain_request":
-            await self._send_chain(peer)
-            print(f"Chain requested by {peer.host}:{peer.port}")
+            start_height = max(int(message.get("start_height", 0)), 0)
+            await self._send_chain_chunk(peer, start_height)
+            print(
+                f"Chain chunk requested by {peer.host}:{peer.port} "
+                f"from height {start_height}"
+            )
             return peer
 
-        if message_type == "chain_response":
+        if message_type in {"chain_chunk", "chain_response"}:
             blocks = [
                 Block.from_dict(block_data, hash_function=sha256_block_hash)
                 for block_data in message.get("blocks", [])
             ]
-            if self.on_chain_response is not None:
+            start_height = max(int(message.get("start_height", 0)), 0)
+            remote_height = int(message.get("height", -1))
+            done = bool(message.get("done", message_type == "chain_response"))
+            raw_next_start_height = message.get("next_start_height")
+            next_start_height = (
+                start_height + len(blocks)
+                if raw_next_start_height is None
+                else int(raw_next_start_height)
+            )
+            sync_result = (
                 self.on_chain_response(blocks)
-            print(f"Chain received from {peer.host}:{peer.port} ({len(blocks)} blocks)")
+                if self.on_chain_response is not None
+                else None
+            )
+            print(
+                f"Chain chunk received from {peer.host}:{peer.port} "
+                f"({len(blocks)} blocks starting at height {start_height})"
+            )
+
+            _, local_height = self._get_chain_summary()
+            accepted_blocks = 0 if sync_result is None else sync_result.get("accepted", 0)
+            orphaned_blocks = 0 if sync_result is None else sync_result.get("orphans", 0)
+            rejected_blocks = 0 if sync_result is None else sync_result.get("rejected", 0)
+
+            if (
+                start_height > 0
+                and accepted_blocks == 0
+                and orphaned_blocks > 0
+            ):
+                await self.request_chain(peer.host, peer.port, start_height=0)
+                print(
+                    f"Chain chunk from {peer.host}:{peer.port} did not attach. "
+                    "Retrying sync from genesis."
+                )
+                return peer
+
+            if remote_height > local_height and not done:
+                if accepted_blocks == 0 and rejected_blocks > 0 and orphaned_blocks == 0:
+                    print(
+                        f"Chain sync from {peer.host}:{peer.port} made no progress at "
+                        f"height {start_height}. Stopping automatic sync."
+                    )
+                    return peer
+
+                await self.request_chain(
+                    peer.host,
+                    peer.port,
+                    start_height=max(next_start_height, 0),
+                )
+                print(
+                    f"Requesting next chain chunk from {peer.host}:{peer.port} "
+                    f"starting at height {max(next_start_height, 0)}"
+                )
             return peer
 
         if message_type == "transaction":
@@ -403,14 +483,22 @@ class P2PServer:
             },
         )
 
-    async def _send_chain(self, peer: PeerAddress) -> None:
+    async def _send_chain_chunk(self, peer: PeerAddress, start_height: int) -> None:
         blocks = self.on_chain_request() if self.on_chain_request is not None else []
+        chain_height = blocks[-1].block_id if blocks else -1
+        chunk_blocks = blocks[start_height:start_height + CHAIN_SYNC_CHUNK_SIZE]
+        next_start_height = start_height + len(chunk_blocks)
+        done = next_start_height > chain_height
         await self.send_to_peer(
             peer.host,
             peer.port,
             {
-                "type": "chain_response",
-                "blocks": [block.to_dict() for block in blocks],
+                "type": "chain_chunk",
+                "start_height": start_height,
+                "height": chain_height,
+                "done": done,
+                "next_start_height": None if done else next_start_height,
+                "blocks": [block.to_dict() for block in chunk_blocks],
             },
         )
 
