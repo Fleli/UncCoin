@@ -102,6 +102,7 @@ balance [address]
 balances
 balances >100
 balances <50
+txtbalances <relative-path>
 clear
 quit
 ```
