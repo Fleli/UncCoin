@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Callable
 
 from core.block import Block, get_block_verification_error, proof_of_work
+from core.genesis import get_genesis_block_validation_error
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
@@ -326,11 +327,9 @@ class Blockchain:
         block_states = self.block_states if states is None else states
 
         if block.previous_hash == GENESIS_PREVIOUS_HASH:
-            if block.block_id != 0:
-                return (
-                    None,
-                    f"genesis block must have block_id 0, got {block.block_id}",
-                )
+            genesis_error = get_genesis_block_validation_error(block)
+            if genesis_error is not None:
+                return None, genesis_error
             if any(
                 existing_block.previous_hash == GENESIS_PREVIOUS_HASH
                 and existing_hash != block.block_hash

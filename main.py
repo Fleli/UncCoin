@@ -6,11 +6,10 @@ from config import DEFAULT_DIFFICULTY_GROWTH_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
 from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
-from core.block import Block, proof_of_work
+from core.genesis import create_genesis_block
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
 from core.transaction import Transaction
-from core.utils.constants import GENESIS_PREVIOUS_HASH
 from wallet import create_wallet
 
 
@@ -49,17 +48,7 @@ def main() -> None:
         difficulty_growth_bits=DEFAULT_DIFFICULTY_GROWTH_BITS,
     )
 
-    genesis_block = Block(
-        block_id=0,
-        transactions=[],
-        hash_function=sha256_block_hash,
-        description="Genesis block",
-        previous_hash=GENESIS_PREVIOUS_HASH,
-    )
-    proof_of_work(
-        genesis_block,
-        blockchain.get_difficulty_bits_for_height(genesis_block.block_id),
-    )
+    genesis_block = create_genesis_block(sha256_block_hash)
     blockchain.add_block(genesis_block)
 
     reward_block = blockchain.mine_pending_transactions(

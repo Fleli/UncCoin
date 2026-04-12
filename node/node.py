@@ -11,12 +11,13 @@ from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
 from config import DEFAULT_DIFFICULTY_GROWTH_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
-from core.block import Block, ProofOfWorkCancelled, proof_of_work
+from core.block import Block, ProofOfWorkCancelled
+from core.genesis import create_genesis_block
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
 from core.native_pow import request_pow_cancel
 from core.transaction import Transaction
-from core.utils.constants import GENESIS_PREVIOUS_HASH, MINING_REWARD_SENDER
+from core.utils.constants import MINING_REWARD_SENDER
 from node.alias_store import load_aliases, save_aliases
 from network.p2p_server import P2PServer
 from node.message_store import load_messages, save_messages
@@ -656,27 +657,24 @@ class Node:
         if self.blockchain is None or self.blockchain.blocks_by_hash:
             return
 
-        genesis_block = Block(
-            block_id=0,
-            transactions=[],
-            hash_function=sha256_block_hash,
-            description="Genesis block",
-            previous_hash=GENESIS_PREVIOUS_HASH,
-        )
-        proof_of_work(
-            genesis_block,
-            self.blockchain.get_difficulty_bits_for_height(genesis_block.block_id),
-        )
+        genesis_block = create_genesis_block(sha256_block_hash)
         self.blockchain.add_block(genesis_block)
 
     def _load_persisted_blockchain(self) -> None:
         if self.wallet is None:
             return
 
-        persisted_blockchain = load_blockchain_state(
-            self.wallet.address,
-            hash_function=sha256_block_hash,
-        )
+        try:
+            persisted_blockchain = load_blockchain_state(
+                self.wallet.address,
+                hash_function=sha256_block_hash,
+            )
+        except ValueError as error:
+            print(
+                f"Ignoring persisted blockchain for {self.wallet.address}: {error}",
+                flush=True,
+            )
+            return
         if persisted_blockchain is None:
             return
 
