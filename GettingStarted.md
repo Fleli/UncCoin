@@ -4,6 +4,13 @@ This guide is for running UncCoin locally on one machine first.
 
 If you want multi-device networking afterward, see [Tailscale.md](/Users/frederikedvardsen/Desktop/unccoin/Tailscale.md).
 
+## 0. Prerequisites (maybe)
+
+```bash
+sudo apt install gcc
+sudo apt install python3.12-dev build-essential
+```
+
 ## 1. Clone the Repository
 
 ```bash
