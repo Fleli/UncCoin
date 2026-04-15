@@ -1,22 +1,29 @@
 # UncCoin
 
-UncCoin is a toy proof-of-work cryptocurrency written in Python, with the mining loop moved into C for speed.
+UncCoin is a toy but fairly complete proof-of-work cryptocurrency built in Python. It supports signed wallets and transactions, balances and nonces, miner rewards and fees, peer-to-peer transaction and block relay, chain sync, orphan handling, persistence, and an interactive node CLI.
 
-GitHub repository:
+## What It Does
 
-- https://github.com/Fleli/UncCoin
-
-## What It Has
-
-- signed transactions
-- balances and nonces
+- signed transactions with balances and nonces
 - fixed mining rewards and miner fees
-- proof of work
-- P2P transaction and block relay
+- SHA-256 proof of work
+- P2P transaction, block, and wallet-message relay
 - chain sync on connect
 - orphan block handling
 - canonical-chain persistence
 - interactive node CLI
+- private automine mode for dedicated miners
+
+## PoW Evolution
+
+The proof-of-work rule stayed simple: find a block hash with enough leading zero bits. The implementation evolved like this:
+
+- started as a pure Python miner
+- moved the hot nonce-search loop into a native C extension
+- added Apple Metal support for local GPU mining on macOS
+- added a Linux/CUDA backend, chunked CPU/GPU scheduling, and local autotuning
+
+Shoutout to Niklas Unneland, who built [unccoin.no](https://unccoin.no/) around the project.
 
 ## Docs
 
@@ -103,6 +110,8 @@ caches the fastest result in `state/mining_tuning.json`. This only affects local
 
 For a dedicated fast miner, the node CLI supports `--private-automine`.
 
+The assumption behind preferring a private branch tip is majority network hashpower, so it is effectively a 51% attack strategy.
+
 In that mode the node:
 
 - keeps mining on a preferred branch tip instead of restarting on every competing head
@@ -125,6 +134,8 @@ UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <po
 ## Runpod 4090
 
 The repo now has a Linux/CUDA proof-of-work backend for NVIDIA GPUs.
+
+In one run, the cloud CUDA miner joined at `12.4.2026, 17:50:53`. By `15.4.2026, 11:11:53`, it had produced `12279` block rewards at `10` coins each, about `188` blocks per hour, or roughly one block every `19` seconds.
 
 For a simple Runpod setup:
 
