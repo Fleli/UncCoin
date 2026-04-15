@@ -89,7 +89,9 @@ static const uint32_t SHA256_K[64] = {
 
 #define SHA256_RIGHT_ROTATE(value, bits) (((value) >> (bits)) | ((value) << (32U - (bits))))
 
+#if UNCCOIN_HAS_ARM_SHA2_INTRINSICS
 static int cpu_sha256_acceleration_available = 0;
+#endif
 
 static void sha256_transform_scalar(sha256_context *context, const uint8_t data[64]) {
     uint32_t schedule[64];
@@ -793,11 +795,13 @@ static PyObject *mine_pow_gpu(PyObject *Py_UNUSED(self), PyObject *args) {
     unsigned long long nonce_step = 1;
     unsigned long long nonces_per_thread = 0;
     unsigned long long threads_per_group = 0;
+#ifdef __APPLE__
     unsigned long long nonce = 0;
     char hex_digest[SHA256_HEX_LENGTH + 1];
     char error_message[256];
     int cancelled = 0;
     bool success = false;
+#endif
 
     if (!PyArg_ParseTuple(
             args,
@@ -855,6 +859,7 @@ static PyObject *mine_pow_gpu_chunk(PyObject *Py_UNUSED(self), PyObject *args) {
     unsigned long long nonces_per_thread = 0;
     unsigned long long threads_per_group = 0;
     unsigned long long batch_size = 0;
+#ifdef __APPLE__
     unsigned long long nonce = 0;
     unsigned long long attempts = 0;
     char hex_digest[SHA256_HEX_LENGTH + 1];
@@ -862,6 +867,7 @@ static PyObject *mine_pow_gpu_chunk(PyObject *Py_UNUSED(self), PyObject *args) {
     int found = 0;
     int cancelled = 0;
     bool success = false;
+#endif
 
     if (!PyArg_ParseTuple(
             args,

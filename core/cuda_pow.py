@@ -535,7 +535,7 @@ def _mine_pow_gpu_range(
     launch_nonces_per_thread = max(1, nonces_per_thread or DEFAULT_GPU_NONCES_PER_THREAD)
     dispatch_batch_size = max(1, batch_size or DEFAULT_GPU_BATCH_SIZE)
     prefix_state = cupy.asarray(prepared_prefix.state, dtype=cupy.uint32)
-    prefix_data = cupy.asarray(prepared_prefix.data, dtype=cupy.uint8)
+    prefix_data = cupy.asarray(list(prepared_prefix.data), dtype=cupy.uint8)
 
     attempts = 0
     current_start_nonce = start_nonce
