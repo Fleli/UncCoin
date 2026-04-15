@@ -87,8 +87,10 @@ class Blockchain:
 
         return self.difficulty_bits + (growth_steps * self.difficulty_growth_bits)
 
-    def get_next_block_difficulty_bits(self) -> int:
-        return self.get_difficulty_bits_for_height(self._get_canonical_state().height + 1)
+    def get_next_block_difficulty_bits(self, tip_hash: str | None = None) -> int:
+        return self.get_difficulty_bits_for_height(
+            self._get_state_for_tip(tip_hash).height + 1
+        )
 
     def get_chain(self, tip_hash: str | None = None) -> list[Block]:
         chain: list[Block] = []
@@ -108,11 +110,11 @@ class Blockchain:
         chain.reverse()
         return chain
 
-    def get_balance(self, address: str) -> Decimal:
-        return self._get_canonical_state().balances.get(address, Decimal("0.0"))
+    def get_balance(self, address: str, tip_hash: str | None = None) -> Decimal:
+        return self._get_state_for_tip(tip_hash).balances.get(address, Decimal("0.0"))
 
-    def get_available_balance(self, address: str) -> Decimal:
-        state = self._get_canonical_state().copy()
+    def get_available_balance(self, address: str, tip_hash: str | None = None) -> Decimal:
+        state = self._get_state_for_tip(tip_hash).copy()
 
         for transaction in self.pending_transactions:
             if self._apply_transaction_to_state_error(transaction, state) is not None:
@@ -120,8 +122,8 @@ class Blockchain:
 
         return state.balances.get(address, Decimal("0.0"))
 
-    def get_next_nonce(self, address: str) -> int:
-        state = self._get_canonical_state().copy()
+    def get_next_nonce(self, address: str, tip_hash: str | None = None) -> int:
+        state = self._get_state_for_tip(tip_hash).copy()
 
         for transaction in self.pending_transactions:
             if self._apply_transaction_to_state_error(transaction, state) is not None:
@@ -129,11 +131,11 @@ class Blockchain:
 
         return state.nonces.get(address, 0)
 
-    def add_transaction(self, transaction: Transaction) -> None:
+    def add_transaction(self, transaction: Transaction, tip_hash: str | None = None) -> None:
         if is_mining_reward_transaction(transaction):
             raise ValueError("Mining reward transactions can only be created by the blockchain.")
 
-        state = self._get_canonical_state().copy()
+        state = self._get_state_for_tip(tip_hash).copy()
         for index, pending_transaction in enumerate(self.pending_transactions):
             pending_error = self._apply_transaction_to_state_error(pending_transaction, state)
             if pending_error is not None:
@@ -153,11 +155,15 @@ class Blockchain:
         miner_address: str,
         description: str,
         progress_callback: Callable[[int], None] | None = None,
+        tip_hash: str | None = None,
+        reconcile_pending_transactions: bool = True,
     ) -> Block:
-        if self.main_tip_hash is None:
+        base_tip_hash = self.main_tip_hash if tip_hash is None else tip_hash
+        if base_tip_hash is None:
             raise ValueError("Genesis block must be created before mining.")
 
-        selected_transactions = self._select_transactions_for_block()
+        base_state = self._get_state_for_tip(base_tip_hash)
+        selected_transactions = self._select_transactions_for_block(base_tip_hash)
         total_fees = sum(
             (transaction.fee for transaction in selected_transactions),
             start=Decimal("0.0"),
@@ -169,11 +175,11 @@ class Blockchain:
         block_transactions = [reward_transaction, *selected_transactions]
 
         block = Block(
-            block_id=self._get_canonical_state().height + 1,
+            block_id=base_state.height + 1,
             transactions=block_transactions,
             hash_function=self.hash_function,
             description=description,
-            previous_hash=self.main_tip_hash,
+            previous_hash=base_tip_hash,
         )
         proof_of_work(
             block,
@@ -181,7 +187,10 @@ class Blockchain:
             progress_callback=progress_callback,
         )
 
-        add_result = self.add_block_result(block)
+        add_result = self.add_block_result(
+            block,
+            reconcile_pending_transactions=reconcile_pending_transactions,
+        )
         if add_result.status != "accepted":
             raise ValueError(
                 "Mined block failed validation: "
@@ -190,13 +199,34 @@ class Blockchain:
 
         return block
 
-    def add_block(self, block: Block) -> bool:
-        return self.add_block_result(block).status == "accepted"
+    def add_block(
+        self,
+        block: Block,
+        reconcile_pending_transactions: bool = True,
+    ) -> bool:
+        return (
+            self.add_block_result(
+                block,
+                reconcile_pending_transactions=reconcile_pending_transactions,
+            ).status
+            == "accepted"
+        )
 
-    def add_block_with_status(self, block: Block) -> str:
-        return self.add_block_result(block).status
+    def add_block_with_status(
+        self,
+        block: Block,
+        reconcile_pending_transactions: bool = True,
+    ) -> str:
+        return self.add_block_result(
+            block,
+            reconcile_pending_transactions=reconcile_pending_transactions,
+        ).status
 
-    def add_block_result(self, block: Block) -> BlockAcceptanceResult:
+    def add_block_result(
+        self,
+        block: Block,
+        reconcile_pending_transactions: bool = True,
+    ) -> BlockAcceptanceResult:
         block_hash = block.block_hash
         if block_hash in self.blocks_by_hash:
             return BlockAcceptanceResult("duplicate", "block already exists")
@@ -228,7 +258,8 @@ class Blockchain:
         if self._should_update_main_tip(block_hash):
             self.main_tip_hash = block_hash
 
-        self._reconcile_pending_transactions(previous_head)
+        if reconcile_pending_transactions:
+            self._reconcile_pending_transactions(previous_head)
         return BlockAcceptanceResult("accepted")
 
     def verify_chain(self) -> bool:
@@ -356,6 +387,36 @@ class Blockchain:
             return ChainState()
         return self.block_states[self.main_tip_hash]
 
+    def _get_state_for_tip(self, tip_hash: str | None = None) -> ChainState:
+        resolved_tip_hash = self.main_tip_hash if tip_hash is None else tip_hash
+        if resolved_tip_hash is None:
+            return ChainState()
+
+        state = self.block_states.get(resolved_tip_hash)
+        if state is None:
+            raise ValueError(f"Unknown tip hash {resolved_tip_hash[:12]}")
+        return state
+
+    def is_ancestor(self, ancestor_hash: str, descendant_hash: str | None) -> bool:
+        if (
+            not ancestor_hash
+            or descendant_hash is None
+            or ancestor_hash not in self.block_states
+            or descendant_hash not in self.block_states
+        ):
+            return False
+
+        current_hash = descendant_hash
+        while True:
+            if current_hash == ancestor_hash:
+                return True
+
+            current_block = self.blocks_by_hash.get(current_hash)
+            if current_block is None or current_block.previous_hash == GENESIS_PREVIOUS_HASH:
+                return False
+
+            current_hash = current_block.previous_hash
+
     def _should_update_main_tip(self, block_hash: str) -> bool:
         if self.main_tip_hash is None:
             return True
@@ -393,13 +454,13 @@ class Blockchain:
 
         return sorted(candidates)[0]
 
-    def _select_transactions_for_block(self) -> list[Transaction]:
+    def _select_transactions_for_block(self, tip_hash: str | None = None) -> list[Transaction]:
         remaining_transactions = sorted(
             self.pending_transactions,
             key=lambda transaction: transaction.fee,
             reverse=True,
         )
-        state = self._get_canonical_state().copy()
+        state = self._get_state_for_tip(tip_hash).copy()
         selected_transactions: list[Transaction] = []
 
         while remaining_transactions and len(selected_transactions) < MAX_TRANSACTIONS_PER_BLOCK - 1:
@@ -426,9 +487,21 @@ class Blockchain:
 
         return selected_transactions
 
-    def _reconcile_pending_transactions(self, previous_head: str | None) -> None:
+    def reconcile_pending_transactions(
+        self,
+        previous_head: str | None,
+        current_head: str | None = None,
+    ) -> None:
+        self._reconcile_pending_transactions(previous_head, current_head)
+
+    def _reconcile_pending_transactions(
+        self,
+        previous_head: str | None,
+        current_head: str | None = None,
+    ) -> None:
         previous_transactions = self._collect_transactions(previous_head)
-        current_transactions = self._collect_transactions(self.main_tip_hash)
+        resolved_current_head = self.main_tip_hash if current_head is None else current_head
+        current_transactions = self._collect_transactions(resolved_current_head)
         current_transaction_ids = {
             sha256_transaction_hash(transaction)
             for transaction in current_transactions

@@ -66,6 +66,14 @@ Example:
 ./scripts/run.sh mywallet 9000
 ```
 
+To run a dedicated miner that keeps extending its own preferred branch tip:
+
+```bash
+UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh mywallet 9000
+```
+
+In that mode, wallet balances, nonces, and pending transaction checks also follow the preferred tip.
+
 ## 5. Connect to Other Nodes
 
 After the node is running, connect from the interactive prompt:

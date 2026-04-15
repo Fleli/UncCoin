@@ -24,11 +24,24 @@ async def _run_from_cli() -> None:
         "--wallet-name",
         help="Optional wallet name to load from the state/wallets directory.",
     )
+    parser.add_argument(
+        "--private-automine",
+        action="store_true",
+        help=(
+            "Keep mining on a preferred private branch tip and only rebase "
+            "when that same branch advances."
+        ),
+    )
     args = parser.parse_args()
 
     print("Loading node...", flush=True)
     wallet = load_wallet(args.wallet_name) if args.wallet_name else None
-    node = Node(host=args.host, port=args.port, wallet=wallet)
+    node = Node(
+        host=args.host,
+        port=args.port,
+        wallet=wallet,
+        private_automine=args.private_automine,
+    )
     await node.start()
 
     if args.peer:

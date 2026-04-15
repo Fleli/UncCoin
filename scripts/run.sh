@@ -15,6 +15,10 @@ cd "$ROOT_DIR"
 
 ARGS=(python3 -m node.cli --host 0.0.0.0 --wallet-name "$WALLET_NAME" --port "$PORT")
 
+if [[ "${UNCCOIN_PRIVATE_AUTOMINE:-0}" == "1" ]]; then
+  ARGS+=(--private-automine)
+fi
+
 for PEER in "$@"; do
   ARGS+=(--peer "$PEER")
 done

@@ -87,3 +87,20 @@ Mining can be tuned with environment variables:
 
 When `UNCCOIN_MINING_CPU_WORKERS` is not set, UncCoin benchmarks a few local worker counts once and
 caches the fastest result in `state/mining_tuning.json`. This only affects local mining execution.
+
+## Private Automine Mode
+
+For a dedicated fast miner, the node CLI supports `--private-automine`.
+
+In that mode the node:
+
+- keeps mining on a preferred branch tip instead of restarting on every competing head
+- still rebases if a newly accepted block extends that same preferred branch
+- uses that preferred tip for wallet balances, nonces, and pending transaction validation
+- broadcasts locally mined blocks as usual
+
+With the helper script you can enable it like this:
+
+```bash
+UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+```

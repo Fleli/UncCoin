@@ -98,9 +98,14 @@ def load_blockchain_state(
         ),
     )
 
+    # Startup loads a canonical chain into an empty in-memory blockchain, so
+    # per-block pending reconciliation only adds quadratic overhead.
     for block_data in state.get("blocks", []):
         block = Block.from_dict(block_data, hash_function=hash_function)
-        if not blockchain.add_block(block):
+        if not blockchain.add_block(
+            block,
+            reconcile_pending_transactions=False,
+        ):
             raise ValueError(f"Persisted block {block.block_hash[:12]} is invalid.")
 
     for transaction_data in state.get("pending_transactions", []):

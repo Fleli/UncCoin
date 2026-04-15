@@ -32,6 +32,7 @@ class Node:
     port: int
     wallet: Wallet | None = None
     blockchain: Blockchain | None = None
+    private_automine: bool = False
     difficulty_bits: int = DEFAULT_DIFFICULTY_BITS
     genesis_difficulty_bits: int = DEFAULT_GENESIS_DIFFICULTY_BITS
     difficulty_growth_factor: int = DEFAULT_DIFFICULTY_GROWTH_FACTOR
@@ -42,6 +43,7 @@ class Node:
     automine_description: str = field(default="", init=False)
     _automine_stop_requested: bool = field(default=False, init=False)
     _current_automine_tip_hash: str | None = field(default=None, init=False)
+    _private_automine_tip_hash: str | None = field(default=None, init=False)
     orphan_blocks_by_parent_hash: dict[str, list[Block]] = field(default_factory=dict, init=False)
     orphan_block_hashes: set[str] = field(default_factory=set, init=False)
     message_history: list[dict] = field(default_factory=list, init=False)
@@ -85,6 +87,11 @@ class Node:
         if self.wallet is not None:
             wallet_name = self.wallet.name or "unnamed"
             print(f"Loaded wallet '{wallet_name}' with address {self.wallet.address}")
+        if self.private_automine:
+            print(
+                "Private automine mode enabled. Mining keeps a preferred branch tip.",
+                flush=True,
+            )
         self._reset_autosend_balance_baseline()
 
     async def serve_forever(self) -> None:
@@ -132,7 +139,10 @@ class Node:
     def get_next_nonce(self, address: str) -> int:
         if self.blockchain is None:
             return 0
-        return self.blockchain.get_next_nonce(address)
+        return self.blockchain.get_next_nonce(
+            address,
+            tip_hash=self._state_tip_hash(),
+        )
 
     def create_signed_transaction(
         self,
@@ -192,7 +202,90 @@ class Node:
     def _next_mining_difficulty_bits(self) -> int:
         if self.blockchain is None:
             raise ValueError("A blockchain is required to mine.")
-        return self.blockchain.get_next_block_difficulty_bits()
+        return self.blockchain.get_next_block_difficulty_bits(
+            self._mining_tip_hash(),
+        )
+
+    def _mining_tip_hash(self) -> str | None:
+        if self.blockchain is None:
+            return None
+        if not self.private_automine:
+            return self.blockchain.main_tip_hash
+
+        if (
+            self._private_automine_tip_hash is not None
+            and self._private_automine_tip_hash in self.blockchain.block_states
+        ):
+            return self._private_automine_tip_hash
+
+        self._private_automine_tip_hash = self.blockchain.main_tip_hash
+        return self._private_automine_tip_hash
+
+    def _mining_status_text(self) -> str:
+        difficulty_bits = self._next_mining_difficulty_bits()
+        if not self.private_automine:
+            return f"N={difficulty_bits}"
+
+        tip_hash = self._mining_tip_hash()
+        if tip_hash is None:
+            return f"N={difficulty_bits}, private tip=unset"
+        return f"N={difficulty_bits}, private tip={tip_hash[:12]}"
+
+    def _state_tip_hash(self) -> str | None:
+        return self._mining_tip_hash()
+
+    def _record_local_mining_tip(self, block_hash: str) -> None:
+        if self.private_automine:
+            self._private_automine_tip_hash = block_hash
+
+    def _advance_private_automine_tip(self, block_hash: str) -> bool:
+        if (
+            not self.private_automine
+            or self.blockchain is None
+            or self._private_automine_tip_hash is None
+            or block_hash == self._private_automine_tip_hash
+        ):
+            return False
+
+        if not self.blockchain.is_ancestor(self._private_automine_tip_hash, block_hash):
+            return False
+
+        self._private_automine_tip_hash = block_hash
+        return True
+
+    def _handle_accepted_block_for_automine(self, block: Block) -> None:
+        if self.blockchain is None:
+            return
+
+        if self.private_automine:
+            private_tip_advanced = self._advance_private_automine_tip(block.block_hash)
+            if (
+                private_tip_advanced
+                and self.automine_task is not None
+                and not self.automine_task.done()
+                and self._current_automine_tip_hash is not None
+                and self._private_automine_tip_hash is not None
+                and self.blockchain.is_ancestor(
+                    self._current_automine_tip_hash,
+                    self._private_automine_tip_hash,
+                )
+            ):
+                request_pow_cancel()
+            return
+
+        self._cancel_stale_automine_if_needed()
+
+    def _reconcile_pending_transactions_for_state_tip(
+        self,
+        previous_state_tip_hash: str | None,
+    ) -> None:
+        if self.blockchain is None or not self.private_automine:
+            return
+
+        self.blockchain.reconcile_pending_transactions(
+            previous_state_tip_hash,
+            self._state_tip_hash(),
+        )
 
     async def mine_pending_transactions(self, description: str) -> Block:
         if self.wallet is None:
@@ -200,10 +293,15 @@ class Node:
         if self.blockchain is None:
             raise ValueError("A blockchain is required to mine.")
 
+        previous_state_tip_hash = self._state_tip_hash()
         block = self.blockchain.mine_pending_transactions(
             miner_address=self.wallet.address,
             description=description,
+            tip_hash=self._mining_tip_hash(),
+            reconcile_pending_transactions=not self.private_automine,
         )
+        self._record_local_mining_tip(block.block_hash)
+        self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -214,13 +312,18 @@ class Node:
         if self.blockchain is None:
             raise ValueError("A blockchain is required to mine.")
 
-        print(f"Mining... (N={self._next_mining_difficulty_bits()})", flush=True)
+        print(f"Mining... ({self._mining_status_text()})", flush=True)
+        previous_state_tip_hash = self._state_tip_hash()
         block = self.blockchain.mine_pending_transactions(
             miner_address=self.wallet.address,
             description=description,
             progress_callback=self._report_mining_progress,
+            tip_hash=self._mining_tip_hash(),
+            reconcile_pending_transactions=not self.private_automine,
         )
         self._clear_mining_progress()
+        self._record_local_mining_tip(block.block_hash)
+        self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -233,6 +336,7 @@ class Node:
         if self.blockchain is None:
             raise ValueError("A blockchain is required to mine.")
 
+        self._mining_tip_hash()
         self.automine_description = description
         self._automine_stop_requested = False
         self.automine_task = asyncio.create_task(self._automine_loop())
@@ -252,9 +356,9 @@ class Node:
 
         try:
             while not self._automine_stop_requested:
-                self._current_automine_tip_hash = self.blockchain.main_tip_hash
+                self._current_automine_tip_hash = self._mining_tip_hash()
                 print(
-                    f"Automining... (N={self._next_mining_difficulty_bits()})",
+                    f"Automining... ({self._mining_status_text()})",
                     flush=True,
                 )
                 block = await asyncio.to_thread(
@@ -262,8 +366,10 @@ class Node:
                     self.wallet.address,
                     self.automine_description,
                     self._report_mining_progress,
+                    self._current_automine_tip_hash,
                 )
                 self._clear_mining_progress()
+                self._record_local_mining_tip(block.block_hash)
                 await self.broadcast_block(block)
                 self._maybe_schedule_autosend()
                 print(
@@ -273,7 +379,7 @@ class Node:
         except ProofOfWorkCancelled:
             self._clear_mining_progress()
             if not self._automine_stop_requested:
-                print("\nRestarting automine on newer chain head.", flush=True)
+                print("\nRestarting automine on newer preferred tip.", flush=True)
                 self.automine_task = asyncio.create_task(self._automine_loop())
                 return
         except ValueError as error:
@@ -544,7 +650,10 @@ class Node:
             return False, "no blockchain is loaded"
 
         try:
-            self.blockchain.add_transaction(transaction)
+            self.blockchain.add_transaction(
+                transaction,
+                tip_hash=self._state_tip_hash(),
+            )
         except ValueError as error:
             return False, str(error)
 
@@ -733,14 +842,19 @@ class Node:
     def get_balance(self, address: str) -> str:
         if self.blockchain is None:
             return "0.0"
-        return str(self.blockchain.get_balance(address))
+        return str(
+            self.blockchain.get_balance(
+                address,
+                tip_hash=self._state_tip_hash(),
+            )
+        )
 
     def format_all_balances(self, filter_expression: str = "") -> str:
         if self.blockchain is None or not self.blockchain.blocks:
             return "No balances available."
 
         addresses: set[str] = set()
-        for block in self.blockchain.blocks:
+        for block in self.blockchain.get_chain(self._state_tip_hash()):
             for transaction in block.transactions:
                 if (
                     transaction.sender
@@ -756,7 +870,10 @@ class Node:
         comparison = self._parse_balance_filter(filter_expression)
         lines = ["Balances:"]
         for address in sorted(addresses, key=self._wallet_balance_sort_key):
-            balance = self.blockchain.get_balance(address)
+            balance = self.blockchain.get_balance(
+                address,
+                tip_hash=self._state_tip_hash(),
+            )
             if comparison is not None and not comparison(balance):
                 continue
             lines.append(f"{self.format_wallet_reference(address)}: {balance}")
@@ -907,7 +1024,10 @@ class Node:
     def _wallet_balance_sort_key(self, wallet_address: str) -> tuple[Decimal, str, str]:
         assert self.blockchain is not None
         return (
-            self.blockchain.get_balance(wallet_address),
+            self.blockchain.get_balance(
+                wallet_address,
+                tip_hash=self._state_tip_hash(),
+            ),
             *self._wallet_sort_key(wallet_address),
         )
 
@@ -937,11 +1057,16 @@ class Node:
     def _accept_or_store_block(self, block: Block) -> tuple[str, str | None]:
         assert self.blockchain is not None
 
-        result = self.blockchain.add_block_result(block)
+        previous_state_tip_hash = self._state_tip_hash()
+        result = self.blockchain.add_block_result(
+            block,
+            reconcile_pending_transactions=not self.private_automine,
+        )
         status = result.status
         if status == "accepted":
             self.orphan_block_hashes.discard(block.block_hash)
-            self._cancel_stale_automine_if_needed()
+            self._handle_accepted_block_for_automine(block)
+            self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
             self._resolve_orphan_descendants(block.block_hash)
             self._maybe_schedule_autosend()
             return "accepted", None
@@ -972,11 +1097,16 @@ class Node:
             orphan_blocks = self.orphan_blocks_by_parent_hash.pop(current_parent_hash, [])
 
             for orphan_block in orphan_blocks:
-                result = self.blockchain.add_block_result(orphan_block)
+                previous_state_tip_hash = self._state_tip_hash()
+                result = self.blockchain.add_block_result(
+                    orphan_block,
+                    reconcile_pending_transactions=not self.private_automine,
+                )
                 status = result.status
                 if status == "accepted":
                     self.orphan_block_hashes.discard(orphan_block.block_hash)
-                    self._cancel_stale_automine_if_needed()
+                    self._handle_accepted_block_for_automine(orphan_block)
+                    self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
                     self._print_network_notification(
                         f"Accepted orphan block {orphan_block.block_hash[:12]} "
                         f"at height {orphan_block.block_id}"
@@ -1060,7 +1190,10 @@ class Node:
             self._reset_autosend_balance_baseline()
             return
 
-        current_balance = self.blockchain.get_available_balance(self.wallet.address)
+        current_balance = self.blockchain.get_available_balance(
+            self.wallet.address,
+            tip_hash=self._state_tip_hash(),
+        )
         if current_balance < self.autosend_last_seen_balance:
             self.autosend_last_seen_balance = current_balance
 
@@ -1081,7 +1214,10 @@ class Node:
             ):
                 return
 
-            balance = self.blockchain.get_available_balance(self.wallet.address)
+            balance = self.blockchain.get_available_balance(
+                self.wallet.address,
+                tip_hash=self._state_tip_hash(),
+            )
             if balance <= Decimal("0.0"):
                 return
 
@@ -1106,5 +1242,6 @@ class Node:
             self.autosend_last_seen_balance = Decimal("0.0")
             return
         self.autosend_last_seen_balance = self.blockchain.get_available_balance(
-            self.wallet.address
+            self.wallet.address,
+            tip_hash=self._state_tip_hash(),
         )
