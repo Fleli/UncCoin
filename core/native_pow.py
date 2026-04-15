@@ -40,9 +40,36 @@ def mine_pow(
     )
 
 
+def mine_pow_chunk(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int,
+    max_attempts: int,
+    progress_interval: int = 0,
+    nonce_step: int = 1,
+) -> tuple[int, str, bool, bool, int]:
+    module = _load_native_pow_module()
+    return module.mine_pow_chunk(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        max_attempts,
+        progress_interval,
+        nonce_step,
+    )
+
+
 def gpu_available() -> bool:
     module = _load_native_pow_module()
     return bool(module.gpu_available()) or opencl_gpu_available()
+
+
+def gpu_properties() -> tuple[int, int] | None:
+    module = _load_native_pow_module()
+    properties = module.gpu_properties()
+    if properties is None:
+        return None
+    return int(properties[0]), int(properties[1])
 
 
 def mine_pow_gpu(
@@ -52,6 +79,8 @@ def mine_pow_gpu(
     progress_interval: int = 0,
     batch_size: int = DEFAULT_GPU_BATCH_SIZE,
     nonce_step: int = 1,
+    nonces_per_thread: int = 0,
+    threads_per_group: int = 0,
 ) -> tuple[int, str, bool]:
     module = _load_native_pow_module()
     if bool(module.gpu_available()):
@@ -70,6 +99,31 @@ def mine_pow_gpu(
         progress_interval,
         batch_size,
         nonce_step,
+        nonces_per_thread,
+        threads_per_group,
+    )
+
+
+def mine_pow_gpu_chunk(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int,
+    max_attempts: int,
+    nonce_step: int = 1,
+    nonces_per_thread: int = 0,
+    threads_per_group: int = 0,
+    batch_size: int = 0,
+) -> tuple[int, str, bool, bool, int]:
+    module = _load_native_pow_module()
+    return module.mine_pow_gpu_chunk(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        max_attempts,
+        nonce_step,
+        nonces_per_thread,
+        threads_per_group,
+        batch_size,
     )
 
 
