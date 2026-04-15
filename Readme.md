@@ -77,9 +77,20 @@ make 9002
 Mining can be tuned with environment variables:
 
 - `UNCCOIN_MINING_CPU_WORKERS`
-  Override the number of CPU workers used for proof of work.
+  Override the number of CPU workers used for proof of work. Set it to `0` for a GPU-only miner.
+- `UNCCOIN_GPU_ONLY`
+  Convenience switch for `scripts/run.sh`. When set to `1`, it defaults
+  `UNCCOIN_MINING_CPU_WORKERS=0` unless you already set an explicit CPU worker count.
 - `UNCCOIN_GPU_BATCH_SIZE`
-  Override the Metal GPU batch size. The best value depends on the machine.
+  Override the GPU batch size. The best value depends on the machine and backend.
+- `UNCCOIN_GPU_NONCES_PER_THREAD`
+  Override the number of nonces each GPU thread checks before the next dispatch.
+- `UNCCOIN_GPU_THREADS_PER_GROUP`
+  Override the GPU threadgroup or block size.
+- `UNCCOIN_GPU_CHUNK_MULTIPLIER`
+  Override how much work each scheduled GPU chunk contains beyond a single dispatch.
+- `UNCCOIN_GPU_WORKERS`
+  Override how many scheduler threads feed the GPU backend.
 - `UNCCOIN_MINING_PROGRESS_INTERVAL`
   Control how often mining progress is printed. Larger values reduce terminal overhead.
 - `UNCCOIN_DISABLE_MINING_AUTOTUNE`
@@ -104,3 +115,24 @@ With the helper script you can enable it like this:
 ```bash
 UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
 ```
+
+For a dedicated cloud GPU miner, combine it with GPU-only mode:
+
+```bash
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+```
+
+## Runpod 4090
+
+The repo now has a Linux/CUDA proof-of-work backend for NVIDIA GPUs.
+
+For a simple Runpod setup:
+
+```bash
+./scripts/setup_runpod_cuda.sh
+python3 scripts/benchmark_gpu_pow.py
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+```
+
+If you also want local CPU workers on the pod, set `UNCCOIN_BUILD_CPU_POW_EXTENSION=1`
+before `./scripts/setup_runpod_cuda.sh` so the native CPU extension is built too.

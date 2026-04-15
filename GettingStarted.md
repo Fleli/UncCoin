@@ -32,6 +32,13 @@ Force a rebuild if needed:
 ./scripts/build_native_pow.sh --force
 ```
 
+On a Linux NVIDIA machine such as Runpod, GPU mining can run without building the CPU extension.
+Use:
+
+```bash
+./scripts/setup_runpod_cuda.sh
+```
+
 ## 3. Create a Wallet
 
 Each user should create their own wallet:
@@ -73,6 +80,18 @@ UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh mywallet 9000
 ```
 
 In that mode, wallet balances, nonces, and pending transaction checks also follow the preferred tip.
+
+For a dedicated cloud GPU node, use GPU-only mode so the pod does not spin CPU mining workers:
+
+```bash
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh mywallet 9000
+```
+
+You can verify the active GPU backend first with:
+
+```bash
+python3 scripts/benchmark_gpu_pow.py
+```
 
 ## 5. Connect to Other Nodes
 

@@ -157,7 +157,7 @@ def proof_of_work(
         worker_count = _read_int_env(
             "UNCCOIN_MINING_CPU_WORKERS",
             default_worker_count,
-            minimum=1,
+            minimum=0,
         )
     else:
         worker_count = get_tuned_worker_count(
@@ -169,6 +169,8 @@ def proof_of_work(
             gpu_chunk_multiplier,
             gpu_worker_count,
         )
+    if worker_count == 0 and not gpu_enabled:
+        raise ValueError("GPU mining is unavailable, so UNCCOIN_MINING_CPU_WORKERS cannot be 0.")
     mining_result = run_chunked_mining(
         prefix,
         difficulty_bits,

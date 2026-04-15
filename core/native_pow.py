@@ -17,6 +17,7 @@ METAL_SOURCE_PATH = NATIVE_DIR / "powmetal.m"
 METAL_HEADER_PATH = NATIVE_DIR / "powmetal.h"
 EXTENSION_PATH = ROOT_DIR / f"{MODULE_NAME}{sysconfig.get_config_var('EXT_SUFFIX')}"
 _native_pow_module = None
+_cuda_pow_module = None
 
 
 def mine_pow(
@@ -56,11 +57,28 @@ def mine_pow_chunk(
 
 
 def gpu_available() -> bool:
+    backend = _gpu_backend()
+    if backend is not None:
+        return bool(backend.gpu_available())
+
+    if platform.system() != "Darwin":
+        return False
+
     module = _load_native_pow_module()
     return bool(module.gpu_available())
 
 
 def gpu_properties() -> tuple[int, int] | None:
+    backend = _gpu_backend()
+    if backend is not None:
+        properties = backend.gpu_properties()
+        if properties is None:
+            return None
+        return int(properties[0]), int(properties[1])
+
+    if platform.system() != "Darwin":
+        return None
+
     module = _load_native_pow_module()
     properties = module.gpu_properties()
     if properties is None:
@@ -78,6 +96,19 @@ def mine_pow_gpu(
     nonces_per_thread: int = 0,
     threads_per_group: int = 0,
 ) -> tuple[int, str, bool]:
+    backend = _gpu_backend()
+    if backend is not None:
+        return backend.mine_pow_gpu(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            progress_interval,
+            batch_size,
+            nonce_step,
+            nonces_per_thread,
+            threads_per_group,
+        )
+
     module = _load_native_pow_module()
     return module.mine_pow_gpu(
         prefix,
@@ -101,6 +132,19 @@ def mine_pow_gpu_chunk(
     threads_per_group: int = 0,
     batch_size: int = 0,
 ) -> tuple[int, str, bool, bool, int]:
+    backend = _gpu_backend()
+    if backend is not None:
+        return backend.mine_pow_gpu_chunk(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            max_attempts,
+            nonce_step,
+            nonces_per_thread,
+            threads_per_group,
+            batch_size,
+        )
+
     module = _load_native_pow_module()
     return module.mine_pow_gpu_chunk(
         prefix,
@@ -115,19 +159,41 @@ def mine_pow_gpu_chunk(
 
 
 def request_pow_cancel() -> None:
-    module = _load_native_pow_module()
-    module.request_cancel()
+    backend = _optional_cuda_backend()
+    if backend is not None:
+        backend.request_cancel()
+
+    if _native_pow_module is not None:
+        _native_pow_module.request_cancel()
 
 
 def reset_pow_cancel() -> None:
-    module = _load_native_pow_module()
-    module.reset_cancel()
+    backend = _optional_cuda_backend()
+    if backend is not None:
+        backend.reset_cancel()
+
+    if _native_pow_module is not None:
+        _native_pow_module.reset_cancel()
 
 
 def build_native_pow_extension(force: bool = False) -> Path:
     if force or _extension_needs_rebuild():
         _build_native_pow_extension()
     return EXTENSION_PATH
+
+
+def _gpu_backend():
+    if platform.system() == "Linux":
+        backend = _load_cuda_pow_module()
+        if backend.gpu_available():
+            return backend
+    return None
+
+
+def _optional_cuda_backend():
+    if platform.system() != "Linux":
+        return None
+    return _load_cuda_pow_module()
 
 
 def _load_native_pow_module():
@@ -146,6 +212,18 @@ def _load_native_pow_module():
     spec.loader.exec_module(module)
     _native_pow_module = module
     return module
+
+
+def _load_cuda_pow_module():
+    global _cuda_pow_module
+
+    if _cuda_pow_module is not None:
+        return _cuda_pow_module
+
+    from core import cuda_pow
+
+    _cuda_pow_module = cuda_pow
+    return _cuda_pow_module
 
 
 def _extension_needs_rebuild() -> bool:
