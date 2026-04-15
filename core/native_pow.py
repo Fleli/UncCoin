@@ -7,6 +7,10 @@ import sysconfig
 from pathlib import Path
 
 from config import DEFAULT_GPU_BATCH_SIZE
+from core.opencl_pow import gpu_available as opencl_gpu_available
+from core.opencl_pow import mine_pow_gpu as opencl_mine_pow_gpu
+from core.opencl_pow import request_cancel as request_opencl_cancel
+from core.opencl_pow import reset_cancel as reset_opencl_cancel
 
 
 MODULE_NAME = "native_pow"
@@ -57,7 +61,7 @@ def mine_pow_chunk(
 
 def gpu_available() -> bool:
     module = _load_native_pow_module()
-    return bool(module.gpu_available())
+    return bool(module.gpu_available()) or opencl_gpu_available()
 
 
 def gpu_properties() -> tuple[int, int] | None:
@@ -79,7 +83,16 @@ def mine_pow_gpu(
     threads_per_group: int = 0,
 ) -> tuple[int, str, bool]:
     module = _load_native_pow_module()
-    return module.mine_pow_gpu(
+    if bool(module.gpu_available()):
+        return module.mine_pow_gpu(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            progress_interval,
+            batch_size,
+            nonce_step,
+        )
+    return opencl_mine_pow_gpu(
         prefix,
         difficulty_bits,
         start_nonce,
@@ -117,11 +130,13 @@ def mine_pow_gpu_chunk(
 def request_pow_cancel() -> None:
     module = _load_native_pow_module()
     module.request_cancel()
+    request_opencl_cancel()
 
 
 def reset_pow_cancel() -> None:
     module = _load_native_pow_module()
     module.reset_cancel()
+    reset_opencl_cancel()
 
 
 def build_native_pow_extension(force: bool = False) -> Path:

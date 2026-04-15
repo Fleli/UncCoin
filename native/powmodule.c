@@ -815,6 +815,12 @@ static PyObject *mine_pow_gpu(PyObject *Py_UNUSED(self), PyObject *args) {
     }
 
 #ifdef __APPLE__
+    unsigned long long nonce = 0;
+    char hex_digest[SHA256_HEX_LENGTH + 1];
+    char error_message[256];
+    int cancelled = 0;
+    bool success = false;
+
     Py_BEGIN_ALLOW_THREADS
     success = metal_mine_pow(
         prefix,
