@@ -499,9 +499,19 @@ class Blockchain:
         previous_head: str | None,
         current_head: str | None = None,
     ) -> None:
-        previous_transactions = self._collect_transactions(previous_head)
         resolved_current_head = self.main_tip_hash if current_head is None else current_head
-        current_transactions = self._collect_transactions(resolved_current_head)
+        common_ancestor_hash = self._find_common_ancestor_hash(
+            previous_head,
+            resolved_current_head,
+        )
+        previous_transactions = self._collect_branch_transactions(
+            previous_head,
+            stop_hash=common_ancestor_hash,
+        )
+        current_transactions = self._collect_branch_transactions(
+            resolved_current_head,
+            stop_hash=common_ancestor_hash,
+        )
         current_transaction_ids = {
             sha256_transaction_hash(transaction)
             for transaction in current_transactions
@@ -531,6 +541,69 @@ class Blockchain:
                 seen_transaction_ids.add(transaction_id)
 
         self.pending_transactions = valid_pending_transactions
+
+    def _find_common_ancestor_hash(
+        self,
+        left_head: str | None,
+        right_head: str | None,
+    ) -> str | None:
+        if left_head is None or right_head is None:
+            return None
+        if left_head not in self.block_states or right_head not in self.block_states:
+            return None
+
+        left_hash = left_head
+        right_hash = right_head
+        left_height = self.block_states[left_hash].height
+        right_height = self.block_states[right_hash].height
+
+        while left_height > right_height:
+            left_hash = self._parent_hash(left_hash)
+            if left_hash is None:
+                return None
+            left_height -= 1
+
+        while right_height > left_height:
+            right_hash = self._parent_hash(right_hash)
+            if right_hash is None:
+                return None
+            right_height -= 1
+
+        while left_hash != right_hash:
+            left_hash = self._parent_hash(left_hash)
+            right_hash = self._parent_hash(right_hash)
+            if left_hash is None or right_hash is None:
+                return None
+
+        return left_hash
+
+    def _collect_branch_transactions(
+        self,
+        head_hash: str | None,
+        *,
+        stop_hash: str | None,
+    ) -> list[Transaction]:
+        if head_hash is None or head_hash == stop_hash:
+            return []
+
+        branch_blocks: list[Block] = []
+        current_hash = head_hash
+        while current_hash is not None and current_hash != stop_hash:
+            block = self.blocks_by_hash[current_hash]
+            branch_blocks.append(block)
+            current_hash = self._parent_hash(current_hash)
+
+        branch_blocks.reverse()
+        transactions: list[Transaction] = []
+        for block in branch_blocks:
+            transactions.extend(block.transactions)
+        return transactions
+
+    def _parent_hash(self, block_hash: str) -> str | None:
+        block = self.blocks_by_hash[block_hash]
+        if block.previous_hash == GENESIS_PREVIOUS_HASH:
+            return None
+        return block.previous_hash
 
     def _collect_transactions(self, tip_hash: str | None) -> list[Transaction]:
         if tip_hash is None:

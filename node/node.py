@@ -694,11 +694,13 @@ class Node:
         duplicate_blocks = 0
         orphaned_blocks = 0
         rejected_blocks = 0
+        previous_head = self.blockchain.main_tip_hash
+        previous_state_tip_hash = self._state_tip_hash()
         for block in blocks:
             if block.block_hash in self.blockchain.blocks_by_hash:
                 duplicate_blocks += 1
                 continue
-            status, reason = self._accept_or_store_block(block)
+            status, reason = self._accept_or_store_sync_block(block)
             if status == "accepted":
                 accepted_blocks += 1
             elif status == "orphaned":
@@ -715,6 +717,13 @@ class Node:
                     f"Rejected synced block {block.block_hash[:12]}: "
                     f"{reason or 'unknown reason'}"
                 )
+
+        if accepted_blocks > 0:
+            self._reconcile_pending_transactions_after_sync(
+                previous_head,
+                previous_state_tip_hash,
+            )
+            self._maybe_schedule_autosend()
 
         sync_label = (
             "Fast sync chunk processed"
@@ -1093,6 +1102,31 @@ class Node:
         self.orphan_block_hashes.discard(block.block_hash)
         return "rejected", result.reason
 
+    def _accept_or_store_sync_block(self, block: Block) -> tuple[str, str | None]:
+        assert self.blockchain is not None
+
+        result = self.blockchain.add_block_result(
+            block,
+            reconcile_pending_transactions=False,
+        )
+        status = result.status
+        if status == "accepted":
+            self.orphan_block_hashes.discard(block.block_hash)
+            self._handle_accepted_block_for_automine(block)
+            self._resolve_synced_orphan_descendants(block.block_hash)
+            return "accepted", None
+
+        if status == "duplicate":
+            self.orphan_block_hashes.discard(block.block_hash)
+            return "duplicate", result.reason
+
+        if status == "missing_parent":
+            self._store_orphan_block(block)
+            return "orphaned", result.reason
+
+        self.orphan_block_hashes.discard(block.block_hash)
+        return "rejected", result.reason
+
     def _store_orphan_block(self, block: Block) -> None:
         if block.block_hash in self.orphan_block_hashes:
             return
@@ -1133,6 +1167,43 @@ class Node:
                         f"Rejected orphan block {orphan_block.block_hash[:12]}: "
                         f"{result.reason or 'unknown reason'}"
                     )
+
+    def _resolve_synced_orphan_descendants(self, parent_hash: str) -> None:
+        pending_parent_hashes = [parent_hash]
+
+        while pending_parent_hashes:
+            current_parent_hash = pending_parent_hashes.pop()
+            orphan_blocks = self.orphan_blocks_by_parent_hash.pop(current_parent_hash, [])
+
+            for orphan_block in orphan_blocks:
+                result = self.blockchain.add_block_result(
+                    orphan_block,
+                    reconcile_pending_transactions=False,
+                )
+                status = result.status
+                if status == "accepted":
+                    self.orphan_block_hashes.discard(orphan_block.block_hash)
+                    self._handle_accepted_block_for_automine(orphan_block)
+                    pending_parent_hashes.append(orphan_block.block_hash)
+                elif status == "missing_parent":
+                    self._store_orphan_block(orphan_block)
+                elif status == "duplicate":
+                    self.orphan_block_hashes.discard(orphan_block.block_hash)
+                else:
+                    self.orphan_block_hashes.discard(orphan_block.block_hash)
+
+    def _reconcile_pending_transactions_after_sync(
+        self,
+        previous_head: str | None,
+        previous_state_tip_hash: str | None,
+    ) -> None:
+        assert self.blockchain is not None
+
+        if self.private_automine:
+            self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+            return
+
+        self.blockchain.reconcile_pending_transactions(previous_head)
 
     def _cancel_stale_automine_if_needed(self) -> None:
         if (

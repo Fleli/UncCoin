@@ -5,6 +5,7 @@ from unittest import mock
 from core.blockchain import Blockchain
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
+from node.node import Node
 from network.p2p_server import FASTSYNC_INITIAL_BATCH_CHUNKS
 from network.p2p_server import FastSyncState
 from network.p2p_server import P2PServer
@@ -341,3 +342,34 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(returned_peer, peer)
         request_fast_sync_stream.assert_not_awaited()
+
+
+class NodeFastSyncImportTests(unittest.TestCase):
+    def test_handle_chain_response_reconciles_pending_transactions_once_per_chunk(self) -> None:
+        source_chain = create_blockchain(block_count=3)
+        dest_chain = Blockchain(
+            difficulty_bits=0,
+            hash_function=sha256_block_hash,
+        )
+        dest_chain.add_block(create_genesis_block(sha256_block_hash))
+        node = Node(
+            host="127.0.0.1",
+            port=9200,
+            blockchain=dest_chain,
+        )
+
+        imported_blocks = [
+            source_chain.blocks[1],
+            source_chain.blocks[2],
+            source_chain.blocks[3],
+        ]
+
+        with mock.patch.object(
+            dest_chain,
+            "reconcile_pending_transactions",
+            wraps=dest_chain.reconcile_pending_transactions,
+        ) as reconcile_pending_transactions:
+            result = node._handle_chain_response(imported_blocks)
+
+        self.assertEqual(result["accepted"], 3)
+        reconcile_pending_transactions.assert_called_once()
