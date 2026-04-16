@@ -43,18 +43,29 @@ class Block:
         block_data: dict,
         hash_function: Callable[["Block"], str],
     ) -> "Block":
-        block = cls(
-            block_id=int(block_data["block_id"]),
-            transactions=[
-                Transaction.from_dict(transaction_data)
-                for transaction_data in block_data["transactions"]
-            ],
-            hash_function=hash_function,
-            description=block_data["description"],
-            previous_hash=block_data["previous_hash"],
-            nonce=int(block_data.get("nonce", 0)),
-        )
-        block.block_hash = block_data.get("block_hash", block.block_hash)
+        transactions = [
+            Transaction.from_dict(transaction_data)
+            for transaction_data in block_data["transactions"]
+        ]
+        provided_block_hash = block_data.get("block_hash")
+        if provided_block_hash is None:
+            return cls(
+                block_id=int(block_data["block_id"]),
+                transactions=transactions,
+                hash_function=hash_function,
+                description=block_data["description"],
+                previous_hash=block_data["previous_hash"],
+                nonce=int(block_data.get("nonce", 0)),
+            )
+
+        block = cls.__new__(cls)
+        block.block_id = int(block_data["block_id"])
+        block.transactions = transactions
+        block.hash_function = hash_function
+        block.description = block_data["description"]
+        block.previous_hash = block_data["previous_hash"]
+        block.nonce = int(block_data.get("nonce", 0))
+        block.block_hash = provided_block_hash
         return block
 
 
