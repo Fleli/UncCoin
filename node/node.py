@@ -124,8 +124,8 @@ class Node:
     async def discover_peers(self) -> None:
         await self.p2p_server.discover_peers()
 
-    async def sync_chain(self) -> int:
-        return await self.p2p_server.request_chain_sync()
+    async def sync_chain(self, fast: bool = False) -> int:
+        return await self.p2p_server.request_chain_sync(fast=fast)
 
     async def send_to_peer(self, host: str, port: int, message: dict) -> None:
         await self.p2p_server.send_to_peer(host, port, message)
@@ -405,7 +405,8 @@ class Node:
             'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
             '"peers" to list connected peers, "known-peers" to list discovered peers, '
             '"discover" to ask peers for more peers, "sync" to request the latest chain from '
-            'connected peers, "add-peer host:port" to connect manually, '
+            'connected peers, "fastsync" to request missing blocks in 50 chunk batches, '
+            '"add-peer host:port" to connect manually, '
             '"alias wallet-id alias" to store a local wallet alias, '
             '"autosend wallet-id" to forward future balance increases, '
             '"autosend off" to disable autosend, '
@@ -462,6 +463,11 @@ class Node:
             if line == "sync":
                 peer_count = await self.sync_chain()
                 print(f"Requested chain sync from {peer_count} peer(s).")
+                continue
+
+            if line == "fastsync":
+                peer_count = await self.sync_chain(fast=True)
+                print(f"Requested fast chain sync from {peer_count} peer(s).")
                 continue
 
             if line == "mute":
