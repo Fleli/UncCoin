@@ -716,8 +716,13 @@ class Node:
                     f"{reason or 'unknown reason'}"
                 )
 
+        sync_label = (
+            "Fast sync chunk processed"
+            if any(state.active for state in self.p2p_server.fast_sync_states.values())
+            else "Chain sync chunk processed"
+        )
         self._print_network_notification(
-            "Chain sync chunk processed: "
+            f"{sync_label}: "
             f"accepted {accepted_blocks}, duplicates {duplicate_blocks}, "
             f"orphans {orphaned_blocks}, rejected {rejected_blocks}."
         )

@@ -98,6 +98,26 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
             {"type": "chain_request", "start_height": 40},
         )
 
+    async def test_request_chain_sync_skips_peer_with_active_fastsync(self) -> None:
+        peer = PeerAddress(host="127.0.0.1", port=9104)
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9105,
+            on_chain_summary=lambda: ("tip", 39),
+        )
+        server.active_connections[peer] = object()
+        server.fast_sync_states[peer] = FastSyncState(
+            expected_start_height=60,
+            batch_end_start_height=1040,
+            batch_chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+        )
+
+        with mock.patch.object(server, "_request_fast_sync_batch", new=mock.AsyncMock()) as request_fast_sync_batch:
+            peer_count = await server.request_chain_sync()
+
+        self.assertEqual(peer_count, 1)
+        request_fast_sync_batch.assert_not_awaited()
+
     async def test_chain_batch_request_sends_independent_chain_chunk_messages(self) -> None:
         peer = PeerAddress(host="127.0.0.1", port=9105)
         remote_blockchain = create_blockchain(block_count=45)
@@ -170,6 +190,60 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
             {"chunk_count": FASTSYNC_CONTINUATION_BATCH_CHUNKS},
         )
 
+    async def test_fastsync_buffers_ahead_chunk_until_missing_chunk_arrives(self) -> None:
+        peer = PeerAddress(host="127.0.0.1", port=9107)
+        processed_starts: list[int] = []
+        blockchain = create_blockchain(block_count=45)
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9108,
+            on_chain_response=lambda blocks: {
+                "accepted": processed_starts.append(blocks[0].block_id) or len(blocks),
+                "duplicates": 0,
+                "orphans": 0,
+                "rejected": 0,
+            },
+        )
+        server.fast_sync_states[peer] = FastSyncState(
+            expected_start_height=1,
+            batch_end_start_height=21,
+            batch_chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+        )
+
+        with mock.patch.object(server, "_request_fast_sync_batch", new=mock.AsyncMock()) as request_chain_batch:
+            await server._handle_message(
+                {
+                    "type": "chain_chunk",
+                    "start_height": 21,
+                    "height": 45,
+                    "done": False,
+                    "next_start_height": 41,
+                    "blocks": [blockchain.blocks[21].to_dict()],
+                },
+                peer,
+            )
+            self.assertEqual(processed_starts, [])
+
+            await server._handle_message(
+                {
+                    "type": "chain_chunk",
+                    "start_height": 1,
+                    "height": 45,
+                    "done": False,
+                    "next_start_height": 21,
+                    "blocks": [blockchain.blocks[1].to_dict()],
+                },
+                peer,
+            )
+
+        self.assertEqual(processed_starts, [1, 21])
+        request_chain_batch.assert_awaited_once()
+        self.assertEqual(request_chain_batch.await_args.args, (peer, 41))
+        self.assertEqual(
+            request_chain_batch.await_args.kwargs,
+            {"chunk_count": FASTSYNC_CONTINUATION_BATCH_CHUNKS},
+        )
+
     async def test_handshake_starts_initial_fastsync_batch(self) -> None:
         peer = PeerAddress(host="0.0.0.0", port=5000)
         original_peer = PeerAddress(host="100.71.105.5", port=5000)
@@ -198,6 +272,39 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
             4899,
             chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
         )
+
+    async def test_handshake_moves_existing_fastsync_state_to_advertised_peer(self) -> None:
+        peer = PeerAddress(host="0.0.0.0", port=5000)
+        original_peer = PeerAddress(host="100.71.105.5", port=5000)
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9109,
+            on_chain_summary=lambda: ("tip", 4898),
+        )
+        server.active_connections[original_peer] = object()
+        server.fast_sync_states[original_peer] = FastSyncState(
+            expected_start_height=5039,
+            batch_end_start_height=6019,
+            batch_chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+        )
+
+        with mock.patch.object(server, "_request_fast_sync_batch", new=mock.AsyncMock()) as request_fast_sync_batch:
+            returned_peer = await server._handle_message(
+                {
+                    "type": "handshake",
+                    "host": "0.0.0.0",
+                    "port": 5000,
+                    "tip_hash": "abc",
+                    "height": 30939,
+                },
+                original_peer,
+            )
+
+        self.assertEqual(returned_peer, peer)
+        self.assertNotIn(original_peer, server.fast_sync_states)
+        self.assertIn(peer, server.fast_sync_states)
+        self.assertEqual(server.fast_sync_states[peer].expected_start_height, 5039)
+        request_fast_sync_batch.assert_not_awaited()
 
     async def test_handshake_does_not_start_second_sync_during_active_fastsync(self) -> None:
         peer = PeerAddress(host="0.0.0.0", port=5000)
