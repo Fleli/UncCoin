@@ -135,7 +135,9 @@ UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <po
 
 The repo now has a Linux/CUDA proof-of-work backend for NVIDIA GPUs.
 
-In one run, the cloud CUDA miner joined at `12.4.2026, 17:50:53`. By `15.4.2026, 11:11:53`, it had produced `12279` block rewards at `10` coins each, about `188` blocks per hour, or roughly one block every `19` seconds.
+In the live run shown below, the cloud CUDA miner joined just before the very sharp increase near the end of the chart and was solely responsible for that spike. It only ran for a couple of hours, but in that window it pushed issuance up by several thousand block rewards at `10` coins each.
+
+![Live supply snapshot from unccoin.no](assets/readme/unccoin-stat-live-crop.png)
 
 For a simple Runpod setup:
 
