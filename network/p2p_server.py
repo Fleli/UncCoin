@@ -10,13 +10,15 @@ from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 
 CHAIN_SYNC_CHUNK_SIZE = 20
-FASTSYNC_BATCH_CHUNKS = 50
+FASTSYNC_INITIAL_BATCH_CHUNKS = 50
+FASTSYNC_CONTINUATION_BATCH_CHUNKS = 20
 
 
 @dataclass
 class FastSyncState:
     expected_start_height: int
     batch_end_start_height: int
+    batch_chunk_count: int
     active: bool = True
 
 
@@ -232,13 +234,17 @@ class P2PServer:
         for peer in list(self.active_connections):
             await self.request_peer_list(peer.host, peer.port)
 
-    async def request_chain_sync(self, fast: bool = False) -> int:
+    async def request_chain_sync(self, fast: bool = True) -> int:
         peers = list(self.active_connections)
         _, local_height = self._get_chain_summary()
         start_height = max(local_height + 1, 0)
         for peer in peers:
             if fast:
-                await self._request_next_fast_sync_batch(peer, start_height)
+                await self._request_fast_sync_batch(
+                    peer,
+                    start_height,
+                    chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+                )
             else:
                 self.fast_sync_states.pop(peer, None)
                 await self.request_chain(peer.host, peer.port, start_height=start_height)
@@ -325,13 +331,13 @@ class P2PServer:
                     start_height = local_height + 1
                 elif remote_tip_hash == local_tip_hash:
                     start_height = local_height + 1
-                await self.request_chain(
-                    advertised_host,
-                    advertised_port,
-                    start_height=max(start_height, 0),
+                await self._request_fast_sync_batch(
+                    advertised_peer,
+                    max(start_height, 0),
+                    chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
                 )
                 self._notify(
-                    f"Requesting chain sync from {advertised_host}:{advertised_port} "
+                    f"Requesting fast chain sync from {advertised_host}:{advertised_port} "
                     f"after handshake starting at height {max(start_height, 0)}"
                 )
             return advertised_peer
@@ -603,7 +609,11 @@ class P2PServer:
         rejected_blocks = 0 if sync_result is None else sync_result.get("rejected", 0)
 
         if start_height > 0 and accepted_blocks == 0 and orphaned_blocks > 0:
-            await self._request_next_fast_sync_batch(peer, 0)
+            await self._request_fast_sync_batch(
+                peer,
+                0,
+                chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+            )
             self._notify(
                 f"Chain chunk from {peer.host}:{peer.port} did not attach. "
                 "Retrying fast sync from genesis."
@@ -625,9 +635,10 @@ class P2PServer:
             return
 
         if start_height >= fast_sync_state.batch_end_start_height:
-            await self._request_next_fast_sync_batch(
+            await self._request_fast_sync_batch(
                 peer,
                 fast_sync_state.expected_start_height,
+                chunk_count=FASTSYNC_CONTINUATION_BATCH_CHUNKS,
             )
             self._notify(
                 f"Requesting next chain batch from {peer.host}:{peer.port} "
@@ -649,22 +660,30 @@ class P2PServer:
         }
 
     @staticmethod
-    def _build_fast_sync_start_heights(start_height: int) -> list[int]:
+    def _build_fast_sync_start_heights(
+        start_height: int,
+        chunk_count: int,
+    ) -> list[int]:
         normalized_start_height = max(start_height, 0)
         return [
             normalized_start_height + (index * CHAIN_SYNC_CHUNK_SIZE)
-            for index in range(FASTSYNC_BATCH_CHUNKS)
+            for index in range(max(chunk_count, 0))
         ]
 
-    async def _request_next_fast_sync_batch(
+    async def _request_fast_sync_batch(
         self,
         peer: PeerAddress,
         start_height: int,
+        chunk_count: int,
     ) -> None:
-        start_heights = self._build_fast_sync_start_heights(start_height)
+        start_heights = self._build_fast_sync_start_heights(start_height, chunk_count)
+        if not start_heights:
+            return
+
         self.fast_sync_states[peer] = FastSyncState(
             expected_start_height=max(start_height, 0),
             batch_end_start_height=start_heights[-1],
+            batch_chunk_count=len(start_heights),
         )
         await self.request_chain_batch(
             peer.host,
