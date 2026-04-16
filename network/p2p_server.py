@@ -16,6 +16,7 @@ FASTSYNC_BATCH_CHUNKS = 50
 @dataclass
 class FastSyncState:
     expected_start_height: int
+    batch_end_start_height: int
     active: bool = True
 
 
@@ -237,12 +238,7 @@ class P2PServer:
         start_height = max(local_height + 1, 0)
         for peer in peers:
             if fast:
-                self.fast_sync_states[peer] = FastSyncState(expected_start_height=start_height)
-                await self.request_chain_batch(
-                    peer.host,
-                    peer.port,
-                    self._build_fast_sync_start_heights(start_height),
-                )
+                await self._request_next_fast_sync_batch(peer, start_height)
             else:
                 self.fast_sync_states.pop(peer, None)
                 await self.request_chain(peer.host, peer.port, start_height=start_height)
@@ -315,6 +311,13 @@ class P2PServer:
                 f"Handshake received from {advertised_host}:{advertised_port} "
                 f"(height {remote_height}, tip {self._short_hash(remote_tip_hash)})"
             )
+            active_fast_sync = self.fast_sync_states.get(advertised_peer)
+            if (
+                active_fast_sync is not None
+                and active_fast_sync.active
+            ):
+                return advertised_peer
+
             if self._should_request_chain(remote_tip_hash, remote_height):
                 local_tip_hash, local_height = self._get_chain_summary()
                 start_height = 0
@@ -369,7 +372,8 @@ class P2PServer:
                 max(int(start_height), 0)
                 for start_height in message.get("start_heights", [])
             ]
-            await self._send_chain_batch(peer, start_heights)
+            for start_height in sorted(set(start_heights)):
+                await self._send_chain_chunk(peer, start_height)
             self._notify(
                 f"Chain batch requested by {peer.host}:{peer.port} "
                 f"for starts {start_heights[:3]}"
@@ -378,6 +382,11 @@ class P2PServer:
             return peer
 
         if message_type in {"chain_chunk", "chain_response"}:
+            fast_sync_state = self.fast_sync_states.get(peer)
+            if fast_sync_state is not None and fast_sync_state.active:
+                await self._handle_fast_sync_chunk(message, peer, fast_sync_state)
+                return peer
+
             blocks = [
                 Block.from_dict(block_data, hash_function=sha256_block_hash)
                 for block_data in message.get("blocks", [])
@@ -435,10 +444,6 @@ class P2PServer:
                     f"Requesting next chain chunk from {peer.host}:{peer.port} "
                     f"starting at height {max(next_start_height, 0)}"
                 )
-            return peer
-
-        if message_type == "chain_batch":
-            await self._handle_chain_batch(message, peer)
             return peer
 
         if message_type == "transaction":
@@ -557,128 +562,77 @@ class P2PServer:
             },
         )
 
-    async def _send_chain_batch(self, peer: PeerAddress, start_heights: list[int]) -> None:
-        normalized_start_heights = sorted(
-            {
-                max(int(start_height), 0)
-                for start_height in start_heights
-            }
-        )
-        if not normalized_start_heights:
-            return
-
-        first_payload = self._build_chain_chunk_payload(normalized_start_heights[0])
-        await self.send_to_peer(
-            peer.host,
-            peer.port,
-            {
-                "type": "chain_batch",
-                "height": first_payload["height"],
-                "chunks": [
-                    self._build_chain_chunk_payload(start_height)
-                    for start_height in normalized_start_heights
-                ],
-            },
+    async def _handle_fast_sync_chunk(
+        self,
+        message: dict,
+        peer: PeerAddress,
+        fast_sync_state: FastSyncState,
+    ) -> None:
+        blocks = [
+            Block.from_dict(block_data, hash_function=sha256_block_hash)
+            for block_data in message.get("blocks", [])
+        ]
+        start_height = max(int(message.get("start_height", 0)), 0)
+        done = bool(message.get("done", False))
+        raw_next_start_height = message.get("next_start_height")
+        next_start_height = (
+            start_height + len(blocks)
+            if raw_next_start_height is None
+            else int(raw_next_start_height)
         )
 
-    async def _handle_chain_batch(self, message: dict, peer: PeerAddress) -> None:
-        fast_sync_state = self.fast_sync_states.get(peer)
-        if fast_sync_state is None or not fast_sync_state.active:
+        if start_height != fast_sync_state.expected_start_height:
             self._notify(
-                f"Ignoring unsolicited chain batch from {peer.host}:{peer.port}"
+                f"Ignoring out-of-order fast sync chunk from {peer.host}:{peer.port} "
+                f"at height {start_height}; expected {fast_sync_state.expected_start_height}"
             )
             return
 
-        chunk_payloads = sorted(
-            message.get("chunks", []),
-            key=lambda chunk: int(chunk.get("start_height", 0)),
+        sync_result = (
+            self.on_chain_response(blocks)
+            if self.on_chain_response is not None
+            else None
         )
-        if not chunk_payloads:
-            self._notify(f"Received empty chain batch from {peer.host}:{peer.port}")
-            return
+        self._notify(
+            f"Chain chunk received from {peer.host}:{peer.port} "
+            f"({len(blocks)} blocks starting at height {start_height})"
+        )
 
-        made_progress = False
-        batch_done = False
+        accepted_blocks = 0 if sync_result is None else sync_result.get("accepted", 0)
+        orphaned_blocks = 0 if sync_result is None else sync_result.get("orphans", 0)
+        rejected_blocks = 0 if sync_result is None else sync_result.get("rejected", 0)
 
-        for chunk_payload in chunk_payloads:
-            start_height = max(int(chunk_payload.get("start_height", 0)), 0)
-            if start_height != fast_sync_state.expected_start_height:
-                continue
-
-            blocks = [
-                Block.from_dict(block_data, hash_function=sha256_block_hash)
-                for block_data in chunk_payload.get("blocks", [])
-            ]
-            remote_height = int(chunk_payload.get("height", message.get("height", -1)))
-            done = bool(chunk_payload.get("done", False))
-            raw_next_start_height = chunk_payload.get("next_start_height")
-            next_start_height = (
-                start_height + len(blocks)
-                if raw_next_start_height is None
-                else int(raw_next_start_height)
-            )
-            sync_result = (
-                self.on_chain_response(blocks)
-                if self.on_chain_response is not None
-                else None
-            )
+        if start_height > 0 and accepted_blocks == 0 and orphaned_blocks > 0:
+            await self._request_next_fast_sync_batch(peer, 0)
             self._notify(
-                f"Chain chunk received from {peer.host}:{peer.port} "
-                f"({len(blocks)} blocks starting at height {start_height})"
-            )
-
-            accepted_blocks = 0 if sync_result is None else sync_result.get("accepted", 0)
-            orphaned_blocks = 0 if sync_result is None else sync_result.get("orphans", 0)
-            rejected_blocks = 0 if sync_result is None else sync_result.get("rejected", 0)
-
-            if start_height > 0 and accepted_blocks == 0 and orphaned_blocks > 0:
-                fast_sync_state.expected_start_height = 0
-                await self.request_chain_batch(
-                    peer.host,
-                    peer.port,
-                    self._build_fast_sync_start_heights(0),
-                )
-                self._notify(
-                    f"Chain chunk from {peer.host}:{peer.port} did not attach. "
-                    "Retrying fast sync from genesis."
-                )
-                return
-
-            if accepted_blocks == 0 and rejected_blocks > 0 and orphaned_blocks == 0:
-                fast_sync_state.active = False
-                self._notify(
-                    f"Fast sync from {peer.host}:{peer.port} made no progress at "
-                    f"height {start_height}. Stopping fast sync."
-                )
-                return
-
-            made_progress = True
-            batch_done = done
-            fast_sync_state.expected_start_height = max(next_start_height, 0)
-
-            if done:
-                fast_sync_state.active = False
-                return
-
-        if not made_progress:
-            self._notify(
-                f"Chain batch from {peer.host}:{peer.port} contained no expected chunks."
+                f"Chain chunk from {peer.host}:{peer.port} did not attach. "
+                "Retrying fast sync from genesis."
             )
             return
 
-        if batch_done:
+        if accepted_blocks == 0 and rejected_blocks > 0 and orphaned_blocks == 0:
+            fast_sync_state.active = False
+            self._notify(
+                f"Fast sync from {peer.host}:{peer.port} made no progress at "
+                f"height {start_height}. Stopping fast sync."
+            )
+            return
+
+        fast_sync_state.expected_start_height = max(next_start_height, 0)
+
+        if done:
             fast_sync_state.active = False
             return
 
-        await self.request_chain_batch(
-            peer.host,
-            peer.port,
-            self._build_fast_sync_start_heights(fast_sync_state.expected_start_height),
-        )
-        self._notify(
-            f"Requesting next chain batch from {peer.host}:{peer.port} "
-            f"starting at height {fast_sync_state.expected_start_height}"
-        )
+        if start_height >= fast_sync_state.batch_end_start_height:
+            await self._request_next_fast_sync_batch(
+                peer,
+                fast_sync_state.expected_start_height,
+            )
+            self._notify(
+                f"Requesting next chain batch from {peer.host}:{peer.port} "
+                f"starting at height {fast_sync_state.expected_start_height}"
+            )
 
     def _build_chain_chunk_payload(self, start_height: int) -> dict:
         blocks = self.on_chain_request() if self.on_chain_request is not None else []
@@ -701,6 +655,22 @@ class P2PServer:
             normalized_start_height + (index * CHAIN_SYNC_CHUNK_SIZE)
             for index in range(FASTSYNC_BATCH_CHUNKS)
         ]
+
+    async def _request_next_fast_sync_batch(
+        self,
+        peer: PeerAddress,
+        start_height: int,
+    ) -> None:
+        start_heights = self._build_fast_sync_start_heights(start_height)
+        self.fast_sync_states[peer] = FastSyncState(
+            expected_start_height=max(start_height, 0),
+            batch_end_start_height=start_heights[-1],
+        )
+        await self.request_chain_batch(
+            peer.host,
+            peer.port,
+            start_heights,
+        )
 
     def _parse_peer_list(self, peers: list[dict]) -> list[PeerAddress]:
         return [
