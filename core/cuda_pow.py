@@ -86,6 +86,9 @@ _SHA256_K = (
     0xBEF9A3F7,
     0xC67178F2,
 )
+_U64_MAX = (1 << 64) - 1
+_DECIMAL_DIGIT_BOUNDARIES = tuple((10 ** digits) - 1 for digits in range(1, 20)) + (_U64_MAX,)
+_MAX_FIXED_DIGIT_LENGTH = len(_DECIMAL_DIGIT_BOUNDARIES)
 _CUDA_KERNEL_SOURCE = r"""
 extern "C" {
 
@@ -211,6 +214,155 @@ __device__ int has_leading_zero_bits_state(const unsigned int state[8], int diff
     return (state[full_words] >> (32 - remaining_bits)) == 0U;
 }
 
+__device__ void write_sha256_length(unsigned char block[64], unsigned long long total_bits) {
+    for (int index = 0; index < 8; ++index) {
+        block[63 - index] = (unsigned char)((total_bits >> (index * 8)) & 0xFFULL);
+    }
+}
+
+__device__ void nonce_to_ascii_fixed_digits(
+    unsigned long long nonce,
+    int digit_count,
+    unsigned char output[32]
+) {
+    for (int index = digit_count - 1; index >= 0; --index) {
+        output[index] = (unsigned char)('0' + (nonce % 10ULL));
+        nonce /= 10ULL;
+    }
+}
+
+__device__ int increment_ascii_fixed_digits_one(unsigned char buffer[32], int digit_count) {
+    int index = digit_count - 1;
+
+    while (index >= 0 && buffer[index] == '9') {
+        buffer[index] = '0';
+        --index;
+    }
+
+    if (index < 0) {
+        return -1;
+    }
+
+    buffer[index] = (unsigned char)(buffer[index] + 1);
+    return index;
+}
+
+__device__ void initialize_fixed_nonce_blocks(
+    const unsigned char* prefix_data,
+    int prefix_data_length,
+    unsigned long long prefix_bit_length,
+    const unsigned char nonce_buffer[32],
+    int digit_count,
+    unsigned char first_block[64],
+    unsigned char second_block[64],
+    int* first_nonce_length,
+    int* second_nonce_length,
+    int* uses_second_block
+) {
+    for (int index = 0; index < 64; ++index) {
+        first_block[index] = 0U;
+        second_block[index] = 0U;
+    }
+
+    for (int index = 0; index < prefix_data_length; ++index) {
+        first_block[index] = prefix_data[index];
+    }
+
+    *first_nonce_length = digit_count;
+    int first_available = 64 - prefix_data_length;
+    if (*first_nonce_length > first_available) {
+        *first_nonce_length = first_available;
+    }
+
+    *second_nonce_length = digit_count - *first_nonce_length;
+    *uses_second_block = *second_nonce_length > 0 ? 1 : 0;
+
+    for (int index = 0; index < *first_nonce_length; ++index) {
+        first_block[prefix_data_length + index] = nonce_buffer[index];
+    }
+    for (int index = 0; index < *second_nonce_length; ++index) {
+        second_block[index] = nonce_buffer[*first_nonce_length + index];
+    }
+
+    unsigned long long total_bits =
+        prefix_bit_length + ((unsigned long long)(prefix_data_length + digit_count) * 8ULL);
+
+    if (*uses_second_block != 0) {
+        second_block[*second_nonce_length] = 0x80U;
+        write_sha256_length(second_block, total_bits);
+        return;
+    }
+
+    int total_suffix_offset = prefix_data_length + *first_nonce_length;
+    if (total_suffix_offset < 56) {
+        first_block[total_suffix_offset] = 0x80U;
+        write_sha256_length(first_block, total_bits);
+        return;
+    }
+
+    *uses_second_block = 1;
+    if (total_suffix_offset < 64) {
+        first_block[total_suffix_offset] = 0x80U;
+    } else {
+        second_block[0] = 0x80U;
+    }
+    write_sha256_length(second_block, total_bits);
+}
+
+__device__ void update_fixed_nonce_blocks(
+    unsigned char first_block[64],
+    unsigned char second_block[64],
+    int prefix_data_length,
+    int first_nonce_length,
+    int second_nonce_length,
+    const unsigned char nonce_buffer[32],
+    int changed_index
+) {
+    if (changed_index < 0) {
+        changed_index = 0;
+    }
+
+    if (changed_index < first_nonce_length) {
+        for (int index = changed_index; index < first_nonce_length; ++index) {
+            first_block[prefix_data_length + index] = nonce_buffer[index];
+        }
+        for (int index = 0; index < second_nonce_length; ++index) {
+            second_block[index] = nonce_buffer[first_nonce_length + index];
+        }
+        return;
+    }
+
+    int second_changed_index = changed_index - first_nonce_length;
+    if (second_changed_index < second_nonce_length) {
+        for (int index = second_changed_index; index < second_nonce_length; ++index) {
+            second_block[index] = nonce_buffer[first_nonce_length + index];
+        }
+    }
+}
+
+__device__ void hash_prepared_nonce_blocks(
+    const unsigned int prefix_state[8],
+    const unsigned char first_block[64],
+    const unsigned char second_block[64],
+    int uses_second_block,
+    unsigned int output_state[8]
+) {
+    unsigned int state[8];
+
+    for (int index = 0; index < 8; ++index) {
+        state[index] = prefix_state[index];
+    }
+
+    sha256_transform(state, first_block);
+    if (uses_second_block != 0) {
+        sha256_transform(state, second_block);
+    }
+
+    for (int index = 0; index < 8; ++index) {
+        output_state[index] = state[index];
+    }
+}
+
 __device__ void hash_prefix_with_nonce(
     const unsigned int prefix_state[8],
     const unsigned char prefix_data[64],
@@ -326,11 +478,101 @@ __global__ void mine_pow_generic(
     }
 }
 
+__global__ void mine_pow_fixed_digits(
+    const unsigned int* prefix_state,
+    const unsigned char* prefix_data,
+    unsigned long long prefix_bit_length,
+    int prefix_data_length,
+    int difficulty_bits,
+    unsigned long long start_nonce,
+    unsigned long long total_attempts,
+    unsigned long long nonces_per_thread,
+    int digit_count,
+    unsigned long long* best_index
+) {
+    unsigned long long thread_index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    unsigned long long first_index = thread_index * nonces_per_thread;
+
+    if (first_index >= total_attempts) {
+        return;
+    }
+
+    unsigned long long limit = first_index + nonces_per_thread;
+    if (limit > total_attempts) {
+        limit = total_attempts;
+    }
+
+    unsigned long long nonce = start_nonce + first_index;
+    unsigned char nonce_buffer[32];
+    unsigned char first_block[64];
+    unsigned char second_block[64];
+    unsigned int digest_state[8];
+    int first_nonce_length = 0;
+    int second_nonce_length = 0;
+    int uses_second_block = 0;
+
+    nonce_to_ascii_fixed_digits(nonce, digit_count, nonce_buffer);
+    initialize_fixed_nonce_blocks(
+        prefix_data,
+        prefix_data_length,
+        prefix_bit_length,
+        nonce_buffer,
+        digit_count,
+        first_block,
+        second_block,
+        &first_nonce_length,
+        &second_nonce_length,
+        &uses_second_block
+    );
+
+    for (unsigned long long candidate_index = first_index;
+         candidate_index < limit;
+         ++candidate_index) {
+        if (candidate_index >= *best_index) {
+            return;
+        }
+
+        hash_prepared_nonce_blocks(
+            prefix_state,
+            first_block,
+            second_block,
+            uses_second_block,
+            digest_state
+        );
+        if (has_leading_zero_bits_state(digest_state, difficulty_bits)) {
+            atomicMin(best_index, candidate_index);
+            return;
+        }
+
+        if (candidate_index + 1ULL >= limit) {
+            return;
+        }
+
+        int changed_index = increment_ascii_fixed_digits_one(nonce_buffer, digit_count);
+        if (changed_index < 0) {
+            return;
+        }
+        update_fixed_nonce_blocks(
+            first_block,
+            second_block,
+            prefix_data_length,
+            first_nonce_length,
+            second_nonce_length,
+            nonce_buffer,
+            changed_index
+        );
+    }
+}
+
 }
 """
 
 _cupy_module = None
-_kernel = None
+_raw_modules: dict[int, object] = {}
+_generic_kernels: dict[int, object] = {}
+_fixed_digits_kernels: dict[int, object] = {}
 _cupy_lock = threading.RLock()
 _cancel_event = threading.Event()
 
@@ -403,29 +645,43 @@ def hash_prepared_prefix_with_nonce(
     return "".join(f"{word:08x}" for word in state)
 
 
-def gpu_available() -> bool:
+def gpu_device_count() -> int:
     if platform.system() != "Linux" or _cuda_backend_disabled():
-        return False
+        return 0
 
     try:
         cupy = _load_cupy()
-        return cupy.cuda.runtime.getDeviceCount() > 0
+        return max(0, int(cupy.cuda.runtime.getDeviceCount()))
     except Exception:
-        return False
+        return 0
 
 
-def gpu_properties() -> tuple[int, int] | None:
-    if not gpu_available():
+def gpu_device_ids() -> tuple[int, ...]:
+    return tuple(range(gpu_device_count()))
+
+
+def gpu_available(device_id: int | None = None) -> bool:
+    device_count = gpu_device_count()
+    if device_id is None:
+        return device_count > 0
+    return 0 <= device_id < device_count
+
+
+def gpu_properties(device_id: int | None = None) -> tuple[int, int] | None:
+    if not gpu_available(device_id):
         return None
 
-    cupy = _load_cupy()
-    device_id = cupy.cuda.runtime.getDevice()
-    properties = cupy.cuda.runtime.getDeviceProperties(device_id)
-    warp_size = int(_read_runtime_property(properties, "warpSize", 32))
-    max_threads_per_block = int(
-        _read_runtime_property(properties, "maxThreadsPerBlock", 256)
-    )
-    return warp_size, max_threads_per_block
+    previous_device_id = _activate_cuda_device(device_id)
+    try:
+        cupy = _load_cupy()
+        properties = cupy.cuda.runtime.getDeviceProperties(_current_cuda_device_id())
+        warp_size = int(_read_runtime_property(properties, "warpSize", 32))
+        max_threads_per_block = int(
+            _read_runtime_property(properties, "maxThreadsPerBlock", 256)
+        )
+        return warp_size, max_threads_per_block
+    finally:
+        _restore_cuda_device(previous_device_id)
 
 
 def mine_pow_gpu(
@@ -437,6 +693,7 @@ def mine_pow_gpu(
     nonce_step: int = 1,
     nonces_per_thread: int = 0,
     threads_per_group: int = 0,
+    device_id: int | None = None,
 ) -> tuple[int, str, bool]:
     prepared_prefix = prepare_prefix_context(prefix)
     prefix_bytes = prefix.encode("utf-8")
@@ -456,6 +713,7 @@ def mine_pow_gpu(
             nonce_step=nonce_step,
             nonces_per_thread=nonces_per_thread,
             threads_per_group=threads_per_group,
+            device_id=device_id,
         )
         total_attempts += attempts
         if attempts > 0:
@@ -483,6 +741,7 @@ def mine_pow_gpu_chunk(
     nonces_per_thread: int = 0,
     threads_per_group: int = 0,
     batch_size: int = 0,
+    device_id: int | None = None,
 ) -> tuple[int, str, bool, bool, int]:
     prepared_prefix = prepare_prefix_context(prefix)
     return _mine_pow_gpu_range(
@@ -495,6 +754,7 @@ def mine_pow_gpu_chunk(
         nonce_step=nonce_step,
         nonces_per_thread=nonces_per_thread,
         threads_per_group=threads_per_group,
+        device_id=device_id,
     )
 
 
@@ -504,6 +764,28 @@ def request_cancel() -> None:
 
 def reset_cancel() -> None:
     _cancel_event.clear()
+
+
+def _resolve_cuda_dispatch_window(
+    start_nonce: int,
+    remaining_attempts: int,
+    dispatch_batch_size: int,
+    nonce_step: int,
+) -> tuple[int, int | None]:
+    dispatch_attempts = min(dispatch_batch_size, remaining_attempts)
+    if dispatch_attempts < 1 or nonce_step != 1:
+        return dispatch_attempts, None
+
+    digit_count = _decimal_length_u64(start_nonce)
+    if digit_count > _MAX_FIXED_DIGIT_LENGTH:
+        return dispatch_attempts, None
+
+    digit_boundary = _DECIMAL_DIGIT_BOUNDARIES[digit_count - 1]
+    boundary_remaining = digit_boundary - start_nonce + 1
+    if boundary_remaining < dispatch_attempts:
+        dispatch_attempts = boundary_remaining
+
+    return dispatch_attempts, digit_count
 
 
 def _mine_pow_gpu_range(
@@ -516,8 +798,9 @@ def _mine_pow_gpu_range(
     nonce_step: int,
     nonces_per_thread: int,
     threads_per_group: int,
+    device_id: int | None = None,
 ) -> tuple[int, str, bool, bool, int]:
-    if not gpu_available():
+    if not gpu_available(device_id):
         raise RuntimeError(
             "CUDA proof-of-work backend is unavailable. "
             "Install cupy-cuda12x[ctk] on a Linux NVIDIA host."
@@ -529,61 +812,88 @@ def _mine_pow_gpu_range(
     if nonce_step < 1:
         raise ValueError("nonce_step must be at least 1.")
 
-    cupy = _load_cupy()
-    kernel = _get_kernel()
-    launch_threads = _resolve_threads_per_group(threads_per_group)
-    launch_nonces_per_thread = max(1, nonces_per_thread or DEFAULT_GPU_NONCES_PER_THREAD)
-    dispatch_batch_size = max(1, batch_size or DEFAULT_GPU_BATCH_SIZE)
-    prefix_state = cupy.asarray(prepared_prefix.state, dtype=cupy.uint32)
-    prefix_data = cupy.asarray(list(prepared_prefix.data), dtype=cupy.uint8)
+    previous_device_id = _activate_cuda_device(device_id)
+    try:
+        cupy = _load_cupy()
+        generic_kernel, fixed_digits_kernel = _get_kernels()
+        launch_threads = _resolve_threads_per_group(threads_per_group)
+        launch_nonces_per_thread = max(1, nonces_per_thread or DEFAULT_GPU_NONCES_PER_THREAD)
+        dispatch_batch_size = max(1, batch_size or DEFAULT_GPU_BATCH_SIZE)
+        prefix_state = cupy.asarray(prepared_prefix.state, dtype=cupy.uint32)
+        prefix_data = cupy.asarray(list(prepared_prefix.data), dtype=cupy.uint8)
 
-    attempts = 0
-    current_start_nonce = start_nonce
-    last_nonce = start_nonce
+        attempts = 0
+        current_start_nonce = start_nonce
+        last_nonce = start_nonce
 
-    while attempts < max_attempts:
-        if _cancel_event.is_set():
-            return last_nonce, "", False, True, attempts
+        while attempts < max_attempts:
+            if _cancel_event.is_set():
+                return last_nonce, "", False, True, attempts
 
-        remaining_attempts = max_attempts - attempts
-        dispatch_attempts = min(dispatch_batch_size, remaining_attempts)
-        thread_count = (dispatch_attempts + launch_nonces_per_thread - 1) // launch_nonces_per_thread
-        block_count = max(1, (thread_count + launch_threads - 1) // launch_threads)
-        best_index = cupy.asarray([dispatch_attempts], dtype=cupy.uint64)
-
-        try:
-            kernel(
-                (block_count,),
-                (launch_threads,),
-                (
-                    prefix_state,
-                    prefix_data,
-                    prepared_prefix.bit_length,
-                    prepared_prefix.data_length,
-                    difficulty_bits,
-                    current_start_nonce,
-                    nonce_step,
-                    dispatch_attempts,
-                    launch_nonces_per_thread,
-                    best_index,
-                ),
+            remaining_attempts = max_attempts - attempts
+            dispatch_attempts, fixed_digit_count = _resolve_cuda_dispatch_window(
+                current_start_nonce,
+                remaining_attempts,
+                dispatch_batch_size,
+                nonce_step,
             )
-            found_index = int(best_index.get()[0])
-        except Exception as error:
-            raise RuntimeError(f"CUDA proof-of-work failed: {error}") from error
+            thread_count = (dispatch_attempts + launch_nonces_per_thread - 1) // launch_nonces_per_thread
+            block_count = max(1, (thread_count + launch_threads - 1) // launch_threads)
+            best_index = cupy.asarray([dispatch_attempts], dtype=cupy.uint64)
 
-        if found_index < dispatch_attempts:
-            winning_nonce = current_start_nonce + (found_index * nonce_step)
-            winning_hash = hashlib.sha256(
-                prefix_bytes + str(winning_nonce).encode("ascii")
-            ).hexdigest()
-            return winning_nonce, winning_hash, True, False, attempts + found_index + 1
+            try:
+                if fixed_digit_count is None:
+                    generic_kernel(
+                        (block_count,),
+                        (launch_threads,),
+                        (
+                            prefix_state,
+                            prefix_data,
+                            prepared_prefix.bit_length,
+                            prepared_prefix.data_length,
+                            difficulty_bits,
+                            current_start_nonce,
+                            nonce_step,
+                            dispatch_attempts,
+                            launch_nonces_per_thread,
+                            best_index,
+                        ),
+                    )
+                else:
+                    fixed_digits_kernel(
+                        (block_count,),
+                        (launch_threads,),
+                        (
+                            prefix_state,
+                            prefix_data,
+                            prepared_prefix.bit_length,
+                            prepared_prefix.data_length,
+                            difficulty_bits,
+                            current_start_nonce,
+                            dispatch_attempts,
+                            launch_nonces_per_thread,
+                            fixed_digit_count,
+                            best_index,
+                        ),
+                    )
+                found_index = int(best_index.get()[0])
+            except Exception as error:
+                raise RuntimeError(f"CUDA proof-of-work failed: {error}") from error
 
-        attempts += dispatch_attempts
-        current_start_nonce += dispatch_attempts * nonce_step
-        last_nonce = current_start_nonce - nonce_step
+            if found_index < dispatch_attempts:
+                winning_nonce = current_start_nonce + (found_index * nonce_step)
+                winning_hash = hashlib.sha256(
+                    prefix_bytes + str(winning_nonce).encode("ascii")
+                ).hexdigest()
+                return winning_nonce, winning_hash, True, False, attempts + found_index + 1
 
-    return last_nonce, "", False, False, attempts
+            attempts += dispatch_attempts
+            current_start_nonce += dispatch_attempts * nonce_step
+            last_nonce = current_start_nonce - nonce_step
+
+        return last_nonce, "", False, False, attempts
+    finally:
+        _restore_cuda_device(previous_device_id)
 
 
 def _load_cupy():
@@ -600,17 +910,61 @@ def _load_cupy():
     return _cupy_module
 
 
-def _get_kernel():
-    global _kernel
+def _get_kernels():
+    device_id = _current_cuda_device_id()
+    generic_kernel = _generic_kernels.get(device_id)
+    fixed_digits_kernel = _fixed_digits_kernels.get(device_id)
 
-    if _kernel is not None:
-        return _kernel
+    if generic_kernel is not None and fixed_digits_kernel is not None:
+        return generic_kernel, fixed_digits_kernel
 
     with _cupy_lock:
-        if _kernel is None:
+        generic_kernel = _generic_kernels.get(device_id)
+        fixed_digits_kernel = _fixed_digits_kernels.get(device_id)
+        if generic_kernel is None or fixed_digits_kernel is None:
             cupy = _load_cupy()
-            _kernel = cupy.RawKernel(_CUDA_KERNEL_SOURCE, "mine_pow_generic")
-    return _kernel
+            raw_module = _raw_modules.get(device_id)
+            if raw_module is None:
+                raw_module = cupy.RawModule(code=_CUDA_KERNEL_SOURCE)
+                _raw_modules[device_id] = raw_module
+            generic_kernel = raw_module.get_function("mine_pow_generic")
+            fixed_digits_kernel = raw_module.get_function("mine_pow_fixed_digits")
+            _generic_kernels[device_id] = generic_kernel
+            _fixed_digits_kernels[device_id] = fixed_digits_kernel
+    return generic_kernel, fixed_digits_kernel
+
+
+def _decimal_length_u64(value: int) -> int:
+    if value < 0:
+        raise ValueError("value must be non-negative.")
+    return len(str(value))
+
+
+def _current_cuda_device_id() -> int:
+    cupy = _load_cupy()
+    return int(cupy.cuda.runtime.getDevice())
+
+
+def _activate_cuda_device(device_id: int | None) -> int | None:
+    if device_id is None:
+        return None
+    if not gpu_available(device_id):
+        raise ValueError(f"CUDA device {device_id} is unavailable.")
+
+    cupy = _load_cupy()
+    previous_device_id = _current_cuda_device_id()
+    if previous_device_id != device_id:
+        cupy.cuda.runtime.setDevice(device_id)
+    return previous_device_id
+
+
+def _restore_cuda_device(previous_device_id: int | None) -> None:
+    if previous_device_id is None:
+        return
+
+    cupy = _load_cupy()
+    if _current_cuda_device_id() != previous_device_id:
+        cupy.cuda.runtime.setDevice(previous_device_id)
 
 
 def _resolve_threads_per_group(threads_per_group: int) -> int:

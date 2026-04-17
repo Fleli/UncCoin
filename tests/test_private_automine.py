@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import os
 import unittest
 from datetime import datetime
 from decimal import Decimal
@@ -22,6 +23,7 @@ def create_blockchain(*, difficulty_bits: int = 0) -> Blockchain:
     return blockchain
 
 
+@mock.patch.dict(os.environ, {"UNCCOIN_DISABLE_MINING_AUTOTUNE": "1"}, clear=False)
 class BlockchainPrivateTipMiningTests(unittest.TestCase):
     def test_mines_from_explicit_non_canonical_tip(self) -> None:
         blockchain = create_blockchain()
@@ -55,6 +57,7 @@ class BlockchainPrivateTipMiningTests(unittest.TestCase):
         self.assertEqual(blockchain.main_tip_hash, private_tip.block_hash)
 
 
+@mock.patch.dict(os.environ, {"UNCCOIN_DISABLE_MINING_AUTOTUNE": "1"}, clear=False)
 class NodePrivateAutomineTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_automine_only_cancels_for_same_branch_extension(self) -> None:
         blockchain = create_blockchain()
@@ -180,3 +183,76 @@ class NodePrivateAutomineTests(unittest.IsolatedAsyncioTestCase):
         accepted, reason = normal_node._handle_incoming_transaction(rejected_transaction)
         self.assertFalse(accepted)
         self.assertIsNotNone(reason)
+
+    async def test_private_automine_loop_reconciles_pending_transactions_for_private_tip(self) -> None:
+        blockchain = create_blockchain()
+        wallet = create_wallet(name="private-autominer")
+        node = Node(
+            host="127.0.0.1",
+            port=9003,
+            wallet=wallet,
+            blockchain=blockchain,
+            private_automine=True,
+        )
+        node.automine_description = "private automine"
+
+        original_mine_pending_transactions = blockchain.mine_pending_transactions
+        original_reconcile_pending_transactions = blockchain.reconcile_pending_transactions
+        mined_call_kwargs: dict | None = None
+        reconcile_calls: list[tuple[str | None, str | None]] = []
+
+        def mining_wrapper(*args, **kwargs):
+            nonlocal mined_call_kwargs
+            mined_call_kwargs = dict(kwargs)
+            block = original_mine_pending_transactions(*args, **kwargs)
+            node._automine_stop_requested = True
+            return block
+
+        def reconcile_wrapper(previous_head: str | None, current_head: str | None = None) -> None:
+            reconcile_calls.append((previous_head, current_head))
+            original_reconcile_pending_transactions(previous_head, current_head)
+
+        with mock.patch.object(
+            blockchain,
+            "mine_pending_transactions",
+            side_effect=mining_wrapper,
+        ):
+            with mock.patch.object(
+                blockchain,
+                "reconcile_pending_transactions",
+                side_effect=reconcile_wrapper,
+            ):
+                with mock.patch.object(node, "broadcast_block", new=mock.AsyncMock()):
+                    with mock.patch.object(node, "_maybe_schedule_autosend"):
+                        with mock.patch("builtins.print"):
+                            await node._automine_loop()
+
+        self.assertIsNotNone(mined_call_kwargs)
+        assert mined_call_kwargs is not None
+        self.assertFalse(mined_call_kwargs["reconcile_pending_transactions"])
+        self.assertEqual(mined_call_kwargs["tip_hash"], blockchain.blocks[0].block_hash)
+        self.assertEqual(
+            reconcile_calls,
+            [(blockchain.blocks[0].block_hash, node._private_automine_tip_hash)],
+        )
+        self.assertIsNotNone(node._private_automine_tip_hash)
+
+
+class NodeStartupStatusTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_prints_available_gpu_count(self) -> None:
+        node = Node(host="127.0.0.1", port=9010)
+
+        with mock.patch.object(node, "_load_persisted_aliases"):
+            with mock.patch.object(node, "_load_persisted_messages"):
+                with mock.patch.object(node, "_load_persisted_blockchain"):
+                    with mock.patch.object(node, "_ensure_genesis_block"):
+                        with mock.patch.object(node, "_reset_autosend_balance_baseline"):
+                            with mock.patch.object(node.p2p_server, "start", new=mock.AsyncMock()):
+                                with mock.patch("node.node.gpu_device_ids", return_value=(0, 1, 2, 3)):
+                                    with mock.patch("builtins.print") as print_mock:
+                                        await node.start()
+
+        print_mock.assert_any_call(
+            "GPU devices available: 4 (ids: 0, 1, 2, 3)",
+            flush=True,
+        )

@@ -7,6 +7,7 @@ from typing import Callable
 from config import DEFAULT_CPU_CHUNK_SIZE
 from config import DEFAULT_GPU_CHUNK_MULTIPLIER
 from config import DEFAULT_GPU_WORKERS
+from core.native_pow import gpu_device_ids as native_gpu_device_ids
 from core.native_pow import mine_pow_chunk as native_mine_pow_chunk
 from core.native_pow import mine_pow_gpu_chunk as native_mine_pow_gpu_chunk
 from core.native_pow import request_pow_cancel
@@ -120,6 +121,52 @@ def get_gpu_worker_count(default: int = DEFAULT_GPU_WORKERS) -> int:
     return value
 
 
+def get_gpu_device_ids(default: tuple[int, ...] | None = None) -> tuple[int, ...]:
+    available_device_ids = tuple(native_gpu_device_ids())
+    resolved_default = available_device_ids if default is None else tuple(default)
+    raw_value = os.environ.get("UNCCOIN_GPU_DEVICE_IDS")
+    if raw_value is None or not raw_value.strip():
+        return resolved_default
+
+    parsed_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for raw_item in raw_value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        try:
+            device_id = int(item)
+        except ValueError as error:
+            raise ValueError(
+                "UNCCOIN_GPU_DEVICE_IDS must be a comma-separated list of integers."
+            ) from error
+        if device_id < 0:
+            raise ValueError("UNCCOIN_GPU_DEVICE_IDS cannot contain negative device IDs.")
+        if device_id in seen_ids:
+            continue
+        parsed_ids.append(device_id)
+        seen_ids.add(device_id)
+
+    if not parsed_ids:
+        raise ValueError("UNCCOIN_GPU_DEVICE_IDS did not contain any usable device IDs.")
+
+    if available_device_ids:
+        unavailable_device_ids = [
+            device_id
+            for device_id in parsed_ids
+            if device_id not in available_device_ids
+        ]
+        if unavailable_device_ids:
+            unavailable_text = ", ".join(str(device_id) for device_id in unavailable_device_ids)
+            available_text = ", ".join(str(device_id) for device_id in available_device_ids)
+            raise ValueError(
+                "UNCCOIN_GPU_DEVICE_IDS requested unavailable CUDA devices "
+                f"({unavailable_text}). Visible devices: {available_text}."
+            )
+
+    return tuple(parsed_ids)
+
+
 def run_chunked_mining(
     prefix: str,
     difficulty_bits: int,
@@ -136,16 +183,24 @@ def run_chunked_mining(
     progress_callback: Callable[[int], None] | None = None,
     cancel_after_seconds: float | None = None,
     tolerate_gpu_failure: bool = False,
+    gpu_device_ids: tuple[int, ...] | None = None,
 ) -> ChunkedMiningResult:
     gpu_dispatch_batch_size = gpu_chunk_size
-    resolved_gpu_workers = gpu_workers if gpu_enabled else 0
+    resolved_gpu_device_ids = tuple(gpu_device_ids) if gpu_enabled and gpu_device_ids is not None else (
+        get_gpu_device_ids() if gpu_enabled else ()
+    )
+    resolved_gpu_workers_per_device = gpu_workers if gpu_enabled else 0
     if gpu_chunk_multiplier is None:
         gpu_chunk_multiplier = get_gpu_chunk_multiplier()
     total_gpu_chunk_size = gpu_dispatch_batch_size * gpu_chunk_multiplier
-    if resolved_gpu_workers > 0:
+    if resolved_gpu_workers_per_device > 0:
         gpu_chunk_size = max(
             1,
-            (total_gpu_chunk_size + resolved_gpu_workers - 1) // resolved_gpu_workers,
+            (
+                total_gpu_chunk_size
+                + resolved_gpu_workers_per_device
+                - 1
+            ) // resolved_gpu_workers_per_device,
         )
     else:
         gpu_chunk_size = total_gpu_chunk_size
@@ -159,7 +214,8 @@ def run_chunked_mining(
     winner_lock = threading.Lock()
     winner: tuple[int, str] | None = None
     cpu_outcomes = [_WorkerOutcome() for _ in range(cpu_workers)]
-    gpu_outcomes = [_WorkerOutcome() for _ in range(gpu_workers)] if gpu_enabled else []
+    total_gpu_workers = len(resolved_gpu_device_ids) * resolved_gpu_workers_per_device
+    gpu_outcomes = [_WorkerOutcome() for _ in range(total_gpu_workers)] if gpu_enabled else []
     threads: list[threading.Thread] = []
 
     if cpu_workers < 0:
@@ -170,8 +226,10 @@ def run_chunked_mining(
         raise ValueError("gpu_workers must be non-negative.")
     if gpu_enabled and gpu_chunk_size < 1:
         raise ValueError("gpu_chunk_size must be at least 1 when GPU mining is enabled.")
-    if gpu_enabled and gpu_workers < 1:
+    if gpu_enabled and resolved_gpu_workers_per_device < 1:
         raise ValueError("gpu_workers must be at least 1 when GPU mining is enabled.")
+    if gpu_enabled and not resolved_gpu_device_ids:
+        raise ValueError("No GPU devices were selected for GPU mining.")
 
     def record_winner(candidate: tuple[int, str]) -> None:
         nonlocal winner
@@ -211,7 +269,7 @@ def run_chunked_mining(
             stop_event.set()
             request_pow_cancel()
 
-    def run_gpu_worker(worker_index: int) -> None:
+    def run_gpu_worker(worker_index: int, device_id: int) -> None:
         outcome = gpu_outcomes[worker_index]
         try:
             while not stop_event.is_set():
@@ -225,6 +283,7 @@ def run_chunked_mining(
                     gpu_nonces_per_thread,
                     gpu_threads_per_group,
                     gpu_dispatch_batch_size,
+                    device_id,
                 )
                 outcome.attempts += attempts
                 progress_tracker.add_attempts(attempts)
@@ -256,14 +315,19 @@ def run_chunked_mining(
             worker.start()
 
         if gpu_enabled:
-            for worker_index in range(gpu_workers):
-                gpu_worker = threading.Thread(
-                    target=run_gpu_worker,
-                    args=(worker_index,),
-                    daemon=True,
-                )
-                threads.append(gpu_worker)
-                gpu_worker.start()
+            for device_index, device_id in enumerate(resolved_gpu_device_ids):
+                for worker_offset in range(resolved_gpu_workers_per_device):
+                    worker_index = (
+                        device_index * resolved_gpu_workers_per_device
+                        + worker_offset
+                    )
+                    gpu_worker = threading.Thread(
+                        target=run_gpu_worker,
+                        args=(worker_index, device_id),
+                        daemon=True,
+                    )
+                    threads.append(gpu_worker)
+                    gpu_worker.start()
 
         if cancel_after_seconds is not None:
             time.sleep(cancel_after_seconds)

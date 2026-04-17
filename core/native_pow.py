@@ -56,27 +56,44 @@ def mine_pow_chunk(
     )
 
 
-def gpu_available() -> bool:
+def gpu_available(device_id: int | None = None) -> bool:
     backend = _gpu_backend()
     if backend is not None:
-        return bool(backend.gpu_available())
+        return bool(backend.gpu_available(device_id))
 
     if platform.system() != "Darwin":
+        return False
+
+    if device_id not in {None, 0}:
         return False
 
     module = _load_native_pow_module()
     return bool(module.gpu_available())
 
 
-def gpu_properties() -> tuple[int, int] | None:
+def gpu_device_ids() -> tuple[int, ...]:
     backend = _gpu_backend()
     if backend is not None:
-        properties = backend.gpu_properties()
+        return tuple(int(device_id) for device_id in backend.gpu_device_ids())
+
+    if platform.system() != "Darwin":
+        return ()
+
+    return (0,) if gpu_available() else ()
+
+
+def gpu_properties(device_id: int | None = None) -> tuple[int, int] | None:
+    backend = _gpu_backend()
+    if backend is not None:
+        properties = backend.gpu_properties(device_id)
         if properties is None:
             return None
         return int(properties[0]), int(properties[1])
 
     if platform.system() != "Darwin":
+        return None
+
+    if device_id not in {None, 0}:
         return None
 
     module = _load_native_pow_module()
@@ -95,6 +112,7 @@ def mine_pow_gpu(
     nonce_step: int = 1,
     nonces_per_thread: int = 0,
     threads_per_group: int = 0,
+    device_id: int | None = None,
 ) -> tuple[int, str, bool]:
     backend = _gpu_backend()
     if backend is not None:
@@ -107,6 +125,7 @@ def mine_pow_gpu(
             nonce_step,
             nonces_per_thread,
             threads_per_group,
+            device_id,
         )
 
     module = _load_native_pow_module()
@@ -131,6 +150,7 @@ def mine_pow_gpu_chunk(
     nonces_per_thread: int = 0,
     threads_per_group: int = 0,
     batch_size: int = 0,
+    device_id: int | None = None,
 ) -> tuple[int, str, bool, bool, int]:
     backend = _gpu_backend()
     if backend is not None:
@@ -143,6 +163,7 @@ def mine_pow_gpu_chunk(
             nonces_per_thread,
             threads_per_group,
             batch_size,
+            device_id,
         )
 
     module = _load_native_pow_module()

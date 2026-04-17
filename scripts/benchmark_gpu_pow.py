@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from config import DEFAULT_GPU_CHUNK_MULTIPLIER
 from config import DEFAULT_GPU_NONCES_PER_THREAD
 from config import DEFAULT_GPU_WORKERS
 from core.mining_scheduler import get_cpu_chunk_size
+from core.mining_scheduler import get_gpu_device_ids
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available
 from core.native_pow import gpu_properties
@@ -29,13 +31,24 @@ def main() -> None:
     parser.add_argument("--chunk-multiplier", type=int, default=DEFAULT_GPU_CHUNK_MULTIPLIER)
     parser.add_argument("--gpu-workers", type=int, default=DEFAULT_GPU_WORKERS)
     parser.add_argument("--cpu-workers", type=int, default=0)
+    parser.add_argument(
+        "--gpu-device-ids",
+        help="Optional comma-separated CUDA device ids. Defaults to all visible devices.",
+    )
     args = parser.parse_args()
+
+    if args.gpu_device_ids is not None:
+        os.environ["UNCCOIN_GPU_DEVICE_IDS"] = args.gpu_device_ids
 
     if not gpu_available():
         raise SystemExit("GPU backend unavailable.")
 
-    properties = gpu_properties()
-    print(f"GPU properties: {properties}")
+    selected_gpu_device_ids = get_gpu_device_ids()
+    print(f"GPU devices: {selected_gpu_device_ids}")
+    print(
+        "GPU properties:",
+        {device_id: gpu_properties(device_id) for device_id in selected_gpu_device_ids},
+    )
 
     result = run_chunked_mining(
         BENCHMARK_PREFIX,
@@ -51,6 +64,7 @@ def main() -> None:
         args.gpu_workers,
         cancel_after_seconds=args.seconds,
         tolerate_gpu_failure=False,
+        gpu_device_ids=selected_gpu_device_ids,
     )
 
     hash_rate = result.attempts / max(result.elapsed, 1e-9)

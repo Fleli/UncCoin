@@ -12,21 +12,22 @@ from config import DEFAULT_MINING_AUTOTUNE_SECONDS
 from core.mining_scheduler import get_cpu_chunk_size
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available as native_gpu_available
+from core.native_pow import gpu_device_ids as native_gpu_device_ids
 from core.native_pow import gpu_properties as native_gpu_properties
 from state_paths import ensure_state_dir
 
 
-AUTOTUNE_VERSION = 20
+AUTOTUNE_VERSION = 21
 AUTOTUNE_PATH = ensure_state_dir() / "mining_tuning.json"
 GPU_TUNING_PREFIX = "1||bench|" + ("0" * 64) + "|"
 GPU_TUNING_START_NONCE = 100_000_000
 CPU_TUNING_PREFIX = "mining-autotune|"
 
 _autotune_lock = threading.RLock()
-_cached_worker_results: dict[tuple[int, bool, int, int, int, int, int], int] = {}
-_cached_gpu_results: dict[int, tuple[int, int]] = {}
-_cached_gpu_chunk_multiplier_results: dict[tuple[int, int, int], int] = {}
-_cached_gpu_worker_results: dict[tuple[int, int, int, int], int] = {}
+_cached_worker_results: dict[tuple[int, bool, int, int, int, int, int, int | None], int] = {}
+_cached_gpu_results: dict[tuple[int, int | None], tuple[int, int]] = {}
+_cached_gpu_chunk_multiplier_results: dict[tuple[int, int, int, int | None], int] = {}
+_cached_gpu_worker_results: dict[tuple[int, int, int, int, int | None], int] = {}
 
 
 def get_tuned_worker_count(
@@ -37,6 +38,7 @@ def get_tuned_worker_count(
     gpu_threads_per_group: int = 0,
     gpu_chunk_multiplier: int = DEFAULT_GPU_CHUNK_MULTIPLIER,
     gpu_worker_count: int = DEFAULT_GPU_WORKERS,
+    gpu_device_id: int | None = None,
 ) -> int:
     if default_workers <= 1 or _autotune_disabled():
         return default_workers
@@ -49,6 +51,7 @@ def get_tuned_worker_count(
         gpu_threads_per_group,
         gpu_chunk_multiplier,
         gpu_worker_count,
+        gpu_device_id,
     )
     cached_workers = _cached_worker_results.get(cache_key)
     if cached_workers is not None:
@@ -67,6 +70,7 @@ def get_tuned_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         )
         if cached_workers is not None:
             _cached_worker_results[cache_key] = cached_workers
@@ -75,13 +79,15 @@ def get_tuned_worker_count(
         if gpu_enabled:
             if gpu_nonces_per_thread <= 0 or gpu_threads_per_group <= 0:
                 gpu_nonces_per_thread, gpu_threads_per_group = get_tuned_gpu_launch_config(
-                    gpu_batch_size
+                    gpu_batch_size,
+                    gpu_device_id,
                 )
             if gpu_chunk_multiplier <= 0:
                 gpu_chunk_multiplier = get_tuned_gpu_chunk_multiplier(
                     gpu_batch_size,
                     gpu_nonces_per_thread,
                     gpu_threads_per_group,
+                    gpu_device_id,
                 )
             if gpu_worker_count <= 0:
                 gpu_worker_count = get_tuned_gpu_worker_count(
@@ -89,6 +95,7 @@ def get_tuned_worker_count(
                     gpu_nonces_per_thread,
                     gpu_threads_per_group,
                     gpu_chunk_multiplier,
+                    gpu_device_id,
                 )
 
         tuned_workers = _benchmark_worker_count(
@@ -99,6 +106,7 @@ def get_tuned_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         )
         _save_cached_worker_count(
             tuned_workers,
@@ -109,16 +117,20 @@ def get_tuned_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         )
         _cached_worker_results[cache_key] = tuned_workers
         return tuned_workers
 
 
-def get_tuned_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
+def get_tuned_gpu_launch_config(
+    gpu_batch_size: int,
+    gpu_device_id: int | None = None,
+) -> tuple[int, int]:
     if _autotune_disabled():
-        return _default_gpu_launch_config()
+        return _default_gpu_launch_config(gpu_device_id)
 
-    cache_key = gpu_batch_size
+    cache_key = (gpu_batch_size, gpu_device_id)
     cached_config = _cached_gpu_results.get(cache_key)
     if cached_config is not None:
         return cached_config
@@ -128,13 +140,13 @@ def get_tuned_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
         if cached_config is not None:
             return cached_config
 
-        cached_config = _load_cached_gpu_launch_config(gpu_batch_size)
+        cached_config = _load_cached_gpu_launch_config(gpu_batch_size, gpu_device_id)
         if cached_config is not None:
             _cached_gpu_results[cache_key] = cached_config
             return cached_config
 
-        tuned_config = _benchmark_gpu_launch_config(gpu_batch_size)
-        _save_cached_gpu_launch_config(tuned_config, gpu_batch_size)
+        tuned_config = _benchmark_gpu_launch_config(gpu_batch_size, gpu_device_id)
+        _save_cached_gpu_launch_config(tuned_config, gpu_batch_size, gpu_device_id)
         _cached_gpu_results[cache_key] = tuned_config
         return tuned_config
 
@@ -143,11 +155,17 @@ def get_tuned_gpu_chunk_multiplier(
     gpu_batch_size: int,
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
+    gpu_device_id: int | None = None,
 ) -> int:
     if _autotune_disabled():
         return DEFAULT_GPU_CHUNK_MULTIPLIER
 
-    cache_key = (gpu_batch_size, gpu_nonces_per_thread, gpu_threads_per_group)
+    cache_key = (
+        gpu_batch_size,
+        gpu_nonces_per_thread,
+        gpu_threads_per_group,
+        gpu_device_id,
+    )
     cached_multiplier = _cached_gpu_chunk_multiplier_results.get(cache_key)
     if cached_multiplier is not None:
         return cached_multiplier
@@ -161,6 +179,7 @@ def get_tuned_gpu_chunk_multiplier(
             gpu_batch_size,
             gpu_nonces_per_thread,
             gpu_threads_per_group,
+            gpu_device_id,
         )
         if cached_multiplier is not None:
             _cached_gpu_chunk_multiplier_results[cache_key] = cached_multiplier
@@ -170,12 +189,14 @@ def get_tuned_gpu_chunk_multiplier(
             gpu_batch_size,
             gpu_nonces_per_thread,
             gpu_threads_per_group,
+            gpu_device_id,
         )
         _save_cached_gpu_chunk_multiplier(
             tuned_multiplier,
             gpu_batch_size,
             gpu_nonces_per_thread,
             gpu_threads_per_group,
+            gpu_device_id,
         )
         _cached_gpu_chunk_multiplier_results[cache_key] = tuned_multiplier
         return tuned_multiplier
@@ -186,6 +207,7 @@ def get_tuned_gpu_worker_count(
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
+    gpu_device_id: int | None = None,
 ) -> int:
     if _autotune_disabled():
         return DEFAULT_GPU_WORKERS
@@ -195,6 +217,7 @@ def get_tuned_gpu_worker_count(
         gpu_nonces_per_thread,
         gpu_threads_per_group,
         gpu_chunk_multiplier,
+        gpu_device_id,
     )
     cached_workers = _cached_gpu_worker_results.get(cache_key)
     if cached_workers is not None:
@@ -210,6 +233,7 @@ def get_tuned_gpu_worker_count(
             gpu_nonces_per_thread,
             gpu_threads_per_group,
             gpu_chunk_multiplier,
+            gpu_device_id,
         )
         if cached_workers is not None:
             _cached_gpu_worker_results[cache_key] = cached_workers
@@ -220,6 +244,7 @@ def get_tuned_gpu_worker_count(
             gpu_nonces_per_thread,
             gpu_threads_per_group,
             gpu_chunk_multiplier,
+            gpu_device_id,
         )
         _save_cached_gpu_worker_count(
             tuned_workers,
@@ -227,6 +252,7 @@ def get_tuned_gpu_worker_count(
             gpu_nonces_per_thread,
             gpu_threads_per_group,
             gpu_chunk_multiplier,
+            gpu_device_id,
         )
         _cached_gpu_worker_results[cache_key] = tuned_workers
         return tuned_workers
@@ -237,6 +263,16 @@ def _autotune_disabled() -> bool:
     return raw_value.lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_gpu_tuning_device_id(gpu_device_id: int | None) -> int | None:
+    if gpu_device_id is not None:
+        return gpu_device_id
+
+    available_device_ids = tuple(native_gpu_device_ids())
+    if not available_device_ids:
+        return None
+    return available_device_ids[0]
+
+
 def _worker_signature(
     default_workers: int,
     gpu_enabled: bool,
@@ -245,8 +281,9 @@ def _worker_signature(
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
     gpu_worker_count: int,
+    gpu_device_id: int | None,
 ) -> dict[str, object]:
-    return {
+    signature = {
         "version": AUTOTUNE_VERSION,
         "system": platform.system(),
         "machine": platform.machine(),
@@ -259,10 +296,17 @@ def _worker_signature(
         "gpu_chunk_multiplier": gpu_chunk_multiplier,
         "gpu_worker_count": gpu_worker_count,
     }
+    if gpu_enabled:
+        signature["gpu_device_id"] = gpu_device_id
+    return signature
 
 
-def _gpu_signature(gpu_batch_size: int) -> dict[str, object] | None:
-    gpu_launch_properties = native_gpu_properties()
+def _gpu_signature(
+    gpu_batch_size: int,
+    gpu_device_id: int | None,
+) -> dict[str, object] | None:
+    resolved_gpu_device_id = _resolve_gpu_tuning_device_id(gpu_device_id)
+    gpu_launch_properties = native_gpu_properties(resolved_gpu_device_id)
     if gpu_launch_properties is None:
         return None
 
@@ -273,6 +317,7 @@ def _gpu_signature(gpu_batch_size: int) -> dict[str, object] | None:
         "machine": platform.machine(),
         "cpu_count": max(1, os.cpu_count() or 1),
         "gpu_batch_size": gpu_batch_size,
+        "gpu_device_id": resolved_gpu_device_id,
         "thread_execution_width": thread_execution_width,
         "max_threads_per_threadgroup": max_threads_per_threadgroup,
     }
@@ -282,8 +327,9 @@ def _gpu_chunk_multiplier_signature(
     gpu_batch_size: int,
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
+    gpu_device_id: int | None,
 ) -> dict[str, object] | None:
-    signature = _gpu_signature(gpu_batch_size)
+    signature = _gpu_signature(gpu_batch_size, gpu_device_id)
     if signature is None:
         return None
     return signature | {
@@ -297,11 +343,13 @@ def _gpu_worker_signature(
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
+    gpu_device_id: int | None,
 ) -> dict[str, object] | None:
     signature = _gpu_chunk_multiplier_signature(
         gpu_batch_size,
         gpu_nonces_per_thread,
         gpu_threads_per_group,
+        gpu_device_id,
     )
     if signature is None:
         return None
@@ -379,6 +427,7 @@ def _load_cached_worker_count(
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
     gpu_worker_count: int,
+    gpu_device_id: int | None,
 ) -> int | None:
     worker_payload = _load_cached_tuning_entry(
         "worker_tuning",
@@ -390,6 +439,7 @@ def _load_cached_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         ),
     )
     if worker_payload is None:
@@ -410,6 +460,7 @@ def _save_cached_worker_count(
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
     gpu_worker_count: int,
+    gpu_device_id: int | None,
 ) -> None:
     _save_cached_tuning_entry(
         "worker_tuning",
@@ -421,6 +472,7 @@ def _save_cached_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         ),
         {
             "tuned_workers": tuned_workers,
@@ -428,8 +480,11 @@ def _save_cached_worker_count(
     )
 
 
-def _load_cached_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int] | None:
-    signature = _gpu_signature(gpu_batch_size)
+def _load_cached_gpu_launch_config(
+    gpu_batch_size: int,
+    gpu_device_id: int | None,
+) -> tuple[int, int] | None:
+    signature = _gpu_signature(gpu_batch_size, gpu_device_id)
     if signature is None:
         return None
 
@@ -452,8 +507,9 @@ def _load_cached_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int] | Non
 def _save_cached_gpu_launch_config(
     tuned_config: tuple[int, int],
     gpu_batch_size: int,
+    gpu_device_id: int | None,
 ) -> None:
-    signature = _gpu_signature(gpu_batch_size)
+    signature = _gpu_signature(gpu_batch_size, gpu_device_id)
     if signature is None:
         return
 
@@ -471,11 +527,13 @@ def _load_cached_gpu_chunk_multiplier(
     gpu_batch_size: int,
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
+    gpu_device_id: int | None,
 ) -> int | None:
     signature = _gpu_chunk_multiplier_signature(
         gpu_batch_size,
         gpu_nonces_per_thread,
         gpu_threads_per_group,
+        gpu_device_id,
     )
     if signature is None:
         return None
@@ -495,11 +553,13 @@ def _save_cached_gpu_chunk_multiplier(
     gpu_batch_size: int,
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
+    gpu_device_id: int | None,
 ) -> None:
     signature = _gpu_chunk_multiplier_signature(
         gpu_batch_size,
         gpu_nonces_per_thread,
         gpu_threads_per_group,
+        gpu_device_id,
     )
     if signature is None:
         return
@@ -518,12 +578,14 @@ def _load_cached_gpu_worker_count(
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
+    gpu_device_id: int | None,
 ) -> int | None:
     signature = _gpu_worker_signature(
         gpu_batch_size,
         gpu_nonces_per_thread,
         gpu_threads_per_group,
         gpu_chunk_multiplier,
+        gpu_device_id,
     )
     if signature is None:
         return None
@@ -544,12 +606,14 @@ def _save_cached_gpu_worker_count(
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
+    gpu_device_id: int | None,
 ) -> None:
     signature = _gpu_worker_signature(
         gpu_batch_size,
         gpu_nonces_per_thread,
         gpu_threads_per_group,
         gpu_chunk_multiplier,
+        gpu_device_id,
     )
     if signature is None:
         return
@@ -563,8 +627,8 @@ def _save_cached_gpu_worker_count(
     )
 
 
-def _default_gpu_launch_config() -> tuple[int, int]:
-    properties = native_gpu_properties()
+def _default_gpu_launch_config(gpu_device_id: int | None) -> tuple[int, int]:
+    properties = native_gpu_properties(_resolve_gpu_tuning_device_id(gpu_device_id))
     if properties is None:
         return DEFAULT_GPU_NONCES_PER_THREAD, 0
 
@@ -586,12 +650,13 @@ def _benchmark_worker_count(
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
     gpu_worker_count: int,
+    gpu_device_id: int | None,
 ) -> int:
     candidate_workers = _candidate_worker_counts(default_workers)
     benchmark_seconds = DEFAULT_MINING_AUTOTUNE_SECONDS
 
     if gpu_enabled:
-        native_gpu_available()
+        native_gpu_available(_resolve_gpu_tuning_device_id(gpu_device_id))
 
     scores = {
         workers: _measure_hash_rate(
@@ -603,6 +668,7 @@ def _benchmark_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         )
         for workers in candidate_workers
     }
@@ -618,6 +684,7 @@ def _benchmark_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            gpu_device_id,
         )
 
     best_workers = max(candidate_workers, key=lambda workers: (scores[workers], -workers))
@@ -637,9 +704,12 @@ def _candidate_worker_counts(default_workers: int) -> tuple[int, ...]:
     return tuple(sorted(candidates))
 
 
-def _benchmark_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
-    default_config = _default_gpu_launch_config()
-    properties = native_gpu_properties()
+def _benchmark_gpu_launch_config(
+    gpu_batch_size: int,
+    gpu_device_id: int | None,
+) -> tuple[int, int]:
+    default_config = _default_gpu_launch_config(gpu_device_id)
+    properties = native_gpu_properties(_resolve_gpu_tuning_device_id(gpu_device_id))
     if properties is None:
         return default_config
 
@@ -665,6 +735,7 @@ def _benchmark_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
             threads_per_group,
             DEFAULT_GPU_CHUNK_MULTIPLIER,
             DEFAULT_GPU_WORKERS,
+            gpu_device_id,
         )
         for nonces_per_thread in candidate_nonces_per_thread
         for threads_per_group in candidate_threads_per_group
@@ -683,6 +754,7 @@ def _benchmark_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
                     threads_per_group,
                     DEFAULT_GPU_CHUNK_MULTIPLIER,
                     DEFAULT_GPU_WORKERS,
+                    gpu_device_id,
                 )
                 for _ in range(2)
             ]
@@ -698,6 +770,7 @@ def _benchmark_gpu_launch_config(gpu_batch_size: int) -> tuple[int, int]:
                     threads_per_group,
                     DEFAULT_GPU_CHUNK_MULTIPLIER,
                     DEFAULT_GPU_WORKERS,
+                    gpu_device_id,
                 )
                 for _ in range(2)
             ]
@@ -731,6 +804,7 @@ def _benchmark_gpu_chunk_multiplier(
     gpu_batch_size: int,
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
+    gpu_device_id: int | None,
 ) -> int:
     benchmark_seconds = DEFAULT_MINING_AUTOTUNE_SECONDS
     representative_worker_count = _representative_gpu_tuning_worker_count()
@@ -746,6 +820,7 @@ def _benchmark_gpu_chunk_multiplier(
             gpu_threads_per_group,
             multiplier,
             DEFAULT_GPU_WORKERS,
+            gpu_device_id,
         )
         for multiplier in candidate_multipliers
     }
@@ -763,6 +838,7 @@ def _benchmark_gpu_chunk_multiplier(
                     gpu_threads_per_group,
                     multiplier,
                     DEFAULT_GPU_WORKERS,
+                    gpu_device_id,
                 )
                 for _ in range(2)
             ]
@@ -779,6 +855,7 @@ def _benchmark_gpu_worker_count(
     gpu_nonces_per_thread: int,
     gpu_threads_per_group: int,
     gpu_chunk_multiplier: int,
+    gpu_device_id: int | None,
 ) -> int:
     benchmark_seconds = DEFAULT_MINING_AUTOTUNE_SECONDS
     representative_worker_count = _representative_gpu_tuning_worker_count()
@@ -798,6 +875,7 @@ def _benchmark_gpu_worker_count(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_workers,
+            gpu_device_id,
         )
         for gpu_workers in candidate_gpu_workers
     }
@@ -815,6 +893,7 @@ def _benchmark_gpu_worker_count(
                     gpu_threads_per_group,
                     gpu_chunk_multiplier,
                     gpu_workers,
+                    gpu_device_id,
                 )
                 for _ in range(2)
             ]
@@ -856,9 +935,14 @@ def _measure_hash_rate(
     gpu_threads_per_group: int = 0,
     gpu_chunk_multiplier: int | None = None,
     gpu_worker_count: int = DEFAULT_GPU_WORKERS,
+    gpu_device_id: int | None = None,
 ) -> float:
     prefix = GPU_TUNING_PREFIX if gpu_enabled else CPU_TUNING_PREFIX
     start_nonce = GPU_TUNING_START_NONCE if gpu_enabled else 0
+    resolved_gpu_device_id = _resolve_gpu_tuning_device_id(gpu_device_id)
+
+    if gpu_enabled and resolved_gpu_device_id is None:
+        return 0.0
 
     try:
         result = run_chunked_mining(
@@ -874,6 +958,7 @@ def _measure_hash_rate(
             gpu_chunk_multiplier,
             gpu_worker_count,
             cancel_after_seconds=benchmark_seconds,
+            gpu_device_ids=(resolved_gpu_device_id,) if gpu_enabled else (),
         )
     except Exception:
         return 0.0

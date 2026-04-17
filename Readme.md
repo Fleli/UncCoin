@@ -94,10 +94,13 @@ Mining can be tuned with environment variables:
   Override the number of nonces each GPU thread checks before the next dispatch.
 - `UNCCOIN_GPU_THREADS_PER_GROUP`
   Override the GPU threadgroup or block size.
+- `UNCCOIN_GPU_DEVICE_IDS`
+  Override which visible CUDA devices are used, as a comma-separated list such as `0,1,3`.
+  By default, the Linux/CUDA backend uses all visible GPUs.
 - `UNCCOIN_GPU_CHUNK_MULTIPLIER`
   Override how much work each scheduled GPU chunk contains beyond a single dispatch.
 - `UNCCOIN_GPU_WORKERS`
-  Override how many scheduler threads feed the GPU backend.
+  Override how many scheduler threads feed each configured GPU device.
 - `UNCCOIN_MINING_PROGRESS_INTERVAL`
   Control how often mining progress is printed. Larger values reduce terminal overhead.
 - `UNCCOIN_DISABLE_MINING_AUTOTUNE`

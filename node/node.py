@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from core.block import Block, ProofOfWorkCancelled
 from core.genesis import create_genesis_block
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
+from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
 from core.transaction import Transaction
 from core.utils.constants import MINING_REWARD_SENDER
@@ -84,6 +86,17 @@ class Node:
         self._load_persisted_blockchain()
         self._ensure_genesis_block()
         await self.p2p_server.start()
+        available_gpu_device_ids = gpu_device_ids()
+        print(
+            "GPU devices available: "
+            f"{len(available_gpu_device_ids)}"
+            + (
+                f" (ids: {', '.join(str(device_id) for device_id in available_gpu_device_ids)})"
+                if available_gpu_device_ids
+                else ""
+            ),
+            flush=True,
+        )
         if self.wallet is not None:
             wallet_name = self.wallet.name or "unnamed"
             print(f"Loaded wallet '{wallet_name}' with address {self.wallet.address}")
@@ -357,19 +370,24 @@ class Node:
         try:
             while not self._automine_stop_requested:
                 self._current_automine_tip_hash = self._mining_tip_hash()
+                previous_state_tip_hash = self._state_tip_hash()
                 print(
                     f"Automining... ({self._mining_status_text()})",
                     flush=True,
                 )
                 block = await asyncio.to_thread(
-                    self.blockchain.mine_pending_transactions,
-                    self.wallet.address,
-                    self.automine_description,
-                    self._report_mining_progress,
-                    self._current_automine_tip_hash,
+                    functools.partial(
+                        self.blockchain.mine_pending_transactions,
+                        miner_address=self.wallet.address,
+                        description=self.automine_description,
+                        progress_callback=self._report_mining_progress,
+                        tip_hash=self._current_automine_tip_hash,
+                        reconcile_pending_transactions=not self.private_automine,
+                    )
                 )
                 self._clear_mining_progress()
                 self._record_local_mining_tip(block.block_hash)
+                self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
                 await self.broadcast_block(block)
                 self._maybe_schedule_autosend()
                 print(

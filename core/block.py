@@ -8,6 +8,7 @@ from core.mining_tuning import get_tuned_gpu_launch_config
 from core.mining_tuning import get_tuned_gpu_worker_count
 from core.mining_tuning import get_tuned_worker_count
 from core.mining_scheduler import get_cpu_chunk_size
+from core.mining_scheduler import get_gpu_device_ids
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available as native_gpu_available
 from core.serialization import serialize_block_prefix
@@ -129,9 +130,14 @@ def proof_of_work(
         DEFAULT_GPU_BATCH_SIZE,
         minimum=1,
     )
+    gpu_device_ids = get_gpu_device_ids() if gpu_enabled else ()
+    representative_gpu_device_id = gpu_device_ids[0] if gpu_device_ids else None
     if gpu_enabled:
         default_gpu_nonces_per_thread, default_gpu_threads_per_group = (
-            get_tuned_gpu_launch_config(gpu_batch_size)
+            get_tuned_gpu_launch_config(
+                gpu_batch_size,
+                representative_gpu_device_id,
+            )
         )
     else:
         default_gpu_nonces_per_thread, default_gpu_threads_per_group = (0, 0)
@@ -151,6 +157,7 @@ def proof_of_work(
             gpu_batch_size,
             gpu_nonces_per_thread,
             gpu_threads_per_group,
+            representative_gpu_device_id,
         ) if gpu_enabled else 1,
         minimum=1,
     ) if gpu_enabled else 1
@@ -161,6 +168,7 @@ def proof_of_work(
             gpu_nonces_per_thread,
             gpu_threads_per_group,
             gpu_chunk_multiplier,
+            representative_gpu_device_id,
         ) if gpu_enabled else 1,
         minimum=1,
     ) if gpu_enabled else 0
@@ -179,6 +187,7 @@ def proof_of_work(
             gpu_threads_per_group,
             gpu_chunk_multiplier,
             gpu_worker_count,
+            representative_gpu_device_id,
         )
     if worker_count == 0 and not gpu_enabled:
         raise ValueError("GPU mining is unavailable, so UNCCOIN_MINING_CPU_WORKERS cannot be 0.")
@@ -197,6 +206,7 @@ def proof_of_work(
         native_progress_interval,
         progress_callback,
         tolerate_gpu_failure=True,
+        gpu_device_ids=gpu_device_ids,
     )
 
     if mining_result.winner is None:
