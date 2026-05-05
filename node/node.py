@@ -417,30 +417,52 @@ class Node:
     def _clear_mining_progress() -> None:
         print("\r" + (" " * 40) + "\r", end="", flush=True)
 
+    @staticmethod
+    def _interactive_help_text() -> str:
+        return """\
+Commands:
+  Network
+    peers                         List connected peers
+    known-peers                   List discovered peers
+    discover                      Ask peers for more peers
+    sync                          Request fast chain sync
+    fastsync                      Request fast chain sync manually
+    add-peer <host:port>          Connect to a peer
+    localself                     Print this node's local address
+    send <host:port> <json>       Send a direct JSON message
+    <raw json>                    Broadcast raw JSON to connected peers
+
+  Wallets and transactions
+    alias <wallet-id> <alias>     Store a local wallet alias
+    tx <receiver> <amount> <fee>  Broadcast a signed transaction
+    balance [address]             Print one balance
+    balances [>amount|<amount]    Print balances, optionally filtered
+    autosend <wallet-id>          Forward future balance increases
+    autosend off                  Disable autosend
+
+  Messages
+    msg <wallet> <content>        Send a signed wallet message
+    messages                      Print local message history
+
+  Mining
+    mine [description]            Mine one block
+    automine [description]        Mine continuously
+    stop                          Stop automining after the current block
+    blockchain                    Print the canonical chain
+
+  Output and console
+    txtbalances <relative-path>   Write balances to a text file
+    txtblockchain <relative-path> Write blockchain state JSON to a file
+    mute                          Hide incoming network notifications
+    unmute                        Show incoming network notifications
+    clear                         Clear the screen
+    quit                          Exit
+
+Wallet commands accept either a wallet address or a local alias."""
+
     async def interactive_console(self) -> None:
         print("Interactive mode enabled.")
-        print(
-            'Enter JSON to broadcast, "send host:port {...}" for a direct message, '
-            '"peers" to list connected peers, "known-peers" to list discovered peers, '
-            '"discover" to ask peers for more peers, "sync" to request the latest chain from '
-            'connected peers using fastsync, "fastsync" to request the same fast sync manually, '
-            '"add-peer host:port" to connect manually, '
-            '"alias wallet-id alias" to store a local wallet alias, '
-            '"autosend wallet-id" to forward future balance increases, '
-            '"autosend off" to disable autosend, '
-            '"mute" or "unmute" to control incoming network notifications, '
-            '"localself" to print this node\'s local address, '
-            '"tx receiver amount fee" '
-            '"msg wallet content" to send a wallet message, '
-            '"messages" to print the local message history, '
-            'to broadcast a transaction, "mine [description]" to mine pending transactions, '
-            '"automine [description]" to mine continuously, "stop" to stop automining, '
-            '"blockchain" to print the canonical chain, "balance [address]" to print a balance, '
-            '"balances [>amount|<amount]" to print filtered balances, '
-            '"txtbalances <relative-path>" to write balances to a text file, '
-            '"txtblockchain <relative-path>" to write blockchain state JSON to a file, '
-            '"clear" to clear the screen, or "quit" to exit.'
-        )
+        print(self._interactive_help_text())
 
         while True:
             try:
