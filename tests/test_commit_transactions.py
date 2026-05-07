@@ -5,6 +5,7 @@ from decimal import Decimal
 from core.blockchain import Blockchain
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
+from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 from core.uvm_authorization import create_uvm_authorization
 from node.node import Node
@@ -122,7 +123,7 @@ class CommitTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "64-character hex"):
             blockchain.add_transaction(transaction)
 
-    def test_execute_transactions_are_modeled_but_not_accepted_without_uvm(self) -> None:
+    def test_execute_transaction_runs_uvm_and_persists_contract_storage(self) -> None:
         blockchain = create_blockchain()
         wallet = create_wallet(name="caller")
         authorizer = create_wallet(name="authorizer")
@@ -130,14 +131,35 @@ class CommitTransactionTests(unittest.TestCase):
             miner_address=wallet.address,
             description="fund caller",
         )
+        commitment_transaction = sign_transaction(
+            authorizer,
+            Transaction.commit(
+                sender=authorizer.address,
+                request_id="casino-play-1",
+                commitment_hash="d" * 64,
+                fee=Decimal("0"),
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(authorizer.address),
+                sender_public_key=authorizer.public_key,
+            ),
+        )
+        blockchain.add_transaction(commitment_transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="include authorizer commitment",
+        )
         transaction = sign_transaction(
             wallet,
             Transaction.execute(
                 sender=wallet.address,
                 contract_address="contract-address",
-                input_data="00",
+                input_data=[
+                    ["READ_COMMIT", authorizer.address, "casino-play-1"],
+                    ["STORE", "commitment"],
+                    ["HALT"],
+                ],
                 value=Decimal("0"),
-                fee=Decimal("0"),
+                fee=Decimal("0.5"),
                 gas_limit=10_000,
                 authorizations=[
                     create_uvm_authorization(authorizer, "casino-play-1").to_dict()
@@ -148,8 +170,21 @@ class CommitTransactionTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "UVM execution engine"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute uvm",
+        )
+        self.assertEqual(
+            blockchain.get_contract_storage("contract-address"),
+            {"commitment": int("d" * 64, 16)},
+        )
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertTrue(receipt["success"])
+        self.assertFalse(receipt["gas_exhausted"])
+        self.assertFalse(receipt["used_all_gas"])
 
     def test_execute_rejects_invalid_authorization_before_uvm_execution(self) -> None:
         blockchain = create_blockchain()
@@ -181,6 +216,35 @@ class CommitTransactionTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "signature verification failed"):
+            blockchain.add_transaction(transaction)
+
+    def test_execute_rejects_out_of_gas_runs(self) -> None:
+        blockchain = create_blockchain()
+        wallet = create_wallet(name="caller")
+        blockchain.mine_pending_transactions(
+            miner_address=wallet.address,
+            description="fund caller",
+        )
+        transaction = sign_transaction(
+            wallet,
+            Transaction.execute(
+                sender=wallet.address,
+                contract_address="contract-address",
+                input_data=[
+                    ["PUSH", 1],
+                    ["STORE", "value"],
+                    ["HALT"],
+                ],
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=100,
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(wallet.address),
+                sender_public_key=wallet.public_key,
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "out of gas"):
             blockchain.add_transaction(transaction)
 
 

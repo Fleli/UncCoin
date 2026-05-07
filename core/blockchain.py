@@ -9,6 +9,8 @@ from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_EXECUTE
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
+from core.uvm import UvmExecutionContext
+from core.uvm import execute_uvm_program
 from core.uvm_authorization import build_authorization_index
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
@@ -24,6 +26,8 @@ class ChainState:
     balances: dict[str, Decimal] = field(default_factory=dict)
     nonces: dict[str, int] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
+    contract_storage: dict[str, dict[str, int]] = field(default_factory=dict)
+    uvm_receipts: dict[str, dict] = field(default_factory=dict)
     height: int = -1
 
     def copy(self) -> "ChainState":
@@ -33,6 +37,14 @@ class ChainState:
             commitments={
                 request_id: commitments_by_sender.copy()
                 for request_id, commitments_by_sender in self.commitments.items()
+            },
+            contract_storage={
+                contract_address: storage.copy()
+                for contract_address, storage in self.contract_storage.items()
+            },
+            uvm_receipts={
+                transaction_id: receipt.copy()
+                for transaction_id, receipt in self.uvm_receipts.items()
             },
             height=self.height,
         )
@@ -162,6 +174,25 @@ class Blockchain:
             .commitments.get(request_id, {})
             .copy()
         )
+
+    def get_contract_storage(
+        self,
+        contract_address: str,
+        tip_hash: str | None = None,
+    ) -> dict[str, int]:
+        return (
+            self._get_state_for_tip(tip_hash)
+            .contract_storage.get(contract_address, {})
+            .copy()
+        )
+
+    def get_uvm_receipt(
+        self,
+        transaction_id: str,
+        tip_hash: str | None = None,
+    ) -> dict | None:
+        receipt = self._get_state_for_tip(tip_hash).uvm_receipts.get(transaction_id)
+        return None if receipt is None else receipt.copy()
 
     def add_transaction(self, transaction: Transaction, tip_hash: str | None = None) -> None:
         if is_mining_reward_transaction(transaction):
@@ -720,16 +751,85 @@ class Blockchain:
             return None
 
         if transaction.kind == TRANSACTION_KIND_EXECUTE:
-            raw_authorizations = transaction.payload.get("authorizations", [])
-            if not isinstance(raw_authorizations, list):
-                return "execute transaction authorizations must be a list"
-            try:
-                build_authorization_index(raw_authorizations)
-            except ValueError as error:
-                return str(error)
-            return "execute transactions require a UVM execution engine"
+            return self._apply_execute_transaction_to_state_error(
+                transaction,
+                state,
+                sender_balance,
+                expected_nonce,
+            )
 
         return f"unsupported transaction kind {transaction.kind}"
+
+    def _apply_execute_transaction_to_state_error(
+        self,
+        transaction: Transaction,
+        state: ChainState,
+        sender_balance: Decimal,
+        expected_nonce: int,
+    ) -> str | None:
+        if not transaction.receiver:
+            return "execute transaction contract address is empty"
+        if transaction.amount < Decimal("0.0"):
+            return f"execute transaction value must be non-negative, got {transaction.amount}"
+
+        contract_address = str(
+            transaction.payload.get("contract_address", transaction.receiver)
+        ).strip()
+        if not contract_address:
+            return "execute transaction contract_address must be non-empty"
+        if contract_address != transaction.receiver:
+            return "execute transaction receiver must match contract_address"
+
+        raw_gas_limit = transaction.payload.get("gas_limit")
+        try:
+            gas_limit = int(raw_gas_limit)
+        except (TypeError, ValueError) as error:
+            return f"execute transaction gas_limit must be an integer: {error}"
+        if gas_limit < 0:
+            return "execute transaction gas_limit must be non-negative"
+
+        raw_authorizations = transaction.payload.get("authorizations", [])
+        if not isinstance(raw_authorizations, list):
+            return "execute transaction authorizations must be a list"
+        try:
+            authorization_index = build_authorization_index(raw_authorizations)
+        except ValueError as error:
+            return str(error)
+
+        total_cost = transaction.amount + transaction.fee
+        if sender_balance < total_cost:
+            return (
+                f"sender balance {sender_balance} is below total transaction "
+                f"cost {total_cost}"
+            )
+
+        execution_result = execute_uvm_program(
+            transaction.payload.get("input", []),
+            UvmExecutionContext(
+                tx_sender=transaction.sender,
+                contract_address=contract_address,
+                gas_limit=gas_limit,
+                storage=state.contract_storage.get(contract_address, {}),
+                commitments=state.commitments,
+                authorization_index=authorization_index,
+            ),
+        )
+        if not execution_result.success:
+            gas_status = "out of gas" if execution_result.gas_exhausted else "failed"
+            return (
+                f"uvm execution {gas_status}: "
+                f"{execution_result.error or 'unknown error'}"
+            )
+
+        state.nonces[transaction.sender] = expected_nonce + 1
+        state.balances[transaction.sender] = sender_balance - total_cost
+        if transaction.amount > Decimal("0.0"):
+            state.balances[contract_address] = (
+                state.balances.get(contract_address, Decimal("0.0")) + transaction.amount
+            )
+        state.contract_storage[contract_address] = execution_result.storage
+        state.uvm_receipts[sha256_transaction_hash(transaction)] = execution_result.to_dict()
+        return None
 
     @staticmethod
     def _validate_commit_transaction_error(
