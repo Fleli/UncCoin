@@ -5,6 +5,9 @@ from typing import Callable
 from core.block import Block, get_block_verification_error, proof_of_work
 from core.genesis import get_genesis_block_validation_error
 from core.hashing import sha256_transaction_hash
+from core.transaction import TRANSACTION_KIND_COMMIT
+from core.transaction import TRANSACTION_KIND_EXECUTE
+from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
@@ -19,12 +22,17 @@ from wallet.wallet import Wallet
 class ChainState:
     balances: dict[str, Decimal] = field(default_factory=dict)
     nonces: dict[str, int] = field(default_factory=dict)
+    commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     height: int = -1
 
     def copy(self) -> "ChainState":
         return ChainState(
             balances=self.balances.copy(),
             nonces=self.nonces.copy(),
+            commitments={
+                request_id: commitments_by_sender.copy()
+                for request_id, commitments_by_sender in self.commitments.items()
+            },
             height=self.height,
         )
 
@@ -130,6 +138,29 @@ class Blockchain:
                 raise ValueError("Existing pending transactions are invalid.")
 
         return state.nonces.get(address, 0)
+
+    def get_commitment(
+        self,
+        request_id: str,
+        sender: str,
+        tip_hash: str | None = None,
+    ) -> str | None:
+        return (
+            self._get_state_for_tip(tip_hash)
+            .commitments.get(request_id, {})
+            .get(sender)
+        )
+
+    def get_commitments(
+        self,
+        request_id: str,
+        tip_hash: str | None = None,
+    ) -> dict[str, str]:
+        return (
+            self._get_state_for_tip(tip_hash)
+            .commitments.get(request_id, {})
+            .copy()
+        )
 
     def add_transaction(self, transaction: Transaction, tip_hash: str | None = None) -> None:
         if is_mining_reward_transaction(transaction):
@@ -623,16 +654,14 @@ class Blockchain:
         if authenticity_error is not None:
             return authenticity_error
 
-        if (
-            not transaction.receiver
-        ):
-            return "transaction receiver is empty"
-        if transaction.amount <= Decimal("0.0"):
-            return f"transaction amount must be positive, got {transaction.amount}"
         if transaction.fee < Decimal("0.0"):
             return f"transaction fee must be non-negative, got {transaction.fee}"
 
         if is_mining_reward_transaction(transaction):
+            if not transaction.receiver:
+                return "mining reward transaction receiver is empty"
+            if transaction.amount <= Decimal("0.0"):
+                return f"mining reward amount must be positive, got {transaction.amount}"
             state.balances[transaction.receiver] = (
                 state.balances.get(transaction.receiver, Decimal("0.0")) + transaction.amount
             )
@@ -649,18 +678,84 @@ class Blockchain:
             )
 
         sender_balance = state.balances.get(transaction.sender, Decimal("0.0"))
-        total_cost = transaction.amount + transaction.fee
-        if sender_balance < total_cost:
+
+        if transaction.kind == TRANSACTION_KIND_TRANSFER:
+            if not transaction.receiver:
+                return "transfer transaction receiver is empty"
+            if transaction.amount <= Decimal("0.0"):
+                return f"transfer transaction amount must be positive, got {transaction.amount}"
+
+            total_cost = transaction.amount + transaction.fee
+            if sender_balance < total_cost:
+                return (
+                    f"sender balance {sender_balance} is below total transaction "
+                    f"cost {total_cost}"
+                )
+
+            state.nonces[transaction.sender] = expected_nonce + 1
+            state.balances[transaction.sender] = sender_balance - total_cost
+            state.balances[transaction.receiver] = (
+                state.balances.get(transaction.receiver, Decimal("0.0")) + transaction.amount
+            )
+            return None
+
+        if transaction.kind == TRANSACTION_KIND_COMMIT:
+            commit_error = self._validate_commit_transaction_error(transaction, state)
+            if commit_error is not None:
+                return commit_error
+
+            total_cost = transaction.fee
+            if sender_balance < total_cost:
+                return (
+                    f"sender balance {sender_balance} is below total transaction "
+                    f"cost {total_cost}"
+                )
+
+            request_id = transaction.payload["request_id"].strip()
+            commitment_hash = transaction.payload["commitment_hash"].strip().lower()
+            state.nonces[transaction.sender] = expected_nonce + 1
+            state.balances[transaction.sender] = sender_balance - total_cost
+            state.commitments.setdefault(request_id, {})[transaction.sender] = commitment_hash
+            return None
+
+        if transaction.kind == TRANSACTION_KIND_EXECUTE:
+            return "execute transactions require a UVM execution engine"
+
+        return f"unsupported transaction kind {transaction.kind}"
+
+    @staticmethod
+    def _validate_commit_transaction_error(
+        transaction: Transaction,
+        state: ChainState,
+    ) -> str | None:
+        if transaction.receiver:
+            return "commit transaction receiver must be empty"
+        if transaction.amount != Decimal("0.0"):
+            return f"commit transaction amount must be 0.0, got {transaction.amount}"
+
+        raw_request_id = transaction.payload.get("request_id")
+        raw_commitment_hash = transaction.payload.get("commitment_hash")
+        if not isinstance(raw_request_id, str) or not raw_request_id.strip():
+            return "commit transaction request_id must be a non-empty string"
+        if len(raw_request_id.strip()) > 128:
+            return "commit transaction request_id must be at most 128 characters"
+        if not isinstance(raw_commitment_hash, str) or not raw_commitment_hash.strip():
+            return "commit transaction commitment_hash must be a non-empty string"
+
+        commitment_hash = raw_commitment_hash.strip()
+        if len(commitment_hash) != 64 or any(
+            character not in "0123456789abcdefABCDEF"
+            for character in commitment_hash
+        ):
+            return "commit transaction commitment_hash must be a 64-character hex string"
+
+        request_id = raw_request_id.strip()
+        if transaction.sender in state.commitments.get(request_id, {}):
             return (
-                f"sender balance {sender_balance} is below total transaction "
-                f"cost {total_cost}"
+                "commitment already exists for sender "
+                f"{transaction.sender} and request_id {request_id}"
             )
 
-        state.nonces[transaction.sender] = expected_nonce + 1
-        state.balances[transaction.sender] = sender_balance - total_cost
-        state.balances[transaction.receiver] = (
-            state.balances.get(transaction.receiver, Decimal("0.0")) + transaction.amount
-        )
         return None
 
     def _validate_transaction_authenticity_error(
