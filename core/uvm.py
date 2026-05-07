@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from core.uvm_authorization import get_authorization_scope
 from core.uvm_authorization import is_request_authorized
 
 
@@ -59,7 +60,7 @@ class UvmExecutionContext:
     balances: dict[str, Decimal] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
-    authorization_index: dict[str, list[str]] = field(default_factory=dict)
+    authorization_index: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
     }
     balance_changes: dict[str, Decimal] = {}
     transfers: list[dict[str, str]] = []
+    authorization_spend: dict[tuple[str, str], Decimal] = {}
     pc = 0
     gas_remaining = gas_limit
 
@@ -210,6 +212,7 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 balances,
                 balance_changes,
                 transfers,
+                authorization_spend,
                 len(instructions),
             )
         except _UvmRevert as error:
@@ -347,6 +350,7 @@ def _execute_instruction(
     balances: dict[str, Decimal],
     balance_changes: dict[str, Decimal],
     transfers: list[dict[str, str]],
+    authorization_spend: dict[tuple[str, str], Decimal],
     program_length: int,
 ) -> int | None:
     opcode = instruction.opcode
@@ -476,14 +480,30 @@ def _execute_instruction(
         amount = Decimal(_pop(stack))
         if amount <= Decimal("0"):
             raise _UvmExecutionError("transfer amount must be positive")
-        if (
-            source != context.tx_sender
-            and source != context.contract_address
-            and not is_request_authorized(context.authorization_index, source, request_id)
-        ):
-            raise _UvmExecutionError(
-                f"wallet {source} is not authorized for request_id {request_id}"
+        new_authorized_spend: Decimal | None = None
+        if source != context.tx_sender and source != context.contract_address:
+            authorization_scope = get_authorization_scope(
+                context.authorization_index,
+                source,
+                request_id,
             )
+            if authorization_scope is None:
+                raise _UvmExecutionError(
+                    f"wallet {source} is not authorized for request_id {request_id}"
+                )
+            spent_key = (source, request_id)
+            new_authorized_spend = authorization_spend.get(
+                spent_key,
+                Decimal("0.0"),
+            ) + amount
+            raw_max_amount = authorization_scope.get("max_amount")
+            if raw_max_amount is not None:
+                max_amount = Decimal(str(raw_max_amount))
+                if new_authorized_spend > max_amount:
+                    raise _UvmExecutionError(
+                        f"wallet {source} authorization for request_id {request_id} "
+                        f"exceeds amount limit {max_amount}"
+                    )
 
         source_balance = balances.get(source, Decimal("0.0"))
         if source_balance < amount:
@@ -491,6 +511,8 @@ def _execute_instruction(
                 f"source balance {source_balance} is below transfer amount {amount}"
             )
 
+        if new_authorized_spend is not None:
+            authorization_spend[(source, request_id)] = new_authorized_spend
         balances[source] = source_balance - amount
         balances[receiver] = balances.get(receiver, Decimal("0.0")) + amount
         balance_changes[source] = balance_changes.get(source, Decimal("0.0")) - amount

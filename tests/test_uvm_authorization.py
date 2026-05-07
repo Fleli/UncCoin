@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 
 from core.uvm_authorization import authorization_signing_payload
 from core.uvm_authorization import build_authorization_index
@@ -22,8 +23,13 @@ class UvmAuthorizationTests(unittest.TestCase):
         self.assertEqual(
             authorization_index,
             {
-                alice.address: ["casino-play-1", "casino-play-2"],
-                bob.address: ["casino-play-1"],
+                alice.address: {
+                    "casino-play-1": {},
+                    "casino-play-2": {},
+                },
+                bob.address: {
+                    "casino-play-1": {},
+                },
             },
         )
         self.assertTrue(
@@ -49,8 +55,82 @@ class UvmAuthorizationTests(unittest.TestCase):
 
         self.assertEqual(
             authorization_index,
-            {alice.address: ["casino-play-1"]},
+            {alice.address: {"casino-play-1": {}}},
         )
+
+    def test_scoped_authorization_includes_limits_in_signed_payload(self) -> None:
+        alice = create_wallet(name="alice")
+        authorization = create_uvm_authorization(
+            alice,
+            "casino-play-1",
+            valid_from_height=2,
+            valid_until_height=5,
+            max_amount=Decimal("3.5"),
+        ).to_dict()
+
+        self.assertEqual(
+            authorization["scope"],
+            {
+                "valid_from_height": 2,
+                "valid_until_height": 5,
+                "max_amount": "3.5",
+            },
+        )
+        authorization_index = build_authorization_index(
+            [authorization],
+            block_height=3,
+        )
+        self.assertEqual(
+            authorization_index,
+            {
+                alice.address: {
+                    "casino-play-1": {
+                        "valid_from_height": 2,
+                        "valid_until_height": 5,
+                        "max_amount": "3.5",
+                    }
+                }
+            },
+        )
+
+        authorization["scope"]["max_amount"] = "4"
+        with self.assertRaisesRegex(ValueError, "signature verification failed"):
+            build_authorization_index([authorization], block_height=3)
+
+    def test_valid_for_blocks_scope_uses_next_block_window(self) -> None:
+        alice = create_wallet(name="alice")
+        authorization = create_uvm_authorization(
+            alice,
+            "casino-play-1",
+            current_height=7,
+            valid_for_blocks=2,
+        ).to_dict()
+
+        self.assertEqual(
+            authorization["scope"],
+            {
+                "valid_from_height": 8,
+                "valid_until_height": 9,
+            },
+        )
+        self.assertTrue(
+            is_request_authorized(
+                build_authorization_index([authorization], block_height=8),
+                alice.address,
+                "casino-play-1",
+            )
+        )
+        self.assertTrue(
+            is_request_authorized(
+                build_authorization_index([authorization], block_height=9),
+                alice.address,
+                "casino-play-1",
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "not valid until block 8"):
+            build_authorization_index([authorization], block_height=7)
+        with self.assertRaisesRegex(ValueError, "expired at block 9"):
+            build_authorization_index([authorization], block_height=10)
 
     def test_invalid_signature_is_rejected(self) -> None:
         alice = create_wallet(name="alice")

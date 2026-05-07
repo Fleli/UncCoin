@@ -159,7 +159,14 @@ class Blockchain:
         state = self._get_state_for_tip(tip_hash).copy()
 
         for transaction in self.pending_transactions:
-            if self._apply_transaction_to_state_error(transaction, state) is not None:
+            if (
+                self._apply_transaction_to_state_error(
+                    transaction,
+                    state,
+                    execution_block_height=state.height + 1,
+                )
+                is not None
+            ):
                 return Decimal("0.0")
 
         return state.balances.get(address, Decimal("0.0"))
@@ -168,7 +175,14 @@ class Blockchain:
         state = self._get_state_for_tip(tip_hash).copy()
 
         for transaction in self.pending_transactions:
-            if self._apply_transaction_to_state_error(transaction, state) is not None:
+            if (
+                self._apply_transaction_to_state_error(
+                    transaction,
+                    state,
+                    execution_block_height=state.height + 1,
+                )
+                is not None
+            ):
                 raise ValueError("Existing pending transactions are invalid.")
 
         return state.nonces.get(address, 0)
@@ -256,14 +270,22 @@ class Blockchain:
 
         state = self._get_state_for_tip(tip_hash).copy()
         for index, pending_transaction in enumerate(self.pending_transactions):
-            pending_error = self._apply_transaction_to_state_error(pending_transaction, state)
+            pending_error = self._apply_transaction_to_state_error(
+                pending_transaction,
+                state,
+                execution_block_height=state.height + 1,
+            )
             if pending_error is not None:
                 raise ValueError(
                     f"Existing pending transaction {index} is invalid: "
                     f"{pending_error}"
                 )
 
-        transaction_error = self._apply_transaction_to_state_error(transaction, state)
+        transaction_error = self._apply_transaction_to_state_error(
+            transaction,
+            state,
+            execution_block_height=state.height + 1,
+        )
         if transaction_error is not None:
             raise ValueError(transaction_error)
 
@@ -458,7 +480,11 @@ class Blockchain:
         state.height = block.block_id
 
         for index, transaction in enumerate(block.transactions):
-            transaction_error = self._apply_transaction_to_state_error(transaction, state)
+            transaction_error = self._apply_transaction_to_state_error(
+                transaction,
+                state,
+                execution_block_height=block.block_id,
+            )
             if transaction_error is not None:
                 transaction_id = sha256_transaction_hash(transaction)[:12]
                 return (
@@ -592,7 +618,14 @@ class Blockchain:
                     continue
 
                 test_state = state.copy()
-                if self._apply_transaction_to_state_error(transaction, test_state) is None:
+                if (
+                    self._apply_transaction_to_state_error(
+                        transaction,
+                        test_state,
+                        execution_block_height=state.height + 1,
+                    )
+                    is None
+                ):
                     state = test_state
                     selected_transactions.append(transaction)
                     progress = True
@@ -654,7 +687,14 @@ class Blockchain:
                 continue
 
             test_state = state.copy()
-            if self._apply_transaction_to_state_error(transaction, test_state) is None:
+            if (
+                self._apply_transaction_to_state_error(
+                    transaction,
+                    test_state,
+                    execution_block_height=state.height + 1,
+                )
+                is None
+            ):
                 state = test_state
                 valid_pending_transactions.append(transaction)
                 seen_transaction_ids.add(transaction_id)
@@ -737,6 +777,7 @@ class Blockchain:
         self,
         transaction: Transaction,
         state: ChainState,
+        execution_block_height: int | None = None,
     ) -> str | None:
         authenticity_error = self._validate_transaction_authenticity_error(transaction)
         if authenticity_error is not None:
@@ -860,6 +901,7 @@ class Blockchain:
                 state,
                 sender_balance,
                 expected_nonce,
+                execution_block_height,
             )
 
         return f"unsupported transaction kind {transaction.kind}"
@@ -870,6 +912,7 @@ class Blockchain:
         state: ChainState,
         sender_balance: Decimal,
         expected_nonce: int,
+        execution_block_height: int | None,
     ) -> str | None:
         if not transaction.receiver:
             return "execute transaction contract address is empty"
@@ -902,7 +945,10 @@ class Blockchain:
         if not isinstance(raw_authorizations, list):
             return "execute transaction authorizations must be a list"
         try:
-            authorization_index = build_authorization_index(raw_authorizations)
+            authorization_index = build_authorization_index(
+                raw_authorizations,
+                block_height=execution_block_height,
+            )
         except ValueError as error:
             return str(error)
 

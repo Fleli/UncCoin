@@ -299,6 +299,39 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertEqual(result.balance_changes["contract"], Decimal("-4"))
         self.assertEqual(result.balance_changes[receiver.address], Decimal("4"))
 
+    def test_transfer_from_enforces_authorization_amount_limit_cumulatively(self) -> None:
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        authorization_index = build_authorization_index(
+            [
+                create_uvm_authorization(
+                    source,
+                    "limited-payout",
+                    max_amount=Decimal("5"),
+                ).to_dict()
+            ]
+        )
+
+        result = execute_uvm_program(
+            [
+                ["PUSH", 3],
+                ["TRANSFER_FROM", source.address, receiver.address, "limited-payout"],
+                ["PUSH", 3],
+                ["TRANSFER_FROM", source.address, receiver.address, "limited-payout"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+                balances={source.address: Decimal("10")},
+                authorization_index=authorization_index,
+            ),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("exceeds amount limit 5", result.error or "")
+
     def test_require_auth_fails_without_matching_request_id(self) -> None:
         wallet = create_wallet(name="authorizer")
         authorization_index = build_authorization_index(

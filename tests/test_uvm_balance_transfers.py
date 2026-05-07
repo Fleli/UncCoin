@@ -127,6 +127,142 @@ class UvmBalanceTransferTests(unittest.TestCase):
         self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
         self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
 
+    def test_execute_rejects_transfer_above_authorized_amount_limit(self) -> None:
+        blockchain = create_blockchain()
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        caller = create_wallet(name="caller")
+        request_id = "casino-payout-1"
+        blockchain.mine_pending_transactions(
+            miner_address=source.address,
+            description="fund source",
+        )
+        transaction = sign_transaction(
+            caller,
+            Transaction.execute(
+                sender=caller.address,
+                contract_address="casino-contract",
+                input_data=[
+                    ["PUSH", 3],
+                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
+                    ["HALT"],
+                ],
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=100,
+                authorizations=[
+                    create_uvm_authorization(
+                        source,
+                        request_id,
+                        max_amount=Decimal("2"),
+                    ).to_dict()
+                ],
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(caller.address),
+                sender_public_key=caller.public_key,
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "exceeds amount limit"):
+            blockchain.add_transaction(transaction)
+
+        self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
+        self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
+
+    def test_execute_accepts_authorization_scoped_to_next_block(self) -> None:
+        blockchain = create_blockchain()
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        caller = create_wallet(name="caller")
+        request_id = "casino-payout-1"
+        blockchain.mine_pending_transactions(
+            miner_address=source.address,
+            description="fund source",
+        )
+        current_height = blockchain.blocks[-1].block_id
+        transaction = sign_transaction(
+            caller,
+            Transaction.execute(
+                sender=caller.address,
+                contract_address="casino-contract",
+                input_data=[
+                    ["PUSH", 3],
+                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
+                    ["HALT"],
+                ],
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=100,
+                authorizations=[
+                    create_uvm_authorization(
+                        source,
+                        request_id,
+                        current_height=current_height,
+                        valid_for_blocks=1,
+                    ).to_dict()
+                ],
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(caller.address),
+                sender_public_key=caller.public_key,
+            ),
+        )
+
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute next-block payout",
+        )
+
+        self.assertEqual(blockchain.get_balance(source.address), Decimal("7.0"))
+        self.assertEqual(blockchain.get_balance(receiver.address), Decimal("3.0"))
+
+    def test_execute_rejects_expired_block_height_authorization(self) -> None:
+        blockchain = create_blockchain()
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        caller = create_wallet(name="caller")
+        request_id = "casino-payout-1"
+        blockchain.mine_pending_transactions(
+            miner_address=source.address,
+            description="fund source",
+        )
+        current_height = blockchain.blocks[-1].block_id
+        authorization = create_uvm_authorization(
+            source,
+            request_id,
+            current_height=current_height,
+            valid_for_blocks=1,
+        ).to_dict()
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="advance past authorization window",
+        )
+        transaction = sign_transaction(
+            caller,
+            Transaction.execute(
+                sender=caller.address,
+                contract_address="casino-contract",
+                input_data=[
+                    ["PUSH", 3],
+                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
+                    ["HALT"],
+                ],
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=100,
+                authorizations=[authorization],
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(caller.address),
+                sender_public_key=caller.public_key,
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "expired at block"):
+            blockchain.add_transaction(transaction)
+
+        self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
+        self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
+
     def test_execute_charges_exact_fuel_fee_for_sender_transfer(self) -> None:
         blockchain = create_blockchain()
         caller = create_wallet(name="caller")

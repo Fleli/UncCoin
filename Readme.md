@@ -93,8 +93,15 @@ a program directly or an object with `program` and `metadata` fields. Metadata i
 
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
 the contract address, gas limit, optional value, gas price, and signed request authorizations
-of the form `wallet -> request_id`. If the contract address has deployed code, that deployed
-program runs; otherwise `execute` can still carry an inline program for compatibility.
+of the form `wallet -> request_id` plus optional scope limits. If the contract address has
+deployed code, that deployed program runs; otherwise `execute` can still carry an inline
+program for compatibility.
+
+UVM authorizations may be scoped with `valid_from_height`, `valid_until_height`, and
+`max_amount`. Height limits make the authorization valid only for specific block heights;
+`create_uvm_authorization(..., current_height=<h>, valid_for_blocks=<n>)` signs a window for
+the next `n` blocks, from `h + 1` through `h + n`. `max_amount` caps the cumulative amount
+that a single UVM run can move from that wallet for the signed request id.
 
 ## UncCoin Virtual Machine
 
@@ -122,7 +129,9 @@ integer.
 `TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
 that amount between balances. The source must be the execute transaction sender, the contract
 itself, or a wallet that provided a valid UVM authorization for the exact request id. The
-receiver does not need to sign because receiving funds is not a sensitive operation.
+receiver does not need to sign because receiving funds is not a sensitive operation. If the
+authorization has `max_amount`, repeated transfers from the same source and request id are
+counted together during the run.
 
 Instructions:
 
