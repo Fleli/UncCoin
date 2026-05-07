@@ -48,6 +48,7 @@ mute
 unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
+reveal <request-id> <seed> <fee> [salt]
 msg <wallet> <content>
 messages
 mine [description]
@@ -76,6 +77,15 @@ transaction. `commit` records a 64-character hex commitment hash under a caller-
 primitive for future shared-randomness workflows where a later UVM program can link a
 participant's commitment to a later seed upload.
 
+`reveal` uploads the seed for a prior commitment. The commitment hash is:
+
+```text
+sha256("UVM_REVEAL|1|<wallet>|<request_id>|<seed>|<salt>")
+```
+
+Seeds are normalized as unsigned 256-bit integers. Decimal and `0x` hexadecimal seed strings
+are accepted. Salt is optional.
+
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
 the contract address, program input, gas limit, optional value, and signed request
 authorizations of the form `wallet -> request_id`.
@@ -99,6 +109,9 @@ Example program:
 `READ_COMMIT <wallet> <request_id>` is protected: the execute transaction must include a
 valid UVM authorization signature from `<wallet>` for that exact `<request_id>`. Missing or
 invalid authorization makes execution invalid.
+
+`READ_REVEAL <wallet> <request_id>` reads a public revealed seed and pushes it as a stack
+integer.
 
 Instructions:
 
@@ -124,6 +137,7 @@ MEM_STORE <key>
 LOAD <key>
 STORE <key>
 READ_COMMIT <wallet> <request_id>
+READ_REVEAL <wallet> <request_id>
 HAS_AUTH <wallet> <request_id>
 REQUIRE_AUTH <wallet> <request_id>
 JUMP <pc>
@@ -149,6 +163,7 @@ MEM_LOAD: 3
 SHA256/HAS_AUTH/REQUIRE_AUTH: 20
 LOAD: 25
 READ_COMMIT: 30
+READ_REVEAL: 30
 STORE: 100
 HALT/REVERT: 0
 ```

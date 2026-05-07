@@ -127,6 +127,7 @@ mute
 unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
+reveal <request-id> <seed> <fee> [salt]
 msg <wallet> <content>
 messages
 mine [description]
@@ -148,6 +149,7 @@ Notes:
 - `tx`, `msg`, `balance`, `alias`, and `autosend` accept either a raw wallet address or a locally stored alias.
 - `balance` uses the loaded wallet address if no address is given.
 - `commit` stores a signed 64-character hex commitment hash under a `request-id`.
+- `reveal` uploads a seed for a prior commitment. Seeds are unsigned 256-bit integers.
 - `mine` mines one block.
 - `automine` keeps mining until `stop` is entered.
 

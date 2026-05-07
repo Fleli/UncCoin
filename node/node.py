@@ -19,6 +19,7 @@ from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
 from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
+from core.randomness import create_reveal_commitment_hash
 from core.transaction import Transaction
 from core.utils.constants import MINING_REWARD_SENDER
 from node.alias_store import load_aliases, save_aliases
@@ -202,6 +203,34 @@ class Node:
             sender=self.wallet.address,
             request_id=request_id,
             commitment_hash=commitment_hash,
+            fee=parsed_fee,
+            timestamp=datetime.now(),
+            nonce=self.get_next_nonce(self.wallet.address),
+            sender_public_key=self.wallet.public_key,
+        )
+        transaction.signature = self.wallet.sign_message(transaction.signing_payload())
+        return transaction
+
+    def create_signed_reveal(
+        self,
+        request_id: str,
+        seed: str,
+        fee: str,
+        salt: str = "",
+    ) -> Transaction:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to reveal randomness seeds.")
+
+        try:
+            parsed_fee = Decimal(str(fee))
+        except InvalidOperation as error:
+            raise ValueError("Fee must be a valid decimal number.") from error
+
+        transaction = Transaction.reveal(
+            sender=self.wallet.address,
+            request_id=request_id,
+            seed=seed,
+            salt=salt,
             fee=parsed_fee,
             timestamp=datetime.now(),
             nonce=self.get_next_nonce(self.wallet.address),
@@ -463,6 +492,8 @@ Commands:
     tx <receiver> <amount> <fee>  Broadcast a signed transaction
     commit <request-id> <hash> <fee>
                                   Commit a randomness hash for a request
+    reveal <request-id> <seed> <fee> [salt]
+                                  Reveal a seed for a prior commitment
     balance [address]             Print one balance
     balances [>amount|<amount]    Print balances, optionally filtered
     autosend <wallet-id>          Forward future balance increases
@@ -677,6 +708,31 @@ Wallet commands accept either a wallet address or a local alias."""
                     await self.broadcast_transaction(transaction)
                 except ValueError as error:
                     print(f"Invalid commit command: {error}")
+                continue
+
+            if line.startswith("reveal "):
+                try:
+                    reveal_args = line[len("reveal "):].split(" ", maxsplit=3)
+                    if len(reveal_args) not in {3, 4}:
+                        raise ValueError("Use reveal <request-id> <seed> <fee> [salt].")
+                    request_id, seed, fee = reveal_args[:3]
+                    salt = reveal_args[3] if len(reveal_args) == 4 else ""
+                    transaction = self.create_signed_reveal(
+                        request_id=request_id,
+                        seed=seed,
+                        fee=fee,
+                        salt=salt,
+                    )
+                    expected_commitment_hash = create_reveal_commitment_hash(
+                        self.wallet.address if self.wallet is not None else "",
+                        request_id,
+                        seed,
+                        salt,
+                    )
+                    await self.broadcast_transaction(transaction)
+                    print(f"Reveal matches commitment hash {expected_commitment_hash}")
+                except ValueError as error:
+                    print(f"Invalid reveal command: {error}")
                 continue
 
             if line.startswith("msg "):

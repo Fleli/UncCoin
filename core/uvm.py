@@ -32,6 +32,7 @@ UVM_GAS_COSTS = {
     "LOAD": 25,
     "STORE": 100,
     "READ_COMMIT": 30,
+    "READ_REVEAL": 30,
     "HAS_AUTH": 20,
     "REQUIRE_AUTH": 20,
     "JUMP": 3,
@@ -54,6 +55,7 @@ class UvmExecutionContext:
     gas_limit: int
     storage: dict[str, int] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
+    reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     authorization_index: dict[str, list[str]] = field(default_factory=dict)
 
 
@@ -414,6 +416,22 @@ def _execute_instruction(
                 f"missing commitment for wallet {wallet} and request_id {request_id}"
             )
         _push(stack, int(commitment_hash, 16))
+        return None
+
+    if opcode == "READ_REVEAL":
+        _require_operand_count(opcode, operands, 2)
+        wallet = _require_key_operand(opcode, operands[0])
+        request_id = _require_key_operand(opcode, operands[1])
+        reveal = context.reveals.get(request_id, {}).get(wallet)
+        if reveal is None:
+            raise _UvmExecutionError(
+                f"missing reveal for wallet {wallet} and request_id {request_id}"
+            )
+        try:
+            seed_value = int(reveal["seed"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise _UvmExecutionError(f"invalid reveal seed: {error}") from error
+        _push(stack, seed_value)
         return None
 
     if opcode == "HAS_AUTH":

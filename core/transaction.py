@@ -11,6 +11,7 @@ TRANSACTION_VERSION_TYPED = 2
 TRANSACTION_KIND_TRANSFER = "transfer"
 TRANSACTION_KIND_EXECUTE = "execute"
 TRANSACTION_KIND_COMMIT = "commit"
+TRANSACTION_KIND_REVEAL = "reveal"
 
 
 def _canonicalize_payload(value: Any) -> Any:
@@ -140,6 +141,36 @@ class Transaction:
             payload={
                 "request_id": request_id,
                 "commitment_hash": commitment_hash,
+            },
+        )
+
+    @classmethod
+    def reveal(
+        cls,
+        sender: str,
+        request_id: str,
+        seed: int | str,
+        fee: Decimal | str,
+        timestamp: datetime,
+        nonce: int = 0,
+        salt: str = "",
+        sender_public_key: tuple[int, int] | None = None,
+        signature: str | None = None,
+    ) -> "Transaction":
+        return cls(
+            sender=sender,
+            receiver="",
+            amount=Decimal("0.0"),
+            fee=fee,
+            timestamp=timestamp,
+            nonce=nonce,
+            sender_public_key=sender_public_key,
+            signature=signature,
+            kind=TRANSACTION_KIND_REVEAL,
+            payload={
+                "request_id": request_id,
+                "seed": str(seed),
+                "salt": salt,
             },
         )
 

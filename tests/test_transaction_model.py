@@ -5,6 +5,7 @@ from decimal import Decimal
 from core.serialization import serialize_transaction
 from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_EXECUTE
+from core.transaction import TRANSACTION_KIND_REVEAL
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import TRANSACTION_VERSION_LEGACY
 from core.transaction import TRANSACTION_VERSION_TYPED
@@ -56,6 +57,31 @@ class TransactionModelTests(unittest.TestCase):
             {
                 "request_id": "lottery-round-1",
                 "commitment_hash": "a" * 64,
+            },
+        )
+
+    def test_reveal_constructor_records_request_id_seed_and_salt(self) -> None:
+        timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
+
+        transaction = Transaction.reveal(
+            sender="alice",
+            request_id="lottery-round-1",
+            seed="42",
+            salt="salt",
+            fee=Decimal("0.1"),
+            timestamp=timestamp,
+            nonce=4,
+        )
+
+        self.assertEqual(transaction.kind, TRANSACTION_KIND_REVEAL)
+        self.assertEqual(transaction.receiver, "")
+        self.assertEqual(transaction.amount, Decimal("0.0"))
+        self.assertEqual(
+            transaction.payload,
+            {
+                "request_id": "lottery-round-1",
+                "seed": "42",
+                "salt": "salt",
             },
         )
 

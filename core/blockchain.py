@@ -5,8 +5,13 @@ from typing import Callable
 from core.block import Block, get_block_verification_error, proof_of_work
 from core.genesis import get_genesis_block_validation_error
 from core.hashing import sha256_transaction_hash
+from core.randomness import MAX_RANDOMNESS_REQUEST_ID_LENGTH
+from core.randomness import MAX_REVEAL_SALT_LENGTH
+from core.randomness import create_reveal_commitment_hash
+from core.randomness import parse_randomness_seed
 from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_EXECUTE
+from core.transaction import TRANSACTION_KIND_REVEAL
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
 from core.uvm import UvmExecutionContext
@@ -26,6 +31,7 @@ class ChainState:
     balances: dict[str, Decimal] = field(default_factory=dict)
     nonces: dict[str, int] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
+    reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     contract_storage: dict[str, dict[str, int]] = field(default_factory=dict)
     uvm_receipts: dict[str, dict] = field(default_factory=dict)
     height: int = -1
@@ -37,6 +43,13 @@ class ChainState:
             commitments={
                 request_id: commitments_by_sender.copy()
                 for request_id, commitments_by_sender in self.commitments.items()
+            },
+            reveals={
+                request_id: {
+                    sender: reveal.copy()
+                    for sender, reveal in reveals_by_sender.items()
+                }
+                for request_id, reveals_by_sender in self.reveals.items()
             },
             contract_storage={
                 contract_address: storage.copy()
@@ -174,6 +187,33 @@ class Blockchain:
             .commitments.get(request_id, {})
             .copy()
         )
+
+    def get_reveal(
+        self,
+        request_id: str,
+        sender: str,
+        tip_hash: str | None = None,
+    ) -> dict[str, str] | None:
+        reveal = (
+            self._get_state_for_tip(tip_hash)
+            .reveals.get(request_id, {})
+            .get(sender)
+        )
+        return None if reveal is None else reveal.copy()
+
+    def get_reveals(
+        self,
+        request_id: str,
+        tip_hash: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        return {
+            sender: reveal.copy()
+            for sender, reveal in (
+                self._get_state_for_tip(tip_hash)
+                .reveals.get(request_id, {})
+                .items()
+            )
+        }
 
     def get_contract_storage(
         self,
@@ -750,6 +790,31 @@ class Blockchain:
             state.commitments.setdefault(request_id, {})[transaction.sender] = commitment_hash
             return None
 
+        if transaction.kind == TRANSACTION_KIND_REVEAL:
+            reveal_error = self._validate_reveal_transaction_error(transaction, state)
+            if reveal_error is not None:
+                return reveal_error
+
+            total_cost = transaction.fee
+            if sender_balance < total_cost:
+                return (
+                    f"sender balance {sender_balance} is below total transaction "
+                    f"cost {total_cost}"
+                )
+
+            request_id = transaction.payload["request_id"].strip()
+            seed_value = parse_randomness_seed(transaction.payload["seed"])
+            salt = transaction.payload.get("salt", "").strip()
+            commitment_hash = state.commitments[request_id][transaction.sender]
+            state.nonces[transaction.sender] = expected_nonce + 1
+            state.balances[transaction.sender] = sender_balance - total_cost
+            state.reveals.setdefault(request_id, {})[transaction.sender] = {
+                "seed": str(seed_value),
+                "salt": salt,
+                "commitment_hash": commitment_hash,
+            }
+            return None
+
         if transaction.kind == TRANSACTION_KIND_EXECUTE:
             return self._apply_execute_transaction_to_state_error(
                 transaction,
@@ -811,6 +876,7 @@ class Blockchain:
                 gas_limit=gas_limit,
                 storage=state.contract_storage.get(contract_address, {}),
                 commitments=state.commitments,
+                reveals=state.reveals,
                 authorization_index=authorization_index,
             ),
         )
@@ -845,8 +911,11 @@ class Blockchain:
         raw_commitment_hash = transaction.payload.get("commitment_hash")
         if not isinstance(raw_request_id, str) or not raw_request_id.strip():
             return "commit transaction request_id must be a non-empty string"
-        if len(raw_request_id.strip()) > 128:
-            return "commit transaction request_id must be at most 128 characters"
+        if len(raw_request_id.strip()) > MAX_RANDOMNESS_REQUEST_ID_LENGTH:
+            return (
+                "commit transaction request_id must be at most "
+                f"{MAX_RANDOMNESS_REQUEST_ID_LENGTH} characters"
+            )
         if not isinstance(raw_commitment_hash, str) or not raw_commitment_hash.strip():
             return "commit transaction commitment_hash must be a non-empty string"
 
@@ -863,6 +932,63 @@ class Blockchain:
                 "commitment already exists for sender "
                 f"{transaction.sender} and request_id {request_id}"
             )
+
+        return None
+
+    @staticmethod
+    def _validate_reveal_transaction_error(
+        transaction: Transaction,
+        state: ChainState,
+    ) -> str | None:
+        if transaction.receiver:
+            return "reveal transaction receiver must be empty"
+        if transaction.amount != Decimal("0.0"):
+            return f"reveal transaction amount must be 0.0, got {transaction.amount}"
+
+        raw_request_id = transaction.payload.get("request_id")
+        if not isinstance(raw_request_id, str) or not raw_request_id.strip():
+            return "reveal transaction request_id must be a non-empty string"
+        request_id = raw_request_id.strip()
+        if len(request_id) > MAX_RANDOMNESS_REQUEST_ID_LENGTH:
+            return (
+                "reveal transaction request_id must be at most "
+                f"{MAX_RANDOMNESS_REQUEST_ID_LENGTH} characters"
+            )
+
+        if "seed" not in transaction.payload:
+            return "reveal transaction seed is required"
+        try:
+            seed_value = parse_randomness_seed(transaction.payload["seed"])
+        except ValueError as error:
+            return f"reveal transaction seed is invalid: {error}"
+
+        raw_salt = transaction.payload.get("salt", "")
+        if not isinstance(raw_salt, str):
+            return "reveal transaction salt must be a string"
+        salt = raw_salt.strip()
+        if len(salt) > MAX_REVEAL_SALT_LENGTH:
+            return f"reveal transaction salt must be at most {MAX_REVEAL_SALT_LENGTH} characters"
+
+        commitment_hash = state.commitments.get(request_id, {}).get(transaction.sender)
+        if commitment_hash is None:
+            return (
+                "reveal transaction has no prior commitment for sender "
+                f"{transaction.sender} and request_id {request_id}"
+            )
+        if transaction.sender in state.reveals.get(request_id, {}):
+            return (
+                "reveal already exists for sender "
+                f"{transaction.sender} and request_id {request_id}"
+            )
+
+        expected_commitment_hash = create_reveal_commitment_hash(
+            transaction.sender,
+            request_id,
+            seed_value,
+            salt,
+        )
+        if expected_commitment_hash != commitment_hash:
+            return "reveal transaction seed does not match prior commitment"
 
         return None
 

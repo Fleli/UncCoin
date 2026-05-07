@@ -164,6 +164,34 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertEqual(result.storage["has_auth"], 1)
         self.assertEqual(result.storage["commitment"], int("b" * 64, 16))
 
+    def test_read_reveal_pushes_revealed_seed_without_extra_authorization(self) -> None:
+        wallet = create_wallet(name="revealer")
+
+        result = execute_uvm_program(
+            [
+                ["READ_REVEAL", wallet.address, "casino-play-1"],
+                ["STORE", "seed"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+                reveals={
+                    "casino-play-1": {
+                        wallet.address: {
+                            "seed": "12345",
+                            "salt": "salt",
+                            "commitment_hash": "c" * 64,
+                        }
+                    }
+                },
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.storage, {"seed": 12345})
+
     def test_require_auth_fails_without_matching_request_id(self) -> None:
         wallet = create_wallet(name="authorizer")
         authorization_index = build_authorization_index(
