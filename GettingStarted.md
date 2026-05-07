@@ -128,6 +128,7 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
+deploy <contract> <fee> <json>
 msg <wallet> <content>
 messages
 mine [description]
@@ -150,6 +151,7 @@ Notes:
 - `balance` uses the loaded wallet address if no address is given.
 - `commit` stores a signed 64-character hex commitment hash under a `request-id`.
 - `reveal` uploads a seed for a prior commitment. Seeds are unsigned 256-bit integers.
+- `deploy` stores UVM code and optional metadata under a contract address.
 - `mine` mines one block.
 - `automine` keeps mining until `stop` is entered.
 

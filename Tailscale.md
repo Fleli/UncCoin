@@ -115,6 +115,7 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
+deploy <contract> <fee> <json>
 msg <wallet> <content>
 messages
 mine [description]

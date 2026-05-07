@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from core.serialization import serialize_transaction
 from core.transaction import TRANSACTION_KIND_COMMIT
+from core.transaction import TRANSACTION_KIND_DEPLOY
 from core.transaction import TRANSACTION_KIND_EXECUTE
 from core.transaction import TRANSACTION_KIND_REVEAL
 from core.transaction import TRANSACTION_KIND_TRANSFER
@@ -82,6 +83,40 @@ class TransactionModelTests(unittest.TestCase):
                 "request_id": "lottery-round-1",
                 "seed": "42",
                 "salt": "salt",
+            },
+        )
+
+    def test_deploy_constructor_records_program_and_metadata(self) -> None:
+        timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
+        program = [
+            ["PUSH", 7],
+            ["STORE", "number"],
+            ["HALT"],
+        ]
+        metadata = {
+            "name": "number-store",
+            "request_ids": ["casino-play-1"],
+        }
+
+        transaction = Transaction.deploy(
+            sender="alice",
+            contract_address="contract-number-store",
+            program=program,
+            metadata=metadata,
+            fee=Decimal("0.1"),
+            timestamp=timestamp,
+            nonce=5,
+        )
+
+        self.assertEqual(transaction.kind, TRANSACTION_KIND_DEPLOY)
+        self.assertEqual(transaction.receiver, "contract-number-store")
+        self.assertEqual(transaction.amount, Decimal("0.0"))
+        self.assertEqual(
+            transaction.payload,
+            {
+                "contract_address": "contract-number-store",
+                "program": program,
+                "metadata": metadata,
             },
         )
 

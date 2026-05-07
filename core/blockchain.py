@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Callable
@@ -10,12 +11,14 @@ from core.randomness import MAX_REVEAL_SALT_LENGTH
 from core.randomness import create_reveal_commitment_hash
 from core.randomness import parse_randomness_seed
 from core.transaction import TRANSACTION_KIND_COMMIT
+from core.transaction import TRANSACTION_KIND_DEPLOY
 from core.transaction import TRANSACTION_KIND_EXECUTE
 from core.transaction import TRANSACTION_KIND_REVEAL
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
+from core.uvm import parse_uvm_program
 from core.uvm_authorization import build_authorization_index
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
@@ -32,6 +35,7 @@ class ChainState:
     nonces: dict[str, int] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+    contracts: dict[str, dict] = field(default_factory=dict)
     contract_storage: dict[str, dict[str, int]] = field(default_factory=dict)
     uvm_receipts: dict[str, dict] = field(default_factory=dict)
     height: int = -1
@@ -50,6 +54,10 @@ class ChainState:
                     for sender, reveal in reveals_by_sender.items()
                 }
                 for request_id, reveals_by_sender in self.reveals.items()
+            },
+            contracts={
+                contract_address: deepcopy(contract)
+                for contract_address, contract in self.contracts.items()
             },
             contract_storage={
                 contract_address: storage.copy()
@@ -225,6 +233,14 @@ class Blockchain:
             .contract_storage.get(contract_address, {})
             .copy()
         )
+
+    def get_contract(
+        self,
+        contract_address: str,
+        tip_hash: str | None = None,
+    ) -> dict | None:
+        contract = self._get_state_for_tip(tip_hash).contracts.get(contract_address)
+        return None if contract is None else deepcopy(contract)
 
     def get_uvm_receipt(
         self,
@@ -815,6 +831,29 @@ class Blockchain:
             }
             return None
 
+        if transaction.kind == TRANSACTION_KIND_DEPLOY:
+            deploy_error = self._validate_deploy_transaction_error(transaction, state)
+            if deploy_error is not None:
+                return deploy_error
+
+            total_cost = transaction.fee
+            if sender_balance < total_cost:
+                return (
+                    f"sender balance {sender_balance} is below total transaction "
+                    f"cost {total_cost}"
+                )
+
+            contract_address = transaction.payload["contract_address"].strip()
+            state.nonces[transaction.sender] = expected_nonce + 1
+            state.balances[transaction.sender] = sender_balance - total_cost
+            state.contracts[contract_address] = {
+                "deployer": transaction.sender,
+                "program": deepcopy(transaction.payload["program"]),
+                "metadata": deepcopy(transaction.payload.get("metadata", {})),
+            }
+            state.contract_storage.setdefault(contract_address, {})
+            return None
+
         if transaction.kind == TRANSACTION_KIND_EXECUTE:
             return self._apply_execute_transaction_to_state_error(
                 transaction,
@@ -868,8 +907,15 @@ class Blockchain:
                 f"cost {total_cost}"
             )
 
+        program = transaction.payload.get("input")
+        contract = state.contracts.get(contract_address)
+        if contract is not None:
+            program = contract["program"]
+        elif program is None:
+            return f"execute transaction references undeployed contract {contract_address}"
+
         execution_result = execute_uvm_program(
-            transaction.payload.get("input", []),
+            program,
             UvmExecutionContext(
                 tx_sender=transaction.sender,
                 contract_address=contract_address,
@@ -895,6 +941,56 @@ class Blockchain:
             )
         state.contract_storage[contract_address] = execution_result.storage
         state.uvm_receipts[sha256_transaction_hash(transaction)] = execution_result.to_dict()
+        return None
+
+    @staticmethod
+    def _validate_deploy_transaction_error(
+        transaction: Transaction,
+        state: ChainState,
+    ) -> str | None:
+        if not transaction.receiver:
+            return "deploy transaction contract address is empty"
+        if transaction.amount != Decimal("0.0"):
+            return f"deploy transaction amount must be 0.0, got {transaction.amount}"
+
+        raw_contract_address = transaction.payload.get("contract_address")
+        if not isinstance(raw_contract_address, str) or not raw_contract_address.strip():
+            return "deploy transaction contract_address must be a non-empty string"
+        contract_address = raw_contract_address.strip()
+        if contract_address != transaction.receiver:
+            return "deploy transaction receiver must match contract_address"
+        if contract_address in state.contracts:
+            return f"contract {contract_address} is already deployed"
+
+        if "program" not in transaction.payload:
+            return "deploy transaction program is required"
+        try:
+            parse_uvm_program(transaction.payload["program"])
+        except ValueError as error:
+            return f"deploy transaction program is invalid: {error}"
+
+        metadata = transaction.payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return "deploy transaction metadata must be an object"
+
+        request_ids = metadata.get("request_ids", [])
+        if request_ids is None:
+            return None
+        if not isinstance(request_ids, list):
+            return "deploy transaction metadata.request_ids must be a list"
+        for index, request_id in enumerate(request_ids):
+            if not isinstance(request_id, str) or not request_id.strip():
+                return (
+                    "deploy transaction metadata.request_ids "
+                    f"item {index} must be a non-empty string"
+                )
+            if len(request_id.strip()) > MAX_RANDOMNESS_REQUEST_ID_LENGTH:
+                return (
+                    "deploy transaction metadata.request_ids "
+                    f"item {index} must be at most "
+                    f"{MAX_RANDOMNESS_REQUEST_ID_LENGTH} characters"
+                )
+
         return None
 
     @staticmethod

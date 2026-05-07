@@ -8,6 +8,7 @@ from core.block import Block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import TRANSACTION_KIND_COMMIT
+from core.transaction import TRANSACTION_KIND_DEPLOY
 from core.transaction import TRANSACTION_KIND_EXECUTE
 from core.transaction import TRANSACTION_KIND_REVEAL
 from core.transaction import TRANSACTION_KIND_TRANSFER
@@ -889,6 +890,15 @@ class P2PServer:
             request_id = transaction.payload.get("request_id", "")
             return (
                 f"reveal {transaction.sender} request_id={request_id} "
+                f"(fee {transaction.fee})"
+            )
+        if transaction.kind == TRANSACTION_KIND_DEPLOY:
+            contract_address = transaction.payload.get(
+                "contract_address",
+                transaction.receiver,
+            )
+            return (
+                f"deploy {transaction.sender} -> {contract_address} "
                 f"(fee {transaction.fee})"
             )
         if transaction.kind == TRANSACTION_KIND_EXECUTE:

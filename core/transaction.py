@@ -12,6 +12,7 @@ TRANSACTION_KIND_TRANSFER = "transfer"
 TRANSACTION_KIND_EXECUTE = "execute"
 TRANSACTION_KIND_COMMIT = "commit"
 TRANSACTION_KIND_REVEAL = "reveal"
+TRANSACTION_KIND_DEPLOY = "deploy"
 
 
 def _canonicalize_payload(value: Any) -> Any:
@@ -87,7 +88,7 @@ class Transaction:
         cls,
         sender: str,
         contract_address: str,
-        input_data: str,
+        input_data: Any,
         fee: Decimal | str,
         timestamp: datetime,
         nonce: int = 0,
@@ -113,6 +114,36 @@ class Transaction:
                 "value": str(Decimal(str(value))),
                 "gas_limit": int(gas_limit),
                 "authorizations": authorizations or [],
+            },
+        )
+
+    @classmethod
+    def deploy(
+        cls,
+        sender: str,
+        contract_address: str,
+        program: Any,
+        fee: Decimal | str,
+        timestamp: datetime,
+        nonce: int = 0,
+        metadata: dict[str, Any] | None = None,
+        sender_public_key: tuple[int, int] | None = None,
+        signature: str | None = None,
+    ) -> "Transaction":
+        return cls(
+            sender=sender,
+            receiver=contract_address,
+            amount=Decimal("0.0"),
+            fee=fee,
+            timestamp=timestamp,
+            nonce=nonce,
+            sender_public_key=sender_public_key,
+            signature=signature,
+            kind=TRANSACTION_KIND_DEPLOY,
+            payload={
+                "contract_address": contract_address,
+                "program": program,
+                "metadata": metadata or {},
             },
         )
 

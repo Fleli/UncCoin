@@ -239,6 +239,34 @@ class Node:
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
 
+    def create_signed_deploy(
+        self,
+        contract_address: str,
+        program,
+        fee: str,
+        metadata: dict | None = None,
+    ) -> Transaction:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to deploy contracts.")
+
+        try:
+            parsed_fee = Decimal(str(fee))
+        except InvalidOperation as error:
+            raise ValueError("Fee must be a valid decimal number.") from error
+
+        transaction = Transaction.deploy(
+            sender=self.wallet.address,
+            contract_address=contract_address,
+            program=program,
+            metadata=metadata or {},
+            fee=parsed_fee,
+            timestamp=datetime.now(),
+            nonce=self.get_next_nonce(self.wallet.address),
+            sender_public_key=self.wallet.public_key,
+        )
+        transaction.signature = self.wallet.sign_message(transaction.signing_payload())
+        return transaction
+
     def create_signed_wallet_message(self, receiver: str, content: str) -> dict:
         if self.wallet is None:
             raise ValueError("A loaded wallet is required to send messages.")
@@ -494,6 +522,8 @@ Commands:
                                   Commit a randomness hash for a request
     reveal <request-id> <seed> <fee> [salt]
                                   Reveal a seed for a prior commitment
+    deploy <contract> <fee> <json>
+                                  Deploy UVM code with optional metadata
     balance [address]             Print one balance
     balances [>amount|<amount]    Print balances, optionally filtered
     autosend <wallet-id>          Forward future balance increases
@@ -733,6 +763,32 @@ Wallet commands accept either a wallet address or a local alias."""
                     print(f"Reveal matches commitment hash {expected_commitment_hash}")
                 except ValueError as error:
                     print(f"Invalid reveal command: {error}")
+                continue
+
+            if line.startswith("deploy "):
+                try:
+                    contract_address, fee, deploy_json = line[len("deploy "):].split(
+                        " ",
+                        maxsplit=2,
+                    )
+                    deploy_payload = json.loads(deploy_json)
+                    if isinstance(deploy_payload, dict) and "program" in deploy_payload:
+                        program = deploy_payload["program"]
+                        metadata = deploy_payload.get("metadata", {})
+                    else:
+                        program = deploy_payload
+                        metadata = {}
+                    if not isinstance(metadata, dict):
+                        raise ValueError("Deploy metadata must be a JSON object.")
+                    transaction = self.create_signed_deploy(
+                        contract_address=contract_address,
+                        program=program,
+                        metadata=metadata,
+                        fee=fee,
+                    )
+                    await self.broadcast_transaction(transaction)
+                except (ValueError, json.JSONDecodeError) as error:
+                    print(f"Invalid deploy command: {error}")
                 continue
 
             if line.startswith("msg "):

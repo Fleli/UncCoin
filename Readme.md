@@ -49,6 +49,7 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
+deploy <contract> <fee> <json>
 msg <wallet> <content>
 messages
 mine [description]
@@ -86,9 +87,14 @@ sha256("UVM_REVEAL|1|<wallet>|<request_id>|<seed>|<salt>")
 Seeds are normalized as unsigned 256-bit integers. Decimal and `0x` hexadecimal seed strings
 are accepted. Salt is optional.
 
+`deploy` stores UVM code and metadata under a contract address. The deploy JSON can be either
+a program directly or an object with `program` and `metadata` fields. Metadata is an object;
+`metadata.request_ids` is reserved for request ids relevant to the contract.
+
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
-the contract address, program input, gas limit, optional value, and signed request
-authorizations of the form `wallet -> request_id`.
+the contract address, gas limit, optional value, and signed request authorizations of the form
+`wallet -> request_id`. If the contract address has deployed code, that deployed program runs;
+otherwise `execute` can still carry an inline program for compatibility.
 
 ## UncCoin Virtual Machine
 
