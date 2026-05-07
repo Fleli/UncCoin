@@ -92,6 +92,7 @@ class Transaction:
         nonce: int = 0,
         value: Decimal | str = Decimal("0.0"),
         gas_limit: int = 0,
+        authorizations: list[dict[str, Any]] | None = None,
         sender_public_key: tuple[int, int] | None = None,
         signature: str | None = None,
     ) -> "Transaction":
@@ -110,6 +111,7 @@ class Transaction:
                 "input": input_data,
                 "value": str(Decimal(str(value))),
                 "gas_limit": int(gas_limit),
+                "authorizations": authorizations or [],
             },
         )
 

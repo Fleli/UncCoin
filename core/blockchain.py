@@ -9,6 +9,7 @@ from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_EXECUTE
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
+from core.uvm_authorization import build_authorization_index
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
     create_mining_reward_transaction,
@@ -719,6 +720,13 @@ class Blockchain:
             return None
 
         if transaction.kind == TRANSACTION_KIND_EXECUTE:
+            raw_authorizations = transaction.payload.get("authorizations", [])
+            if not isinstance(raw_authorizations, list):
+                return "execute transaction authorizations must be a list"
+            try:
+                build_authorization_index(raw_authorizations)
+            except ValueError as error:
+                return str(error)
             return "execute transactions require a UVM execution engine"
 
         return f"unsupported transaction kind {transaction.kind}"

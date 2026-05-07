@@ -77,7 +77,9 @@ primitive for future shared-randomness workflows where a later UVM program can l
 participant's commitment to a later seed upload.
 
 The `execute` transaction kind is reserved for the future UncCoin Virtual Machine. It can be
-serialized and signed, but the chain currently rejects it until UVM execution is implemented.
+serialized and signed, and it can carry signed request authorizations of the form
+`wallet -> request_id`. The chain verifies those signatures before rejecting the transaction
+until UVM execution is implemented.
 
 ## Local Convenience Commands
 

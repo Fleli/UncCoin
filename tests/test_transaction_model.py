@@ -9,6 +9,8 @@ from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import TRANSACTION_VERSION_LEGACY
 from core.transaction import TRANSACTION_VERSION_TYPED
 from core.transaction import Transaction
+from core.uvm_authorization import create_uvm_authorization
+from wallet import create_wallet
 
 
 class TransactionModelTests(unittest.TestCase):
@@ -59,6 +61,8 @@ class TransactionModelTests(unittest.TestCase):
 
     def test_execute_constructor_carries_future_uvm_payload(self) -> None:
         timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
+        wallet = create_wallet(name="authorizer")
+        authorization = create_uvm_authorization(wallet, "casino-play-1").to_dict()
 
         transaction = Transaction.execute(
             sender="alice",
@@ -67,6 +71,7 @@ class TransactionModelTests(unittest.TestCase):
             value=Decimal("2"),
             fee=Decimal("0.2"),
             gas_limit=50_000,
+            authorizations=[authorization],
             timestamp=timestamp,
             nonce=4,
         )
@@ -81,6 +86,7 @@ class TransactionModelTests(unittest.TestCase):
                 "input": "010203",
                 "value": "2",
                 "gas_limit": 50_000,
+                "authorizations": [authorization],
             },
         )
 
