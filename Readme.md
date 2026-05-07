@@ -92,9 +92,9 @@ a program directly or an object with `program` and `metadata` fields. Metadata i
 `metadata.request_ids` is reserved for request ids relevant to the contract.
 
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
-the contract address, gas limit, optional value, and signed request authorizations of the form
-`wallet -> request_id`. If the contract address has deployed code, that deployed program runs;
-otherwise `execute` can still carry an inline program for compatibility.
+the contract address, gas limit, optional value, gas price, and signed request authorizations
+of the form `wallet -> request_id`. If the contract address has deployed code, that deployed
+program runs; otherwise `execute` can still carry an inline program for compatibility.
 
 ## UncCoin Virtual Machine
 
@@ -118,6 +118,11 @@ invalid authorization makes execution invalid.
 
 `READ_REVEAL <wallet> <request_id>` reads a public revealed seed and pushes it as a stack
 integer.
+
+`TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
+that amount between balances. The source must be the execute transaction sender, the contract
+itself, or a wallet that provided a valid UVM authorization for the exact request id. The
+receiver does not need to sign because receiving funds is not a sensitive operation.
 
 Instructions:
 
@@ -144,6 +149,7 @@ LOAD <key>
 STORE <key>
 READ_COMMIT <wallet> <request_id>
 READ_REVEAL <wallet> <request_id>
+TRANSFER_FROM <source> <receiver> <request_id>
 HAS_AUTH <wallet> <request_id>
 REQUIRE_AUTH <wallet> <request_id>
 JUMP <pc>
@@ -170,13 +176,18 @@ SHA256/HAS_AUTH/REQUIRE_AUTH: 20
 LOAD: 25
 READ_COMMIT: 30
 READ_REVEAL: 30
+TRANSFER_FROM: 50
 STORE: 100
 HALT/REVERT: 0
 ```
 
-The first pass deliberately keeps balance mutation outside the VM. Execute transactions may
-transfer value to the contract address, but UVM opcodes currently mutate only stack, transient
-memory, and contract storage.
+Execute transactions may transfer value to the contract address before execution starts. UVM
+balance mutations are scoped through `TRANSFER_FROM`; blocks only accept those mutations when
+the VM finishes successfully and all source authorization checks pass.
+
+Fuel economics are represented by the execute transaction fee. If `gas_price` is zero, the fee
+is a flat fee as in earlier transactions. If `gas_price` is positive, the chain requires the
+declared fee to equal `gas_used * gas_price`; that fee is then included in the miner reward.
 
 ## Local Convenience Commands
 

@@ -147,6 +147,7 @@ class TransactionModelTests(unittest.TestCase):
                 "input": "010203",
                 "value": "2",
                 "gas_limit": 50_000,
+                "gas_price": "0.0",
                 "authorizations": [authorization],
             },
         )

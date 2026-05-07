@@ -2,6 +2,7 @@ import hashlib
 import json
 import shlex
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from core.uvm_authorization import is_request_authorized
@@ -33,6 +34,7 @@ UVM_GAS_COSTS = {
     "STORE": 100,
     "READ_COMMIT": 30,
     "READ_REVEAL": 30,
+    "TRANSFER_FROM": 50,
     "HAS_AUTH": 20,
     "REQUIRE_AUTH": 20,
     "JUMP": 3,
@@ -54,6 +56,7 @@ class UvmExecutionContext:
     contract_address: str
     gas_limit: int
     storage: dict[str, int] = field(default_factory=dict)
+    balances: dict[str, Decimal] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     authorization_index: dict[str, list[str]] = field(default_factory=dict)
@@ -71,6 +74,8 @@ class UvmExecutionResult:
     stack: tuple[int, ...]
     memory: dict[str, int]
     storage: dict[str, int]
+    balance_changes: dict[str, Decimal]
+    transfers: tuple[dict[str, str], ...]
     program_counter: int
 
     def to_dict(self) -> dict:
@@ -85,6 +90,11 @@ class UvmExecutionResult:
             "stack": list(self.stack),
             "memory": self.memory,
             "storage": self.storage,
+            "balance_changes": {
+                address: str(change)
+                for address, change in self.balance_changes.items()
+            },
+            "transfers": [transfer.copy() for transfer in self.transfers],
             "program_counter": self.program_counter,
         }
 
@@ -125,6 +135,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
             stack=[],
             memory={},
             storage=context.storage.copy(),
+            balance_changes={},
+            transfers=[],
             program_counter=0,
         )
 
@@ -139,6 +151,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
             stack=[],
             memory={},
             storage=context.storage.copy(),
+            balance_changes={},
+            transfers=[],
             program_counter=0,
         )
 
@@ -148,6 +162,12 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
         str(key): _normalize_word(value)
         for key, value in context.storage.items()
     }
+    balances = {
+        str(address): Decimal(str(balance))
+        for address, balance in context.balances.items()
+    }
+    balance_changes: dict[str, Decimal] = {}
+    transfers: list[dict[str, str]] = []
     pc = 0
     gas_remaining = gas_limit
 
@@ -187,6 +207,9 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 memory,
                 storage,
                 context,
+                balances,
+                balance_changes,
+                transfers,
                 len(instructions),
             )
         except _UvmRevert as error:
@@ -200,6 +223,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 stack=stack,
                 memory=memory,
                 storage=storage,
+                balance_changes=balance_changes,
+                transfers=transfers,
                 program_counter=pc,
             )
         except _UvmExecutionError as error:
@@ -211,6 +236,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 memory,
                 storage,
                 pc,
+                balance_changes=balance_changes,
+                transfers=transfers,
             )
 
         if opcode == "HALT":
@@ -224,6 +251,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 stack=stack,
                 memory=memory,
                 storage=storage,
+                balance_changes=balance_changes,
+                transfers=transfers,
                 program_counter=pc,
             )
 
@@ -239,6 +268,8 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
         stack=stack,
         memory=memory,
         storage=storage,
+        balance_changes=balance_changes,
+        transfers=transfers,
         program_counter=pc,
     )
 
@@ -313,6 +344,9 @@ def _execute_instruction(
     memory: dict[str, int],
     storage: dict[str, int],
     context: UvmExecutionContext,
+    balances: dict[str, Decimal],
+    balance_changes: dict[str, Decimal],
+    transfers: list[dict[str, str]],
     program_length: int,
 ) -> int | None:
     opcode = instruction.opcode
@@ -434,6 +468,43 @@ def _execute_instruction(
         _push(stack, seed_value)
         return None
 
+    if opcode == "TRANSFER_FROM":
+        _require_operand_count(opcode, operands, 3)
+        source = _require_key_operand(opcode, operands[0])
+        receiver = _require_key_operand(opcode, operands[1])
+        request_id = _require_key_operand(opcode, operands[2])
+        amount = Decimal(_pop(stack))
+        if amount <= Decimal("0"):
+            raise _UvmExecutionError("transfer amount must be positive")
+        if (
+            source != context.tx_sender
+            and source != context.contract_address
+            and not is_request_authorized(context.authorization_index, source, request_id)
+        ):
+            raise _UvmExecutionError(
+                f"wallet {source} is not authorized for request_id {request_id}"
+            )
+
+        source_balance = balances.get(source, Decimal("0.0"))
+        if source_balance < amount:
+            raise _UvmExecutionError(
+                f"source balance {source_balance} is below transfer amount {amount}"
+            )
+
+        balances[source] = source_balance - amount
+        balances[receiver] = balances.get(receiver, Decimal("0.0")) + amount
+        balance_changes[source] = balance_changes.get(source, Decimal("0.0")) - amount
+        balance_changes[receiver] = balance_changes.get(receiver, Decimal("0.0")) + amount
+        transfers.append(
+            {
+                "source": source,
+                "receiver": receiver,
+                "amount": str(amount),
+                "request_id": request_id,
+            }
+        )
+        return None
+
     if opcode == "HAS_AUTH":
         _require_operand_count(opcode, operands, 2)
         wallet = _require_key_operand(opcode, operands[0])
@@ -531,6 +602,8 @@ def _failure(
     storage: dict[str, int],
     program_counter: int,
     gas_exhausted: bool = False,
+    balance_changes: dict[str, Decimal] | None = None,
+    transfers: list[dict[str, str]] | None = None,
 ) -> UvmExecutionResult:
     return _result(
         success=False,
@@ -542,6 +615,8 @@ def _failure(
         stack=stack,
         memory=memory,
         storage=storage,
+        balance_changes=balance_changes or {},
+        transfers=transfers or [],
         program_counter=program_counter,
     )
 
@@ -556,6 +631,8 @@ def _result(
     stack: list[int],
     memory: dict[str, int],
     storage: dict[str, int],
+    balance_changes: dict[str, Decimal],
+    transfers: list[dict[str, str]],
     program_counter: int,
 ) -> UvmExecutionResult:
     bounded_gas_remaining = max(gas_remaining, 0)
@@ -570,6 +647,12 @@ def _result(
         stack=tuple(stack),
         memory=memory.copy(),
         storage=storage.copy(),
+        balance_changes={
+            address: change
+            for address, change in balance_changes.items()
+            if change != Decimal("0.0")
+        },
+        transfers=tuple(transfer.copy() for transfer in transfers),
         program_counter=program_counter,
     )
 

@@ -1,6 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from core.block import Block, get_block_verification_error, proof_of_work
@@ -891,6 +891,12 @@ class Blockchain:
             return f"execute transaction gas_limit must be an integer: {error}"
         if gas_limit < 0:
             return "execute transaction gas_limit must be non-negative"
+        try:
+            gas_price = Decimal(str(transaction.payload.get("gas_price", "0.0")))
+        except InvalidOperation as error:
+            return f"execute transaction gas_price must be a decimal: {error}"
+        if gas_price < Decimal("0.0"):
+            return "execute transaction gas_price must be non-negative"
 
         raw_authorizations = transaction.payload.get("authorizations", [])
         if not isinstance(raw_authorizations, list):
@@ -907,6 +913,14 @@ class Blockchain:
                 f"cost {total_cost}"
             )
 
+        execution_balances = state.balances.copy()
+        execution_balances[transaction.sender] = sender_balance - total_cost
+        if transaction.amount > Decimal("0.0"):
+            execution_balances[contract_address] = (
+                execution_balances.get(contract_address, Decimal("0.0"))
+                + transaction.amount
+            )
+
         program = transaction.payload.get("input")
         contract = state.contracts.get(contract_address)
         if contract is not None:
@@ -921,6 +935,7 @@ class Blockchain:
                 contract_address=contract_address,
                 gas_limit=gas_limit,
                 storage=state.contract_storage.get(contract_address, {}),
+                balances=execution_balances,
                 commitments=state.commitments,
                 reveals=state.reveals,
                 authorization_index=authorization_index,
@@ -933,11 +948,23 @@ class Blockchain:
                 f"{execution_result.error or 'unknown error'}"
             )
 
+        expected_fuel_fee = Decimal(execution_result.gas_used) * gas_price
+        if gas_price > Decimal("0.0") and transaction.fee != expected_fuel_fee:
+            return (
+                f"execute transaction fee {transaction.fee} does not match "
+                f"gas_used {execution_result.gas_used} * gas_price {gas_price} "
+                f"= {expected_fuel_fee}"
+            )
+
         state.nonces[transaction.sender] = expected_nonce + 1
         state.balances[transaction.sender] = sender_balance - total_cost
         if transaction.amount > Decimal("0.0"):
             state.balances[contract_address] = (
                 state.balances.get(contract_address, Decimal("0.0")) + transaction.amount
+            )
+        for address, balance_change in execution_result.balance_changes.items():
+            state.balances[address] = (
+                state.balances.get(address, Decimal("0.0")) + balance_change
             )
         state.contract_storage[contract_address] = execution_result.storage
         state.uvm_receipts[sha256_transaction_hash(transaction)] = execution_result.to_dict()

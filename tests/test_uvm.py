@@ -1,5 +1,6 @@
 import hashlib
 import unittest
+from decimal import Decimal
 
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
@@ -191,6 +192,112 @@ class UvmExecutionTests(unittest.TestCase):
 
         self.assertTrue(result.success, result.error)
         self.assertEqual(result.storage, {"seed": 12345})
+
+    def test_transfer_from_debits_authorized_source_and_credits_receiver(self) -> None:
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        authorization_index = build_authorization_index(
+            [create_uvm_authorization(source, "casino-payout-1")]
+        )
+
+        result = execute_uvm_program(
+            [
+                ["PUSH", 4],
+                ["TRANSFER_FROM", source.address, receiver.address, "casino-payout-1"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=100,
+                balances={source.address: Decimal("10")},
+                authorization_index=authorization_index,
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(
+            result.balance_changes,
+            {
+                source.address: Decimal("-4"),
+                receiver.address: Decimal("4"),
+            },
+        )
+        self.assertEqual(
+            result.transfers,
+            (
+                {
+                    "source": source.address,
+                    "receiver": receiver.address,
+                    "amount": "4",
+                    "request_id": "casino-payout-1",
+                },
+            ),
+        )
+
+    def test_transfer_from_rejects_missing_source_authorization(self) -> None:
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+
+        result = execute_uvm_program(
+            [
+                ["PUSH", 4],
+                ["TRANSFER_FROM", source.address, receiver.address, "casino-payout-1"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=100,
+                balances={source.address: Decimal("10")},
+            ),
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("not authorized", result.error or "")
+
+    def test_transfer_from_allows_transaction_sender_without_extra_authorization(self) -> None:
+        sender = create_wallet(name="sender")
+        receiver = create_wallet(name="receiver")
+
+        result = execute_uvm_program(
+            [
+                ["PUSH", 4],
+                ["TRANSFER_FROM", sender.address, receiver.address, "self-pay"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender=sender.address,
+                contract_address="contract",
+                gas_limit=100,
+                balances={sender.address: Decimal("10")},
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.balance_changes[sender.address], Decimal("-4"))
+        self.assertEqual(result.balance_changes[receiver.address], Decimal("4"))
+
+    def test_transfer_from_allows_contract_balance_without_extra_authorization(self) -> None:
+        receiver = create_wallet(name="receiver")
+
+        result = execute_uvm_program(
+            [
+                ["PUSH", 4],
+                ["TRANSFER_FROM", "contract", receiver.address, "contract-pay"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=100,
+                balances={"contract": Decimal("10")},
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.balance_changes["contract"], Decimal("-4"))
+        self.assertEqual(result.balance_changes[receiver.address], Decimal("4"))
 
     def test_require_auth_fails_without_matching_request_id(self) -> None:
         wallet = create_wallet(name="authorizer")
