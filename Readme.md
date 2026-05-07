@@ -76,10 +76,86 @@ transaction. `commit` records a 64-character hex commitment hash under a caller-
 primitive for future shared-randomness workflows where a later UVM program can link a
 participant's commitment to a later seed upload.
 
-The `execute` transaction kind is reserved for the future UncCoin Virtual Machine. It can be
-serialized and signed, and it can carry signed request authorizations of the form
-`wallet -> request_id`. The chain verifies those signatures before rejecting the transaction
-until UVM execution is implemented.
+The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
+the contract address, program input, gas limit, optional value, and signed request
+authorizations of the form `wallet -> request_id`.
+
+## UncCoin Virtual Machine
+
+The UVM is a deterministic stack machine. Programs can be provided as a JSON instruction list
+or as simple assembly text. Each instruction is charged gas before it executes; if gas runs
+out, the execute transaction is invalid and the block is rejected.
+
+Example program:
+
+```json
+[
+  ["READ_COMMIT", "<wallet-address>", "casino-play-1"],
+  ["STORE", "commitment"],
+  ["HALT"]
+]
+```
+
+`READ_COMMIT <wallet> <request_id>` is protected: the execute transaction must include a
+valid UVM authorization signature from `<wallet>` for that exact `<request_id>`. Missing or
+invalid authorization makes execution invalid.
+
+Instructions:
+
+```text
+PUSH <int>
+POP
+DUP
+SWAP
+ADD
+SUB
+MUL
+DIV
+MOD
+EQ
+LT
+GT
+AND
+OR
+NOT
+SHA256
+MEM_LOAD <key>
+MEM_STORE <key>
+LOAD <key>
+STORE <key>
+READ_COMMIT <wallet> <request_id>
+HAS_AUTH <wallet> <request_id>
+REQUIRE_AUTH <wallet> <request_id>
+JUMP <pc>
+JUMPI <pc>
+HALT
+REVERT
+```
+
+`MEM_LOAD` and `MEM_STORE` are transient execution memory. `LOAD` and `STORE` are persistent
+contract storage under the execute transaction's contract address.
+
+Gas costs:
+
+```text
+PUSH/POP: 1
+DUP/SWAP: 2
+ADD/SUB: 3
+MUL/DIV/MOD: 5
+EQ/LT/GT/NOT: 2
+AND/OR/JUMP: 3
+JUMPI/MEM_STORE: 5
+MEM_LOAD: 3
+SHA256/HAS_AUTH/REQUIRE_AUTH: 20
+LOAD: 25
+READ_COMMIT: 30
+STORE: 100
+HALT/REVERT: 0
+```
+
+The first pass deliberately keeps balance mutation outside the VM. Execute transactions may
+transfer value to the contract address, but UVM opcodes currently mutate only stack, transient
+memory, and contract storage.
 
 ## Local Convenience Commands
 
