@@ -6,6 +6,7 @@ from core.blockchain import Blockchain
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.transaction import Transaction
+from node.node import Node
 from wallet import create_wallet
 
 
@@ -144,6 +145,39 @@ class CommitTransactionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "UVM execution engine"):
             blockchain.add_transaction(transaction)
+
+
+class NodeCommitTransactionTests(unittest.TestCase):
+    def test_node_creates_signed_commitment_transaction(self) -> None:
+        blockchain = create_blockchain()
+        wallet = create_wallet(name="committer")
+        blockchain.mine_pending_transactions(
+            miner_address=wallet.address,
+            description="fund committer",
+        )
+        node = Node(
+            host="127.0.0.1",
+            port=9300,
+            wallet=wallet,
+            blockchain=blockchain,
+        )
+
+        transaction = node.create_signed_commitment(
+            request_id="randomness:round:1",
+            commitment_hash="c" * 64,
+            fee="0.1",
+        )
+
+        accepted, reason = node._handle_incoming_transaction(transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="include node commitment",
+        )
+        self.assertEqual(
+            blockchain.get_commitment("randomness:round:1", wallet.address),
+            "c" * 64,
+        )
 
 
 if __name__ == "__main__":

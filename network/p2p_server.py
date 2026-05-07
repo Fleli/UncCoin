@@ -7,6 +7,9 @@ from typing import Callable
 from core.block import Block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
+from core.transaction import TRANSACTION_KIND_COMMIT
+from core.transaction import TRANSACTION_KIND_EXECUTE
+from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import Transaction
 
 CHAIN_SYNC_CHUNK_SIZE = 20
@@ -126,7 +129,7 @@ class P2PServer:
         )
         print(
             "Broadcast transaction "
-            f"{transaction_id[:12]} from {transaction.sender} to {transaction.receiver}"
+            f"{transaction_id[:12]} {self._format_transaction_summary(transaction)}"
         )
 
     async def broadcast_block(self, block: Block) -> None:
@@ -506,8 +509,7 @@ class P2PServer:
             self._notify(
                 "Received transaction "
                 f"{transaction_id[:12]} from {peer.host}:{peer.port}: "
-                f"{transaction.sender} -> {transaction.receiver} "
-                f"({transaction.amount}, fee {transaction.fee})"
+                f"{self._format_transaction_summary(transaction)}"
             )
             await self._broadcast_to_peers(message, exclude_peer=peer)
             return peer
@@ -868,6 +870,30 @@ class P2PServer:
         if hash_value is None:
             return "none"
         return hash_value[:12]
+
+    @staticmethod
+    def _format_transaction_summary(transaction: Transaction) -> str:
+        if transaction.kind == TRANSACTION_KIND_TRANSFER:
+            return (
+                f"transfer {transaction.sender} -> {transaction.receiver} "
+                f"({transaction.amount}, fee {transaction.fee})"
+            )
+        if transaction.kind == TRANSACTION_KIND_COMMIT:
+            request_id = transaction.payload.get("request_id", "")
+            return (
+                f"commit {transaction.sender} request_id={request_id} "
+                f"(fee {transaction.fee})"
+            )
+        if transaction.kind == TRANSACTION_KIND_EXECUTE:
+            contract_address = transaction.payload.get(
+                "contract_address",
+                transaction.receiver,
+            )
+            return (
+                f"execute {transaction.sender} -> {contract_address} "
+                f"(value {transaction.amount}, fee {transaction.fee})"
+            )
+        return f"{transaction.kind} from {transaction.sender} (fee {transaction.fee})"
 
     @staticmethod
     def _encode_message(message: dict) -> bytes:

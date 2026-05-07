@@ -47,6 +47,7 @@ autosend off
 mute
 unmute
 tx <receiver> <amount> <fee>
+commit <request-id> <commitment-hash> <fee>
 msg <wallet> <content>
 messages
 mine [description]
@@ -66,6 +67,17 @@ quit
 ```
 
 Commands that take wallet ids such as `tx`, `msg`, `balance`, and `alias` accept either a raw wallet address or a locally stored alias.
+
+## Typed Transactions
+
+UncCoin transactions are now versioned and typed. Existing money movement is a `transfer`
+transaction. `commit` records a 64-character hex commitment hash under a caller-provided
+`request_id`, keyed by the committing wallet address. This is intended as the first chain
+primitive for future shared-randomness workflows where a later UVM program can link a
+participant's commitment to a later seed upload.
+
+The `execute` transaction kind is reserved for the future UncCoin Virtual Machine. It can be
+serialized and signed, but the chain currently rejects it until UVM execution is implemented.
 
 ## Local Convenience Commands
 

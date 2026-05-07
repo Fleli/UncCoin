@@ -113,6 +113,7 @@ autosend off
 mute
 unmute
 tx <receiver> <amount> <fee>
+commit <request-id> <commitment-hash> <fee>
 msg <wallet> <content>
 messages
 mine [description]
