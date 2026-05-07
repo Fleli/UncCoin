@@ -8,11 +8,20 @@ def serialize_public_key(public_key: tuple[int, int] | None) -> str:
 
 
 def serialize_transaction(transaction: Transaction) -> str:
+    if transaction.version == 1:
+        return (
+            f"{transaction.sender}|{transaction.receiver}|"
+            f"{transaction.amount}|{transaction.fee}|{transaction.timestamp.isoformat()}|"
+            f"{transaction.nonce}|"
+            f"{serialize_public_key(transaction.sender_public_key)}|{transaction.signature or ''}"
+        )
+
     return (
-        f"{transaction.sender}|{transaction.receiver}|"
+        f"{transaction.version}|{transaction.kind}|{transaction.sender}|{transaction.receiver}|"
         f"{transaction.amount}|{transaction.fee}|{transaction.timestamp.isoformat()}|"
         f"{transaction.nonce}|"
-        f"{serialize_public_key(transaction.sender_public_key)}|{transaction.signature or ''}"
+        f"{serialize_public_key(transaction.sender_public_key)}|{transaction.signature or ''}|"
+        f"{transaction.canonical_payload()}"
     )
 
 
