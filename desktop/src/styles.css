@@ -258,6 +258,34 @@ pre {
   background: #101416;
 }
 
+.preferred-port-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #29333a;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #101416;
+}
+
+.preferred-port-bar div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.preferred-port-bar span {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.preferred-port-bar strong {
+  color: #f2f5f7;
+  overflow-wrap: anywhere;
+}
+
 .launch-details {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

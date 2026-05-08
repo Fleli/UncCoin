@@ -285,6 +285,14 @@ function App() {
       || String(wallet.preferredPort).includes(query)
     ));
   }, [walletSearch, wallets]);
+  const selectedWallet = useMemo(
+    () => wallets.find((wallet) => wallet.name === walletName),
+    [walletName, wallets],
+  );
+  const isPreferredPortDirty = (
+    selectedWallet !== undefined
+    && Number(port) !== selectedWallet.preferredPort
+  );
   const enabledBootstrapPeers = useMemo(
     () => BOOTSTRAP_PEERS.filter((peer) => !disabledBootstrapPeers.includes(peer)),
     [disabledBootstrapPeers],
@@ -565,6 +573,27 @@ function App() {
       setWalletSearch("");
       setNewWalletName("");
       setNotice(`Created wallet ${wallet.name}`);
+    } catch (walletError) {
+      setError(String(walletError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSavePreferredPort() {
+    if (!walletName) {
+      setError("Choose a wallet before saving a preferred port.");
+      return;
+    }
+    setBusyAction("save-preferred-port");
+    setError(null);
+    setNotice(null);
+    try {
+      const wallet = await window.unccoinDesktop.updateWalletPreferredPort(walletName, Number(port));
+      const nextWallets = await window.unccoinDesktop.listWallets();
+      setWallets(nextWallets);
+      applyWalletSelection(wallet.name, nextWallets);
+      setNotice(`Saved ${wallet.name} preferred port ${wallet.preferredPort}`);
     } catch (walletError) {
       setError(String(walletError));
     } finally {
@@ -946,6 +975,20 @@ function App() {
                           disabled={busyAction !== null}
                         />
                       </label>
+                    </div>
+
+                    <div className="preferred-port-bar">
+                      <div>
+                        <span>Wallet Preferred Port</span>
+                        <strong>{selectedWallet?.preferredPort ?? "-"}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSavePreferredPort}
+                        disabled={!walletName || busyAction !== null || !isPreferredPortDirty}
+                      >
+                        Save Preferred Port
+                      </button>
                     </div>
 
                     <label>

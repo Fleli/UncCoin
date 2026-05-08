@@ -1,7 +1,7 @@
 import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 
@@ -32,6 +32,11 @@ type CreateWalletRequest = {
   name: string;
   bitLength?: number;
   preferredPort?: number;
+};
+
+type UpdateWalletPreferredPortRequest = {
+  name: string;
+  preferredPort: number;
 };
 
 type NodeApiRequest = {
@@ -82,6 +87,14 @@ function normalizePort(value: unknown, fallback = DEFAULT_PREFERRED_PORT): numbe
     return port;
   }
   return fallback;
+}
+
+function requirePort(value: unknown, label: string): number {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port < 65536) {
+    return port;
+  }
+  throw new Error(`${label} must be between 1 and 65535.`);
 }
 
 function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
@@ -308,6 +321,30 @@ async function createWallet(request: CreateWalletRequest): Promise<WalletSummary
   return wallet;
 }
 
+async function updateWalletPreferredPort(
+  request: UpdateWalletPreferredPortRequest,
+): Promise<WalletSummary> {
+  const name = request.name.trim();
+  if (!name) {
+    throw new Error("Wallet name is required.");
+  }
+  const preferredPort = requirePort(request.preferredPort, "Preferred port");
+  const existingWallet = (await listWallets()).find((candidate) => candidate.name === name);
+  if (!existingWallet) {
+    throw new Error(`Wallet '${name}' was not found.`);
+  }
+
+  const walletData = JSON.parse(await readFile(existingWallet.path, "utf-8")) as Record<string, unknown>;
+  walletData.preferred_port = preferredPort;
+  await writeFile(existingWallet.path, `${JSON.stringify(walletData, null, 2)}\n`, "utf-8");
+
+  const updatedWallet = (await listWallets()).find((candidate) => candidate.path === existingWallet.path);
+  if (!updatedWallet) {
+    throw new Error(`Updated wallet '${name}', but could not read it from disk.`);
+  }
+  return updatedWallet;
+}
+
 async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   const apiPort = Number(request.apiPort);
   if (!Number.isInteger(apiPort) || apiPort <= 0 || apiPort > 65535) {
@@ -371,6 +408,10 @@ ipcMain.handle("node:stop", () => stopNode());
 ipcMain.handle("node:state", () => runtimeState());
 ipcMain.handle("wallets:list", () => listWallets());
 ipcMain.handle("wallets:create", (_event, request: CreateWalletRequest) => createWallet(request));
+ipcMain.handle(
+  "wallets:update-preferred-port",
+  (_event, request: UpdateWalletPreferredPortRequest) => updateWalletPreferredPort(request),
+);
 ipcMain.handle("node-api:fetch", (_event, request: NodeApiRequest) => fetchNodeApi(request));
 ipcMain.handle("system:local-addresses", () => localAddresses());
 
