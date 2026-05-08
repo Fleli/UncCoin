@@ -84,6 +84,8 @@ type ActionResult = {
   detail?: string;
 };
 
+type NodeActionRefreshMode = "snapshot" | "mining" | "none";
+
 type BootstrapAttempt = {
   peer: string;
   status: "pending" | "connected" | "failed" | "skipped";
@@ -809,7 +811,11 @@ function App() {
         await refreshSnapshot();
       } catch {
         if (!cancelled) {
-          setApiStatus("starting");
+          setApiStatus(
+            miningStatus?.active === true || miningStatus?.automine.running === true
+              ? "busy"
+              : "starting",
+          );
         }
       }
     };
@@ -823,7 +829,69 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [isApiAvailable, refreshSnapshot, resetSnapshot, startupComplete]);
+  }, [
+    isApiAvailable,
+    miningStatus?.active,
+    miningStatus?.automine.running,
+    refreshSnapshot,
+    resetSnapshot,
+    startupComplete,
+  ]);
+
+  useEffect(() => {
+    if (
+      !nodeState.running
+      || startupComplete
+      || busyAction === "start-node"
+      || busyAction === "create-wallet"
+    ) {
+      return undefined;
+    }
+
+    const apiPortToUse = nodeState.config?.apiPort ?? Number(apiPort);
+    if (!Number.isInteger(apiPortToUse)) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const reattachRunningNode = async () => {
+      setStartupPhase("waiting-api");
+      setApiStatus("starting");
+
+      while (!cancelled) {
+        try {
+          await waitForNodeApi(apiPortToUse);
+          if (cancelled) {
+            return;
+          }
+          await loadSnapshot(apiPortToUse);
+          if (cancelled) {
+            return;
+          }
+          setStartupPhase("ready");
+          setStartupComplete(true);
+          return;
+        } catch {
+          if (!cancelled) {
+            setApiStatus("busy");
+            await delay(1500);
+          }
+        }
+      }
+    };
+
+    void reattachRunningNode();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiPort,
+    busyAction,
+    loadSnapshot,
+    nodeState.config?.apiPort,
+    nodeState.running,
+    startupComplete,
+  ]);
 
   useEffect(() => {
     const shouldPollMiningFast = (
@@ -850,7 +918,7 @@ function App() {
         }
       } catch {
         if (!cancelled) {
-          setApiStatus("starting");
+          setApiStatus("busy");
         }
       }
     };
@@ -984,7 +1052,11 @@ function App() {
     setStartupComplete(true);
   }
 
-  async function runNodeAction(label: string, action: () => Promise<ActionResult | void>) {
+  async function runNodeAction(
+    label: string,
+    action: () => Promise<ActionResult | void>,
+    refreshMode: NodeActionRefreshMode = "snapshot",
+  ) {
     if (!isApiAvailable) {
       setError("Start the node before running node actions.");
       return;
@@ -995,7 +1067,17 @@ function App() {
     try {
       const result = await action();
       setNotice(result ? actionText(result) : label);
-      await refreshSnapshot();
+      if (refreshMode === "snapshot") {
+        await refreshSnapshot();
+      } else if (refreshMode === "mining") {
+        try {
+          const status = await readMiningStatus(activeApiPort);
+          setMiningStatus(status);
+          setApiStatus("live");
+        } catch {
+          setApiStatus("busy");
+        }
+      }
     } catch (actionError) {
       setError(String(actionError));
     } finally {
@@ -2199,7 +2281,7 @@ function App() {
                       onClick={() => void runNodeAction("start-automine", async () => {
                         const response = await startAutomine(activeApiPort, mineDescription || undefined);
                         return { label: "Automine started", detail: response.description };
-                      })}
+                      }, "mining")}
                     >
                       Start Auto
                     </button>
@@ -2209,7 +2291,7 @@ function App() {
                       onClick={() => void runNodeAction("stop-automine", async () => {
                         await stopAutomine(activeApiPort);
                         return { label: "Automine stopped" };
-                      })}
+                      }, "mining")}
                     >
                       Stop
                     </button>
