@@ -1051,6 +1051,37 @@ dd {
   font-weight: 760;
 }
 
+.backend-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.backend-warmup-warning {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  border: 1px solid #d09d22;
+  border-radius: 6px;
+  color: #ffd45c;
+  background: #2a210d;
+  box-shadow: 0 0 0 1px rgba(255, 212, 92, 0.14);
+}
+
+.backend-warmup-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .backend-warning-badge {
   display: inline-flex;
   flex: 0 0 auto;

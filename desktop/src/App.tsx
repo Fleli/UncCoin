@@ -305,6 +305,18 @@ function miningBackendButtonLabel(option: MiningBackendOption, selected: MiningB
   return "Unavailable";
 }
 
+function miningBackendIsWarmed(
+  option: MiningBackendOption,
+  warmup: MiningWarmupStatus | null,
+): boolean {
+  return (
+    option.available
+    && warmup?.status === "ready"
+    && warmup.error === null
+    && warmup.backend === option.id
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -2623,6 +2635,7 @@ function App() {
                     miningBackendOptions.map((option) => {
                       const isSelected = option.id === selectedMiningBackend;
                       const canAct = option.available || option.can_build;
+                      const needsWarmup = option.available && !miningBackendIsWarmed(option, miningWarmupStatus);
                       return (
                         <button
                           type="button"
@@ -2651,7 +2664,17 @@ function App() {
                           }}
                         >
                           <span className="backend-option-heading">
-                            <span>{option.label}</span>
+                            <span className="backend-label">
+                              <span>{option.label}</span>
+                              {needsWarmup ? (
+                                <span
+                                  className="backend-warmup-warning"
+                                  title={`${option.label} is not warmed up`}
+                                >
+                                  <WarningIcon className="backend-warmup-icon" />
+                                </span>
+                              ) : null}
+                            </span>
                             {!option.available ? (
                               <span className="backend-warning-badge" title={`${option.label} is not built`}>
                                 <WarningIcon className="backend-warning-icon" />
