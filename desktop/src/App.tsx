@@ -57,6 +57,7 @@ const BOOTSTRAP_PEERS = [
   "100.98.249.35:9000",
   "100.98.249.35:9001",
   "100.71.105.5:4040",
+  "100.83.72.12:6000",
 ];
 const DEFAULT_DEPLOY_JSON = `{
   "program": [["HALT"]],
