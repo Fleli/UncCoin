@@ -136,6 +136,10 @@ invalid authorization makes execution invalid.
 `READ_REVEAL <wallet> <request_id>` reads a public revealed seed and pushes it as a stack
 integer.
 
+`HAS_REVEAL <wallet> <request_id>` pushes `1` when that wallet has revealed for the request
+and `0` otherwise. `BLOCK_HEIGHT` pushes the block height currently executing the contract,
+which lets contracts distinguish "not revealed yet" from "missed the deadline."
+
 `TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
 that amount between balances. The source must be the execute transaction sender, the contract
 itself, or a wallet that provided a valid UVM authorization for the exact request id. The
@@ -169,9 +173,11 @@ LOAD <key>
 STORE <key>
 READ_COMMIT <wallet> <request_id>
 READ_REVEAL <wallet> <request_id>
+HAS_REVEAL <wallet> <request_id>
 TRANSFER_FROM <source> <receiver> <request_id>
 HAS_AUTH <wallet> <request_id>
 REQUIRE_AUTH <wallet> <request_id>
+BLOCK_HEIGHT
 JUMP <pc>
 JUMPI <pc>
 HALT
@@ -192,6 +198,8 @@ EQ/LT/GT/NOT: 2
 AND/OR/XOR/JUMP: 3
 JUMPI/MEM_STORE: 5
 MEM_LOAD: 3
+BLOCK_HEIGHT: 2
+HAS_REVEAL: 10
 SHA256/HAS_AUTH/REQUIRE_AUTH: 20
 LOAD: 25
 READ_COMMIT: 30

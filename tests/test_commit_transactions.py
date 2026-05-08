@@ -186,6 +186,44 @@ class CommitTransactionTests(unittest.TestCase):
         self.assertFalse(receipt["gas_exhausted"])
         self.assertFalse(receipt["used_all_gas"])
 
+    def test_execute_transaction_exposes_mined_block_height_to_uvm(self) -> None:
+        blockchain = create_blockchain()
+        wallet = create_wallet(name="caller")
+        blockchain.mine_pending_transactions(
+            miner_address=wallet.address,
+            description="fund caller",
+        )
+        expected_execution_height = blockchain.blocks[-1].block_id + 1
+        transaction = sign_transaction(
+            wallet,
+            Transaction.execute(
+                sender=wallet.address,
+                contract_address="height-contract",
+                input_data=[
+                    ["BLOCK_HEIGHT"],
+                    ["STORE", "height"],
+                    ["HALT"],
+                ],
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=200,
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(wallet.address),
+                sender_public_key=wallet.public_key,
+            ),
+        )
+
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute block height contract",
+        )
+
+        self.assertEqual(
+            blockchain.get_contract_storage("height-contract"),
+            {"height": expected_execution_height},
+        )
+
     def test_execute_rejects_invalid_authorization_before_uvm_execution(self) -> None:
         blockchain = create_blockchain()
         wallet = create_wallet(name="caller")

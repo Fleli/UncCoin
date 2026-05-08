@@ -215,6 +215,94 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertTrue(result.success, result.error)
         self.assertEqual(result.storage, {"seed": 12345})
 
+    def test_has_reveal_allows_branching_before_reading_reveal(self) -> None:
+        wallet = create_wallet(name="revealer")
+        program = [
+            ["HAS_REVEAL", wallet.address, "casino-play-1"],
+            ["JUMPI", 5],
+            ["PUSH", 0],
+            ["STORE", "status"],
+            ["HALT"],
+            ["READ_REVEAL", wallet.address, "casino-play-1"],
+            ["STORE", "seed"],
+            ["HALT"],
+        ]
+
+        missing_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+            ),
+        )
+        revealed_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+                reveals={
+                    "casino-play-1": {
+                        wallet.address: {
+                            "seed": "12345",
+                            "salt": "salt",
+                            "commitment_hash": "c" * 64,
+                        }
+                    }
+                },
+            ),
+        )
+
+        self.assertTrue(missing_result.success, missing_result.error)
+        self.assertEqual(missing_result.storage, {"status": 0})
+        self.assertTrue(revealed_result.success, revealed_result.error)
+        self.assertEqual(revealed_result.storage, {"seed": 12345})
+
+    def test_block_height_supports_deadline_branching(self) -> None:
+        wallet = create_wallet(name="revealer")
+        program = [
+            ["HAS_REVEAL", wallet.address, "coinflip"],
+            ["JUMPI", 12],
+            ["BLOCK_HEIGHT"],
+            ["PUSH", 10],
+            ["GT"],
+            ["JUMPI", 9],
+            ["PUSH", 0],
+            ["STORE", "status"],
+            ["HALT"],
+            ["PUSH", 2],
+            ["STORE", "status"],
+            ["HALT"],
+            ["PUSH", 1],
+            ["STORE", "status"],
+            ["HALT"],
+        ]
+
+        early_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+                block_height=10,
+            ),
+        )
+        expired_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=200,
+                block_height=11,
+            ),
+        )
+
+        self.assertTrue(early_result.success, early_result.error)
+        self.assertEqual(early_result.storage, {"status": 0})
+        self.assertTrue(expired_result.success, expired_result.error)
+        self.assertEqual(expired_result.storage, {"status": 2})
+
     def test_transfer_from_debits_authorized_source_and_credits_receiver(self) -> None:
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")

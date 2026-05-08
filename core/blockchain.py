@@ -1038,6 +1038,7 @@ class Blockchain:
                 commitments=state.commitments,
                 reveals=state.reveals,
                 authorization_index=authorization_index,
+                block_height=execution_block_height or 0,
             ),
         )
 

@@ -36,9 +36,11 @@ UVM_GAS_COSTS = {
     "STORE": 100,
     "READ_COMMIT": 30,
     "READ_REVEAL": 30,
+    "HAS_REVEAL": 10,
     "TRANSFER_FROM": 50,
     "HAS_AUTH": 20,
     "REQUIRE_AUTH": 20,
+    "BLOCK_HEIGHT": 2,
     "JUMP": 3,
     "JUMPI": 5,
     "HALT": 0,
@@ -62,6 +64,7 @@ class UvmExecutionContext:
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     authorization_index: dict[str, Any] = field(default_factory=dict)
+    block_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -487,6 +490,13 @@ def _execute_instruction(
         _push(stack, seed_value)
         return None
 
+    if opcode == "HAS_REVEAL":
+        _require_operand_count(opcode, operands, 2)
+        wallet = _require_key_operand(opcode, operands[0])
+        request_id = _require_key_operand(opcode, operands[1])
+        _push(stack, 1 if wallet in context.reveals.get(request_id, {}) else 0)
+        return None
+
     if opcode == "TRANSFER_FROM":
         _require_operand_count(opcode, operands, 3)
         source = _require_key_operand(opcode, operands[0])
@@ -550,6 +560,11 @@ def _execute_instruction(
             stack,
             1 if is_request_authorized(context.authorization_index, wallet, request_id) else 0,
         )
+        return None
+
+    if opcode == "BLOCK_HEIGHT":
+        _require_operand_count(opcode, operands, 0)
+        _push(stack, int(context.block_height))
         return None
 
     if opcode == "REQUIRE_AUTH":
