@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "npm run build:electron && concurrently -k -n vite,electron \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RUN_AS_NODE= VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "npm run build:electron && concurrently -k -n vite,electron \"vite --host 127.0.0.1 --port ${VITE_DEV_SERVER_PORT:-5173} --strictPort\" \"wait-on http://127.0.0.1:${VITE_DEV_SERVER_PORT:-5173} && cross-env ELECTRON_RUN_AS_NODE= VITE_DEV_SERVER_URL=http://127.0.0.1:${VITE_DEV_SERVER_PORT:-5173} electron .\"",
     "build": "npm run build:electron && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
