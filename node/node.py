@@ -143,6 +143,8 @@ class Node:
     async def connect_to_peer(self, host: str, port: int) -> None:
         try:
             await self.p2p_server.connect_to_peer(host, port)
+        except TimeoutError as error:
+            raise ValueError(f"Timed out connecting to peer {host}:{port}") from error
         except OSError as error:
             raise ValueError(f"Could not connect to peer {host}:{port}: {error.strerror or error}") from error
 

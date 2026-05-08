@@ -17,6 +17,7 @@ from core.transaction import Transaction
 CHAIN_SYNC_CHUNK_SIZE = 20
 FASTSYNC_INITIAL_BATCH_CHUNKS = 50
 FASTSYNC_STREAM_DRAIN_INTERVAL = 8
+P2P_CONNECT_TIMEOUT_SECONDS = 15.0
 P2P_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
@@ -120,7 +121,10 @@ class P2PServer:
         if self._is_self_peer(peer) or peer in self.active_connections:
             return
 
-        reader, writer = await asyncio.open_connection(host, port)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=P2P_CONNECT_TIMEOUT_SECONDS,
+        )
         self.peers.add(peer)
         self.active_connections[peer] = writer
 

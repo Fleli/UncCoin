@@ -311,7 +311,13 @@ export function readAuthorizations(apiPort: number): Promise<AuthorizationsRespo
 }
 
 export function connectPeer(apiPort: number, peer: string): Promise<PeersResponse> {
-  return requestApi<PeersResponse>(apiPort, "/control/peers/connect", "POST", { peer });
+  return requestApi<PeersResponse>(
+    apiPort,
+    "/control/peers/connect",
+    "POST",
+    { peer },
+    { timeoutMs: 25000 },
+  );
 }
 
 export function discoverPeers(apiPort: number): Promise<PeersResponse> {

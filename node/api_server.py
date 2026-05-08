@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 API_PREFIX = "/api/v1"
 CONTROL_API_PREFIX = f"{API_PREFIX}/control"
-PEER_CONNECT_TIMEOUT_SECONDS = 3.0
+PEER_CONNECT_TIMEOUT_SECONDS = 20.0
 
 
 class PeerRequest(BaseModel):
@@ -393,7 +393,11 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
         except asyncio.TimeoutError as error:
             raise HTTPException(
                 status_code=504,
-                detail=f"Timed out connecting to peer {host}:{port}",
+                detail=(
+                    f"Timed out connecting to peer {host}:{port} after "
+                    f"{PEER_CONNECT_TIMEOUT_SECONDS:g}s. The peer may be offline, "
+                    "firewalled, or not listening on that P2P port."
+                ),
             ) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
