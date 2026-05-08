@@ -532,11 +532,18 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   }
   const endpointPath = request.path;
   const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
-  const timeoutMs = Number(request.timeoutMs || NODE_API_TIMEOUT_MS);
+  const timeoutMs = request.timeoutMs === undefined
+    ? NODE_API_TIMEOUT_MS
+    : Number(request.timeoutMs);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new Error("API timeout must be a non-negative number.");
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
+  const timeout = timeoutMs > 0
+    ? setTimeout(() => {
+      controller.abort();
+    }, timeoutMs)
+    : null;
   const headers: Record<string, string> = {};
   if (request.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -568,7 +575,9 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== null) {
+      clearTimeout(timeout);
+    }
   }
 }
 

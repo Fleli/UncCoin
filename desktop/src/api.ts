@@ -340,7 +340,7 @@ export function sendMessage(
 }
 
 export function mineBlock(apiPort: number, description?: string): Promise<MineResponse> {
-  return requestApi(apiPort, "/control/mine", "POST", { description });
+  return requestApi(apiPort, "/control/mine", "POST", { description }, { timeoutMs: 0 });
 }
 
 export function setMiningBackend(
