@@ -63,6 +63,7 @@ const BLOCKCHAIN_VIEW_BLOCKS = 3;
 const MINING_REWARD_SENDER = "SYSTEM";
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -91,17 +92,96 @@ type BootstrapAttempt = {
 
 type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-bootstrap" | "fastsync" | "ready";
 
-const tabs: Array<{ id: TabId; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "blockchain", label: "Blockchain" },
-  { id: "transfer", label: "Transfer" },
-  { id: "mining", label: "Mining" },
-  { id: "wallet", label: "Wallet" },
-  { id: "network", label: "Network" },
-  { id: "messages", label: "Messages" },
-  { id: "contracts", label: "Contracts" },
-  { id: "logs", label: "Logs" },
+const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
+  { id: "overview", label: "Overview", icon: "overview" },
+  { id: "blockchain", label: "Blockchain", icon: "blocks" },
+  { id: "transfer", label: "Transfer", icon: "transfer" },
+  { id: "mining", label: "Mining", icon: "pickaxe" },
+  { id: "wallet", label: "Wallet", icon: "wallet" },
+  { id: "network", label: "Network", icon: "network" },
+  { id: "messages", label: "Messages", icon: "messages" },
+  { id: "contracts", label: "Contracts", icon: "contracts" },
+  { id: "logs", label: "Logs", icon: "logs" },
 ];
+
+function TabIcon({ name }: { name: TabIconName }) {
+  switch (name) {
+    case "overview":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4 11.5h4.5V16H4z" />
+          <path d="M11.5 4H16v12h-4.5z" />
+          <path d="M4 4h4.5v4.5H4z" />
+        </svg>
+      );
+    case "blocks":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3.5 4.5h5v5h-5z" />
+          <path d="M11.5 10.5h5v5h-5z" />
+          <path d="M8.5 7h3" />
+          <path d="M11.5 13h-3" />
+        </svg>
+      );
+    case "transfer":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4 10h11" />
+          <path d="m11.5 6.5 3.5 3.5-3.5 3.5" />
+        </svg>
+      );
+    case "pickaxe":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M12.5 4.5c2 .3 3.3 1 4 2" />
+          <path d="M8 6.5c2.5-1.9 5.3-2.4 8.5-1.5" />
+          <path d="m9.5 8.5-5 6" />
+          <path d="m4 14 2 2" />
+        </svg>
+      );
+    case "wallet":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4 6h11.5a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 15.5 16h-10A1.5 1.5 0 0 1 4 14.5z" />
+          <path d="M4 6.5V5a1.5 1.5 0 0 1 1.8-1.5L14 5" />
+          <path d="M14.5 11h.5" />
+        </svg>
+      );
+    case "network":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M6 7.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+          <path d="M14 16.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+          <path d="M15 7.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+          <path d="m7.8 6.2 4.4 1.1" />
+          <path d="m7.4 7.2 5.2 5.6" />
+        </svg>
+      );
+    case "messages":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4 5.5h12v8H9l-3.5 2v-2H4z" />
+        </svg>
+      );
+    case "contracts":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M6 3.5h6l3 3V16H6z" />
+          <path d="M12 3.5V7h3" />
+          <path d="m9 10-1.5 1.5L9 13" />
+          <path d="m12 10 1.5 1.5L12 13" />
+        </svg>
+      );
+    case "logs":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4.5 5.5h11" />
+          <path d="M4.5 10h11" />
+          <path d="M4.5 14.5h7" />
+        </svg>
+      );
+  }
+}
 
 function emptySnapshot(): Snapshot {
   return {
@@ -1832,6 +1912,7 @@ function App() {
               className={activeTab === tab.id ? "active" : ""}
               onClick={() => setActiveTab(tab.id)}
             >
+              <TabIcon name={tab.icon} />
               <span className="tab-label">{tab.label}</span>
               {tab.id === "messages" && unreadMessageCount > 0 ? (
                 <span className="unread-badge">{unreadMessageCount}</span>

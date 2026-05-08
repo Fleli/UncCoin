@@ -703,6 +703,7 @@ pre {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  gap: 10px;
   width: 100%;
   border-color: transparent;
   background: transparent;
@@ -714,6 +715,22 @@ pre {
   border-color: #355869;
   color: #f4f7f8;
   background: #20313a;
+}
+
+.tab-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  opacity: 0.86;
+}
+
+.tabs button.active .tab-icon {
+  opacity: 1;
 }
 
 .tab-label {
