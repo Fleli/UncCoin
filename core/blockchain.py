@@ -12,6 +12,7 @@ from core.randomness import MAX_RANDOMNESS_REQUEST_ID_LENGTH
 from core.randomness import MAX_REVEAL_SALT_LENGTH
 from core.randomness import create_reveal_commitment_hash
 from core.randomness import parse_randomness_seed
+from core.transaction import TRANSACTION_KIND_AUTHORIZE
 from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_DEPLOY
 from core.transaction import TRANSACTION_KIND_EXECUTE
@@ -21,7 +22,8 @@ from core.transaction import Transaction
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
 from core.uvm import parse_uvm_program
-from core.uvm_authorization import build_authorization_index
+from core.uvm_authorization import MAX_AUTHORIZATION_REQUEST_ID_LENGTH
+from core.uvm_authorization import UvmAuthorizationScope
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
     create_mining_reward_transaction,
@@ -38,6 +40,7 @@ class ChainState:
     nonces: dict[str, int] = field(default_factory=dict)
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+    authorizations: list[dict] = field(default_factory=list)
     contracts: dict[str, dict] = field(default_factory=dict)
     contract_storage: dict[str, dict[str, int]] = field(default_factory=dict)
     uvm_receipts: dict[str, dict] = field(default_factory=dict)
@@ -58,6 +61,7 @@ class ChainState:
                 }
                 for request_id, reveals_by_sender in self.reveals.items()
             },
+            authorizations=deepcopy(self.authorizations),
             contracts={
                 contract_address: deepcopy(contract)
                 for contract_address, contract in self.contracts.items()
@@ -239,6 +243,32 @@ class Blockchain:
                 .items()
             )
         }
+
+    def get_authorizations(
+        self,
+        *,
+        contract_address: str | None = None,
+        request_id: str | None = None,
+        wallet: str | None = None,
+        tip_hash: str | None = None,
+    ) -> list[dict]:
+        authorizations = self._get_state_for_tip(tip_hash).authorizations
+        return [
+            deepcopy(authorization)
+            for authorization in authorizations
+            if (
+                contract_address is None
+                or authorization.get("contract_address") == contract_address
+            )
+            and (
+                request_id is None
+                or authorization.get("request_id") == request_id
+            )
+            and (
+                wallet is None
+                or authorization.get("wallet") == wallet
+            )
+        ]
 
     def get_contract_storage(
         self,
@@ -916,6 +946,36 @@ class Blockchain:
             collect_fee(transaction.fee)
             return None
 
+        if transaction.kind == TRANSACTION_KIND_AUTHORIZE:
+            authorize_error = self._validate_authorize_transaction_error(transaction, state)
+            if authorize_error is not None:
+                return authorize_error
+
+            total_cost = transaction.fee
+            if sender_balance < total_cost:
+                return (
+                    f"sender balance {sender_balance} is below total transaction "
+                    f"cost {total_cost}"
+                )
+
+            scope = UvmAuthorizationScope.from_dict(
+                transaction.payload.get("scope", {}),
+            ).to_dict()
+            state.nonces[transaction.sender] = expected_nonce + 1
+            state.balances[transaction.sender] = sender_balance - total_cost
+            state.authorizations.append(
+                {
+                    "wallet": transaction.sender,
+                    "contract_address": transaction.payload["contract_address"].strip(),
+                    "code_hash": transaction.payload["code_hash"].strip().lower(),
+                    "request_id": transaction.payload["request_id"].strip(),
+                    "scope": scope,
+                    "authorized_at_height": execution_block_height,
+                }
+            )
+            collect_fee(transaction.fee)
+            return None
+
         if transaction.kind == TRANSACTION_KIND_DEPLOY:
             deploy_error = self._validate_deploy_transaction_error(transaction, state)
             if deploy_error is not None:
@@ -1033,17 +1093,17 @@ class Blockchain:
             code_hash = compute_contract_code_hash(program, {})
 
         raw_authorizations = transaction.payload.get("authorizations", [])
-        if not isinstance(raw_authorizations, list):
-            return "execute transaction authorizations must be a list"
-        try:
-            authorization_index = build_authorization_index(
-                raw_authorizations,
-                contract_address=contract_address,
-                code_hash=code_hash,
-                block_height=execution_block_height,
+        if raw_authorizations:
+            return (
+                "execute transaction inline authorizations are not supported; "
+                "submit authorize transactions before execution"
             )
-        except ValueError as error:
-            return str(error)
+        authorization_index = self._build_chain_authorization_index(
+            state,
+            contract_address=contract_address,
+            code_hash=code_hash,
+            block_height=execution_block_height,
+        )
 
         execution_result = execute_uvm_program(
             program,
@@ -1158,6 +1218,96 @@ class Blockchain:
                 )
 
         return None
+
+    @staticmethod
+    def _validate_authorize_transaction_error(
+        transaction: Transaction,
+        state: ChainState,
+    ) -> str | None:
+        if not transaction.receiver:
+            return "authorize transaction contract address is empty"
+        if transaction.amount != Decimal("0.0"):
+            return f"authorize transaction amount must be 0.0, got {transaction.amount}"
+
+        raw_contract_address = transaction.payload.get("contract_address")
+        if not isinstance(raw_contract_address, str) or not raw_contract_address.strip():
+            return "authorize transaction contract_address must be a non-empty string"
+        contract_address = raw_contract_address.strip()
+        if contract_address != transaction.receiver:
+            return "authorize transaction receiver must match contract_address"
+
+        raw_code_hash = transaction.payload.get("code_hash")
+        if not isinstance(raw_code_hash, str) or not _is_hex_hash(raw_code_hash.strip()):
+            return "authorize transaction code_hash must be a 64-character hex string"
+        code_hash = raw_code_hash.strip().lower()
+
+        contract = state.contracts.get(contract_address)
+        if contract is not None:
+            expected_code_hash = str(
+                contract.get(
+                    "code_hash",
+                    compute_contract_code_hash(
+                        contract.get("program", []),
+                        contract.get("metadata", {}),
+                    ),
+                )
+            ).strip().lower()
+            if code_hash != expected_code_hash:
+                return "authorize transaction code_hash does not match deployed contract"
+
+        raw_request_id = transaction.payload.get("request_id")
+        if not isinstance(raw_request_id, str) or not raw_request_id.strip():
+            return "authorize transaction request_id must be a non-empty string"
+        if len(raw_request_id.strip()) > MAX_AUTHORIZATION_REQUEST_ID_LENGTH:
+            return (
+                "authorize transaction request_id must be at most "
+                f"{MAX_AUTHORIZATION_REQUEST_ID_LENGTH} characters"
+            )
+
+        try:
+            UvmAuthorizationScope.from_dict(transaction.payload.get("scope", {}))
+        except ValueError as error:
+            return f"authorize transaction scope is invalid: {error}"
+
+        return None
+
+    @staticmethod
+    def _build_chain_authorization_index(
+        state: ChainState,
+        *,
+        contract_address: str,
+        code_hash: str,
+        block_height: int | None,
+    ) -> dict[str, dict[str, dict]]:
+        authorization_index: dict[str, dict[str, dict]] = {}
+        for authorization in state.authorizations:
+            if authorization.get("contract_address") != contract_address:
+                continue
+            if str(authorization.get("code_hash", "")).strip().lower() != code_hash:
+                continue
+
+            try:
+                scope = UvmAuthorizationScope.from_dict(
+                    authorization.get("scope", {}),
+                )
+            except ValueError:
+                continue
+            if scope.validation_error(block_height) is not None:
+                continue
+
+            wallet = str(authorization.get("wallet", "")).strip()
+            request_id = str(authorization.get("request_id", "")).strip()
+            if not wallet or not request_id:
+                continue
+            authorization_index.setdefault(wallet, {})[request_id] = scope.to_dict()
+
+        return {
+            wallet: {
+                request_id: authorization_index[wallet][request_id]
+                for request_id in sorted(authorization_index[wallet])
+            }
+            for wallet in sorted(authorization_index)
+        }
 
     @staticmethod
     def _validate_commit_transaction_error(
@@ -1278,3 +1428,13 @@ class Blockchain:
         if not signature_is_valid:
             return "transaction signature verification failed"
         return None
+
+
+def _is_hex_hash(value: str) -> bool:
+    if len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True

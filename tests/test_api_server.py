@@ -153,6 +153,63 @@ class NodeApiServerTests(unittest.TestCase):
             "noop",
         )
 
+    def test_control_authorize_records_on_chain_authorization(self) -> None:
+        deploy_response = self.client.post(
+            "/api/v1/control/contracts/deploy",
+            json={
+                "fee": "0",
+                "program": [["HALT"]],
+                "metadata": {"request_ids": ["casino-play-1"]},
+            },
+        )
+        self.assertEqual(deploy_response.status_code, 200)
+        contract_address = deploy_response.json()["contract_address"]
+        code_hash = deploy_response.json()["code_hash"]
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "deploy contract"},
+        )
+
+        authorize_response = self.client.post(
+            "/api/v1/control/contracts/authorize",
+            json={
+                "contract_address": contract_address,
+                "request_id": "casino-play-1",
+                "fee": "0",
+                "valid_for_blocks": "3",
+            },
+        )
+        self.assertEqual(authorize_response.status_code, 200)
+        self.assertEqual(
+            authorize_response.json()["transaction"]["kind"],
+            "authorize",
+        )
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "authorize contract"},
+        )
+
+        authorizations_response = self.client.get("/api/v1/authorizations")
+        self.assertEqual(authorizations_response.status_code, 200)
+        body = authorizations_response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(
+            body["authorizations"],
+            [
+                {
+                    "wallet": self.miner_wallet.address,
+                    "contract_address": contract_address,
+                    "code_hash": code_hash,
+                    "request_id": "casino-play-1",
+                    "scope": {
+                        "valid_from_height": 3,
+                        "valid_until_height": 5,
+                    },
+                    "authorized_at_height": 3,
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,15 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import mock
 
-import node.authorization_store as authorization_store
-import node.message_store as message_store
 from core.blockchain import Blockchain
 from core.contracts import compute_contract_code_hash
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
+from core.transaction import TRANSACTION_KIND_AUTHORIZE
 from core.transaction import Transaction
 from node.node import Node
 from wallet import create_wallet
@@ -265,7 +263,7 @@ class NodeDeployTransactionTests(unittest.TestCase):
         self.assertEqual(contract["program"], contract_source["program"])
         self.assertEqual(contract["metadata"], contract_source["metadata"])
 
-    def test_node_creates_contract_bound_authorization_receipt(self) -> None:
+    def test_node_creates_and_mines_contract_authorization_transaction(self) -> None:
         blockchain = create_blockchain()
         wallet = create_wallet(name="wallet")
         node = Node(
@@ -285,25 +283,54 @@ class NodeDeployTransactionTests(unittest.TestCase):
             description="deploy contract",
         )
 
-        authorization = node.create_uvm_authorization_receipt(
+        authorization_transaction = node.create_signed_authorization(
             contract_address=deploy_transaction.receiver,
             request_id="casino-play-1",
+            fee="0",
             valid_for_blocks="2",
         )
+        expected_scope = {
+            "valid_from_height": blockchain.blocks[-1].block_id + 1,
+            "valid_until_height": blockchain.blocks[-1].block_id + 2,
+        }
 
-        self.assertEqual(authorization["wallet"], wallet.address)
-        self.assertEqual(authorization["contract_address"], deploy_transaction.receiver)
-        self.assertEqual(authorization["code_hash"], deploy_transaction.payload["code_hash"])
-        self.assertEqual(authorization["request_id"], "casino-play-1")
+        self.assertEqual(authorization_transaction.kind, TRANSACTION_KIND_AUTHORIZE)
+        self.assertEqual(authorization_transaction.receiver, deploy_transaction.receiver)
+        self.assertEqual(authorization_transaction.amount, Decimal("0.0"))
+        self.assertEqual(authorization_transaction.fee, Decimal("0"))
         self.assertEqual(
-            authorization["scope"],
-            {
-                "valid_from_height": blockchain.blocks[-1].block_id + 1,
-                "valid_until_height": blockchain.blocks[-1].block_id + 2,
-            },
+            authorization_transaction.payload["code_hash"],
+            deploy_transaction.payload["code_hash"],
+        )
+        self.assertEqual(authorization_transaction.payload["scope"], expected_scope)
+
+        accepted, reason = node._handle_incoming_transaction(authorization_transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="authorize contract",
         )
 
-    def test_node_stores_authorization_message_and_auto_includes_on_execute(self) -> None:
+        authorizations = blockchain.get_authorizations(
+            contract_address=deploy_transaction.receiver,
+            request_id="casino-play-1",
+            wallet=wallet.address,
+        )
+        self.assertEqual(len(authorizations), 1)
+        self.assertEqual(authorizations[0]["wallet"], wallet.address)
+        self.assertEqual(
+            authorizations[0]["contract_address"],
+            deploy_transaction.receiver,
+        )
+        self.assertEqual(
+            authorizations[0]["code_hash"],
+            deploy_transaction.payload["code_hash"],
+        )
+        self.assertEqual(authorizations[0]["request_id"], "casino-play-1")
+        self.assertEqual(authorizations[0]["scope"], expected_scope)
+        self.assertEqual(authorizations[0]["authorized_at_height"], 2)
+
+    def test_execute_uses_on_chain_authorization_transactions(self) -> None:
         blockchain = create_blockchain()
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")
@@ -344,47 +371,30 @@ class NodeDeployTransactionTests(unittest.TestCase):
             description="deploy contract",
         )
 
-        original_authorizations_dir = authorization_store.AUTHORIZATIONS_DIR
-        original_msgs_dir = message_store.MSGS_DIR
-        with (
-            TemporaryDirectory() as authorizations_dir,
-            TemporaryDirectory() as messages_dir,
-        ):
-            authorization_store.AUTHORIZATIONS_DIR = Path(authorizations_dir)
-            message_store.MSGS_DIR = Path(messages_dir)
-            try:
-                wallet_message = source_node.create_signed_authorization_message(
-                    receiver=executor.address,
-                    contract_address=deploy_transaction.receiver,
-                    request_id=request_id,
-                    valid_for_blocks="3",
-                )
+        authorization_transaction = source_node.create_signed_authorization(
+            contract_address=deploy_transaction.receiver,
+            request_id=request_id,
+            fee="0",
+            valid_for_blocks="3",
+        )
+        accepted, reason = source_node._handle_incoming_transaction(
+            authorization_transaction,
+        )
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="authorize transfer source",
+        )
 
-                with mock.patch.object(
-                    executor_node,
-                    "_print_network_notification",
-                ):
-                    self.assertTrue(executor_node._handle_wallet_message(wallet_message))
-                stored_authorizations = authorization_store.load_authorizations(
-                    executor.address,
-                )
-                self.assertEqual(len(stored_authorizations), 1)
-                self.assertEqual(stored_authorizations[0]["wallet"], source.address)
-
-                execute_transaction = executor_node.create_signed_execute(
-                    contract_address=deploy_transaction.receiver,
-                    input_data=[],
-                    gas_limit="100",
-                    gas_price="0",
-                    value="0",
-                    fee="0",
-                    authorizations=[],
-                )
-            finally:
-                authorization_store.AUTHORIZATIONS_DIR = original_authorizations_dir
-                message_store.MSGS_DIR = original_msgs_dir
-
-        self.assertEqual(len(execute_transaction.payload["authorizations"]), 1)
+        execute_transaction = executor_node.create_signed_execute(
+            contract_address=deploy_transaction.receiver,
+            input_data=[],
+            gas_limit="100",
+            gas_price="0",
+            value="0",
+            fee="0",
+        )
+        self.assertNotIn("authorizations", execute_transaction.payload)
         accepted, reason = executor_node._handle_incoming_transaction(
             execute_transaction,
         )
@@ -473,7 +483,6 @@ class NodeDeployTransactionTests(unittest.TestCase):
             gas_price="0",
             value="0",
             fee="0",
-            authorizations=[],
         )
 
         accepted, reason = node._handle_incoming_transaction(execute_transaction)

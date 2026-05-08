@@ -113,7 +113,7 @@ class CoinflipEndToEndTests(unittest.TestCase):
         contract_address, _program, _metadata = self._deploy_coinflip(
             reveal_deadline=self.blockchain.blocks[-1].block_id + 10,
         )
-        authorizations = self._authorizations(contract_address)
+        self._authorize(contract_address)
         self._commit_and_reveal(self.node_a, self.player_a, seed=12345, salt="a")
         self._commit_and_reveal(self.node_b, self.player_b, seed=67890, salt="b")
 
@@ -124,7 +124,6 @@ class CoinflipEndToEndTests(unittest.TestCase):
             gas_price="0.01",
             value="0",
             fee="20.00",
-            authorizations=authorizations,
         )
         execute_transaction_id = self._accept(execute_transaction, "execute coinflip")
         self._mine("execute coinflip")
@@ -173,7 +172,6 @@ class CoinflipEndToEndTests(unittest.TestCase):
             gas_price="0",
             value="0",
             fee="0",
-            authorizations=authorizations,
         )
         replay_transaction_id = self._accept(replay_transaction, "replay coinflip")
         self._mine("replay coinflip")
@@ -192,7 +190,7 @@ class CoinflipEndToEndTests(unittest.TestCase):
         contract_address, _program, _metadata = self._deploy_coinflip(
             reveal_deadline=reveal_deadline,
         )
-        authorizations = self._authorizations(contract_address)
+        self._authorize(contract_address)
         self._commit_and_reveal(self.node_a, self.player_a, seed=12345, salt="a")
 
         execute_transaction = self.node_a.create_signed_execute(
@@ -202,7 +200,6 @@ class CoinflipEndToEndTests(unittest.TestCase):
             gas_price="0",
             value="0",
             fee="0",
-            authorizations=authorizations,
         )
         execute_transaction_id = self._accept(execute_transaction, "execute timeout")
         execute_height = self._mine("execute timeout")
@@ -255,19 +252,16 @@ class CoinflipEndToEndTests(unittest.TestCase):
         self.assertIsNotNone(self.blockchain.get_contract(deploy_transaction.receiver))
         return deploy_transaction.receiver, program, metadata
 
-    def _authorizations(self, contract_address: str) -> list[dict]:
-        return [
-            self.node_a.create_uvm_authorization_receipt(
+    def _authorize(self, contract_address: str) -> None:
+        for node in (self.node_a, self.node_b):
+            authorization_transaction = node.create_signed_authorization(
                 contract_address=contract_address,
                 request_id=REQUEST_ID,
+                fee="0",
                 valid_for_blocks="10",
-            ),
-            self.node_b.create_uvm_authorization_receipt(
-                contract_address=contract_address,
-                request_id=REQUEST_ID,
-                valid_for_blocks="10",
-            ),
-        ]
+            )
+            self._accept(authorization_transaction, "authorize coinflip")
+            self._mine("authorize coinflip")
 
     def _commit_and_reveal(
         self,

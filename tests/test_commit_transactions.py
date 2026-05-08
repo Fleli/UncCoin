@@ -8,7 +8,6 @@ from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
-from core.uvm_authorization import create_uvm_authorization
 from node.node import Node
 from wallet import create_wallet
 
@@ -155,6 +154,24 @@ class CommitTransactionTests(unittest.TestCase):
             ["HALT"],
         ]
         contract_address = "contract-address"
+        authorize_transaction = sign_transaction(
+            authorizer,
+            Transaction.authorize(
+                sender=authorizer.address,
+                contract_address=contract_address,
+                code_hash=compute_contract_code_hash(program, {}),
+                request_id="casino-play-1",
+                fee=Decimal("0"),
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(authorizer.address),
+                sender_public_key=authorizer.public_key,
+            ),
+        )
+        blockchain.add_transaction(authorize_transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="authorize commit read",
+        )
         transaction = sign_transaction(
             wallet,
             Transaction.execute(
@@ -164,14 +181,6 @@ class CommitTransactionTests(unittest.TestCase):
                 value=Decimal("0"),
                 fee=Decimal("0.5"),
                 gas_limit=10_000,
-                authorizations=[
-                    create_uvm_authorization(
-                        authorizer,
-                        "casino-play-1",
-                        contract_address=contract_address,
-                        code_hash=compute_contract_code_hash(program, {}),
-                    ).to_dict()
-                ],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(wallet.address),
                 sender_public_key=wallet.public_key,
@@ -232,7 +241,7 @@ class CommitTransactionTests(unittest.TestCase):
             {"height": expected_execution_height},
         )
 
-    def test_execute_rejects_invalid_authorization_before_uvm_execution(self) -> None:
+    def test_execute_fails_without_on_chain_authorization(self) -> None:
         blockchain = create_blockchain()
         wallet = create_wallet(name="caller")
         authorizer = create_wallet(name="authorizer")
@@ -240,15 +249,12 @@ class CommitTransactionTests(unittest.TestCase):
             miner_address=wallet.address,
             description="fund caller",
         )
-        program = "00"
+        program = [
+            ["READ_COMMIT", authorizer.address, "casino-play-1"],
+            ["STORE", "commitment"],
+            ["HALT"],
+        ]
         contract_address = "contract-address"
-        invalid_authorization = create_uvm_authorization(
-            authorizer,
-            "casino-play-1",
-            contract_address=contract_address,
-            code_hash=compute_contract_code_hash(program, {}),
-        ).to_dict()
-        invalid_authorization["request_id"] = "casino-play-2"
         transaction = sign_transaction(
             wallet,
             Transaction.execute(
@@ -258,15 +264,23 @@ class CommitTransactionTests(unittest.TestCase):
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=10_000,
-                authorizations=[invalid_authorization],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(wallet.address),
                 sender_public_key=wallet.public_key,
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "signature verification failed"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute unauthorized uvm",
+        )
+
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertFalse(receipt["success"])
+        self.assertIn("not authorized", receipt["error"] or "")
 
     def test_execute_records_out_of_gas_runs_and_burns_fuel(self) -> None:
         blockchain = create_blockchain()

@@ -4,32 +4,11 @@ from decimal import Decimal
 
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
-from core.uvm_authorization import build_authorization_index
-from core.uvm_authorization import create_uvm_authorization
 from wallet import create_wallet
 
 
-CONTRACT_ADDRESS = "contract"
-CODE_HASH = "a" * 64
-
-
-def create_authorization(wallet, request_id: str, **kwargs):
-    return create_uvm_authorization(
-        wallet,
-        request_id,
-        contract_address=CONTRACT_ADDRESS,
-        code_hash=CODE_HASH,
-        **kwargs,
-    )
-
-
-def build_index(authorizations, **kwargs):
-    return build_authorization_index(
-        authorizations,
-        contract_address=CONTRACT_ADDRESS,
-        code_hash=CODE_HASH,
-        **kwargs,
-    )
+def build_index(wallet, request_id: str):
+    return {wallet.address: {request_id: {}}}
 
 
 class UvmExecutionTests(unittest.TestCase):
@@ -234,9 +213,7 @@ class UvmExecutionTests(unittest.TestCase):
 
     def test_read_commit_pushes_authorized_commitment_hash_as_integer(self) -> None:
         wallet = create_wallet(name="authorizer")
-        authorization_index = build_index(
-            [create_authorization(wallet, "casino-play-1")]
-        )
+        authorization_index = build_index(wallet, "casino-play-1")
 
         result = execute_uvm_program(
             [
@@ -382,9 +359,7 @@ class UvmExecutionTests(unittest.TestCase):
     def test_transfer_from_debits_authorized_source_and_credits_receiver(self) -> None:
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")
-        authorization_index = build_index(
-            [create_authorization(source, "casino-payout-1")]
-        )
+        authorization_index = build_index(source, "casino-payout-1")
 
         result = execute_uvm_program(
             [
@@ -487,9 +462,7 @@ class UvmExecutionTests(unittest.TestCase):
 
     def test_require_auth_fails_without_matching_request_id(self) -> None:
         wallet = create_wallet(name="authorizer")
-        authorization_index = build_index(
-            [create_authorization(wallet, "casino-play-1")]
-        )
+        authorization_index = build_index(wallet, "casino-play-1")
 
         result = execute_uvm_program(
             [

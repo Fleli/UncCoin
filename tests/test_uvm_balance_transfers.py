@@ -8,7 +8,6 @@ from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
-from core.uvm_authorization import create_uvm_authorization
 from wallet import create_wallet
 
 
@@ -26,13 +25,27 @@ def sign_transaction(wallet, transaction: Transaction) -> Transaction:
     return transaction
 
 
-def create_authorization(wallet, request_id: str, contract_address: str, program, **kwargs):
-    return create_uvm_authorization(
+def create_authorization_transaction(
+    wallet,
+    request_id: str,
+    contract_address: str,
+    program,
+    blockchain: Blockchain,
+    scope: dict | None = None,
+) -> Transaction:
+    return sign_transaction(
         wallet,
-        request_id,
-        contract_address=contract_address,
-        code_hash=compute_contract_code_hash(program, {}),
-        **kwargs,
+        Transaction.authorize(
+            sender=wallet.address,
+            contract_address=contract_address,
+            code_hash=compute_contract_code_hash(program, {}),
+            request_id=request_id,
+            scope=scope or {},
+            fee=Decimal("0"),
+            timestamp=datetime.now(),
+            nonce=blockchain.get_next_nonce(wallet.address),
+            sender_public_key=wallet.public_key,
+        ),
     )
 
 
@@ -53,6 +66,19 @@ class UvmBalanceTransferTests(unittest.TestCase):
             miner_address=source.address,
             description="fund source",
         )
+        blockchain.add_transaction(
+            create_authorization_transaction(
+                source,
+                request_id,
+                contract_address,
+                program,
+                blockchain,
+            )
+        )
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="authorize payout",
+        )
         transaction = sign_transaction(
             caller,
             Transaction.execute(
@@ -62,14 +88,6 @@ class UvmBalanceTransferTests(unittest.TestCase):
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,
-                authorizations=[
-                    create_authorization(
-                        source,
-                        request_id,
-                        contract_address,
-                        program,
-                    ).to_dict()
-                ],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(caller.address),
                 sender_public_key=caller.public_key,
@@ -219,6 +237,19 @@ class UvmBalanceTransferTests(unittest.TestCase):
             description="fund source",
         )
         current_height = blockchain.blocks[-1].block_id
+        blockchain.add_transaction(
+            create_authorization_transaction(
+                source,
+                request_id,
+                contract_address,
+                program,
+                blockchain,
+                scope={
+                    "valid_from_height": current_height + 1,
+                    "valid_until_height": current_height + 1,
+                },
+            )
+        )
         transaction = sign_transaction(
             caller,
             Transaction.execute(
@@ -228,16 +259,6 @@ class UvmBalanceTransferTests(unittest.TestCase):
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,
-                authorizations=[
-                    create_authorization(
-                        source,
-                        request_id,
-                        contract_address,
-                        program,
-                        current_height=current_height,
-                        valid_for_blocks=1,
-                    ).to_dict()
-                ],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(caller.address),
                 sender_public_key=caller.public_key,
@@ -270,14 +291,23 @@ class UvmBalanceTransferTests(unittest.TestCase):
             description="fund source",
         )
         current_height = blockchain.blocks[-1].block_id
-        authorization = create_authorization(
-            source,
-            request_id,
-            contract_address,
-            program,
-            current_height=current_height,
-            valid_for_blocks=1,
-        ).to_dict()
+        blockchain.add_transaction(
+            create_authorization_transaction(
+                source,
+                request_id,
+                contract_address,
+                program,
+                blockchain,
+                scope={
+                    "valid_from_height": current_height + 1,
+                    "valid_until_height": current_height + 1,
+                },
+            )
+        )
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="include short authorization",
+        )
         blockchain.mine_pending_transactions(
             miner_address="miner",
             description="advance past authorization window",
@@ -291,18 +321,25 @@ class UvmBalanceTransferTests(unittest.TestCase):
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,
-                authorizations=[authorization],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(caller.address),
                 sender_public_key=caller.public_key,
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "expired at block"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute with expired authorization",
+        )
 
         self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
         self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertFalse(receipt["success"])
+        self.assertIn("not authorized", receipt["error"] or "")
 
     def test_execute_refunds_unused_fuel_escrow_for_sender_transfer(self) -> None:
         blockchain = create_blockchain()

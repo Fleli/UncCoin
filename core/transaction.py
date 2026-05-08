@@ -16,6 +16,7 @@ TRANSACTION_KIND_EXECUTE = "execute"
 TRANSACTION_KIND_COMMIT = "commit"
 TRANSACTION_KIND_REVEAL = "reveal"
 TRANSACTION_KIND_DEPLOY = "deploy"
+TRANSACTION_KIND_AUTHORIZE = "authorize"
 
 
 def _canonicalize_payload(value: Any) -> Any:
@@ -98,7 +99,6 @@ class Transaction:
         value: Decimal | str = Decimal("0.0"),
         gas_limit: int = 0,
         gas_price: Decimal | str = Decimal("0.0"),
-        authorizations: list[dict[str, Any]] | None = None,
         sender_public_key: tuple[int, int] | None = None,
         signature: str | None = None,
     ) -> "Transaction":
@@ -118,7 +118,38 @@ class Transaction:
                 "value": str(Decimal(str(value))),
                 "gas_limit": int(gas_limit),
                 "gas_price": str(Decimal(str(gas_price))),
-                "authorizations": authorizations or [],
+            },
+        )
+
+    @classmethod
+    def authorize(
+        cls,
+        sender: str,
+        contract_address: str,
+        code_hash: str,
+        request_id: str,
+        fee: Decimal | str,
+        timestamp: datetime,
+        nonce: int = 0,
+        scope: dict[str, Any] | None = None,
+        sender_public_key: tuple[int, int] | None = None,
+        signature: str | None = None,
+    ) -> "Transaction":
+        return cls(
+            sender=sender,
+            receiver=contract_address,
+            amount=Decimal("0.0"),
+            fee=fee,
+            timestamp=timestamp,
+            nonce=nonce,
+            sender_public_key=sender_public_key,
+            signature=signature,
+            kind=TRANSACTION_KIND_AUTHORIZE,
+            payload={
+                "contract_address": contract_address,
+                "code_hash": code_hash.strip().lower(),
+                "request_id": request_id,
+                "scope": scope or {},
             },
         )
 

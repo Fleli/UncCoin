@@ -51,8 +51,7 @@ commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
 deploy <fee> <json-or-file>
 view-contract <contract>
-authorize <contract> <request-id> [valid-blocks]
-authorize-to <wallet> <contract> <request-id> [valid-blocks]
+authorize <contract> <request-id> <fee> [valid-blocks]
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
 msg <wallet> <content>
@@ -104,30 +103,25 @@ you do not want pushed. For example, `deploy 0 coinflip.uvm` deploys
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
 program by exact address or unique address prefix.
 
-`authorize` prints and locally stores a signed off-chain UVM consent receipt for a deployed
-contract and request id. `authorize-to` wraps that receipt in a signed wallet message for an
-executor wallet. When the executor's node receives the message, it validates the outer wallet
-message and inner UVM authorization, then stores the authorization in ignored
-`state/authorizations`. Manual receipt passing still works by including receipts in the
-`authorizations` list of an `execute` transaction.
+`authorize` broadcasts an on-chain UVM consent transaction for a deployed contract and request
+id. The authorization is bound to the authorizing wallet, contract address, contract code hash,
+request id, and optional block-height scope. Once mined, every synced node can use it during
+execution.
 
 `execute` runs deployed UVM code, or inline code when no deployed contract exists. The execute
-JSON can be a program directly or an object with `input` and `authorizations` fields. Execute
-transactions automatically include locally stored authorizations that match the deployed
-contract address, code hash, and current block-height scope.
+JSON can be a program directly or an object with an `input` field. Execute transactions read
+matching on-chain authorizations from chain state.
 
 `receipt` prints a UVM execution receipt by transaction id or unique transaction-id prefix.
 
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
-the contract address, gas limit, optional value, max fee escrow, gas price, and signed request
-authorizations bound to `wallet + contract_address + code_hash + request_id`. If the contract
+the contract address, gas limit, optional value, max fee escrow, and gas price. If the contract
 address has deployed code, that deployed program runs; otherwise `execute` can still carry an
 inline program for compatibility.
 
 UVM authorizations may be scoped with `valid_from_height` and `valid_until_height`. Height
-limits make the authorization valid only for specific block heights;
-`create_uvm_authorization(..., current_height=<h>, valid_for_blocks=<n>)` signs a window for
-the next `n` blocks, from `h + 1` through `h + n`.
+limits make the authorization valid only for specific block heights. The CLI `valid-blocks`
+argument authorizes the next `n` blocks, from current height + 1 through current height + n.
 
 ## UncCoin Virtual Machine
 
@@ -146,9 +140,9 @@ Example program:
 ]
 ```
 
-`READ_COMMIT <wallet> <request_id>` is protected: the execute transaction must include a
-valid UVM authorization signature from `<wallet>` for that exact `<request_id>`. Missing or
-invalid authorization makes execution invalid.
+`READ_COMMIT <wallet> <request_id>` is protected: chain state must contain a valid on-chain
+authorization from `<wallet>` for that exact contract code hash and `<request_id>`. Missing or
+expired authorization makes execution invalid.
 
 `READ_REVEAL <wallet> <request_id>` reads a public revealed seed and pushes it as a stack
 integer.

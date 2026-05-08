@@ -79,21 +79,13 @@ class ExecuteRequest(BaseModel):
     value: str = "0"
     fee: str = "0"
     input: Any | None = None
-    authorizations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AuthorizationRequest(BaseModel):
     contract_address: str
     request_id: str
+    fee: str = "0"
     valid_for_blocks: str | None = None
-
-
-class SendAuthorizationRequest(AuthorizationRequest):
-    receiver: str
-
-
-class StoreAuthorizationRequest(BaseModel):
-    authorization: dict[str, Any]
 
 
 def create_api_app(node: "Node") -> FastAPI:
@@ -326,16 +318,15 @@ def create_api_app(node: "Node") -> FastAPI:
 
     @app.get(f"{API_PREFIX}/authorizations")
     def authorizations() -> dict[str, Any]:
-        if node.wallet is None:
-            return {"count": 0, "authorizations": []}
-        try:
-            from node.authorization_store import load_authorizations
-        except ImportError:
-            return {"count": 0, "authorizations": []}
-        stored_authorizations = load_authorizations(node.wallet.address)
+        state = _current_state(node)
         return {
-            "count": len(stored_authorizations),
-            "authorizations": stored_authorizations,
+            "tip_hash": _state_tip_hash(node),
+            "height": state.height,
+            "count": len(state.authorizations),
+            "authorizations": [
+                _jsonable(authorization)
+                for authorization in state.authorizations
+            ],
         }
 
     @app.post(f"{API_PREFIX}/control/peers/connect")
@@ -486,7 +477,6 @@ def create_api_app(node: "Node") -> FastAPI:
                 gas_price=request.gas_price,
                 value=request.value,
                 fee=request.fee,
-                authorizations=request.authorizations,
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -495,46 +485,20 @@ def create_api_app(node: "Node") -> FastAPI:
         return result
 
     @app.post(f"{API_PREFIX}/control/contracts/authorize")
-    def authorize_contract(request: AuthorizationRequest) -> dict[str, Any]:
+    async def authorize_contract(request: AuthorizationRequest) -> dict[str, Any]:
         try:
-            authorization = node.create_uvm_authorization_receipt(
+            transaction = node.create_signed_authorization(
                 contract_address=request.contract_address,
                 request_id=request.request_id,
+                fee=request.fee,
                 valid_for_blocks=request.valid_for_blocks,
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        return {"authorization": authorization}
-
-    @app.post(f"{API_PREFIX}/control/authorizations/store")
-    def store_authorization(request: StoreAuthorizationRequest) -> dict[str, Any]:
-        store_authorization_receipt = getattr(node, "store_uvm_authorization_receipt", None)
-        if not callable(store_authorization_receipt):
-            raise HTTPException(status_code=404, detail="authorization storage is unavailable")
-        try:
-            stored = store_authorization_receipt(request.authorization)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        return {"stored": bool(stored)}
-
-    @app.post(f"{API_PREFIX}/control/authorizations/send")
-    async def send_authorization(request: SendAuthorizationRequest) -> dict[str, Any]:
-        create_authorization_message = getattr(node, "create_signed_authorization_message", None)
-        if not callable(create_authorization_message):
-            raise HTTPException(status_code=404, detail="authorization messages are unavailable")
-        try:
-            message = create_authorization_message(
-                receiver=node.resolve_wallet_reference(request.receiver),
-                contract_address=request.contract_address,
-                request_id=request.request_id,
-                valid_for_blocks=request.valid_for_blocks,
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        accepted, reason = await node.p2p_server.broadcast_wallet_message(message)
-        if not accepted:
-            raise HTTPException(status_code=400, detail=reason or "authorization message rejected")
-        return {"message": message}
+        result = await _broadcast_transaction(node, transaction)
+        result["contract_address"] = transaction.receiver
+        result["request_id"] = request.request_id
+        return result
 
     return app
 

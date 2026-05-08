@@ -5,6 +5,7 @@ from decimal import Decimal
 from core.contracts import compute_contract_address
 from core.contracts import compute_contract_code_hash
 from core.serialization import serialize_transaction
+from core.transaction import TRANSACTION_KIND_AUTHORIZE
 from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_DEPLOY
 from core.transaction import TRANSACTION_KIND_EXECUTE
@@ -13,8 +14,6 @@ from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import TRANSACTION_VERSION_LEGACY
 from core.transaction import TRANSACTION_VERSION_TYPED
 from core.transaction import Transaction
-from core.uvm_authorization import create_uvm_authorization
-from wallet import create_wallet
 
 
 class TransactionModelTests(unittest.TestCase):
@@ -126,13 +125,6 @@ class TransactionModelTests(unittest.TestCase):
 
     def test_execute_constructor_carries_future_uvm_payload(self) -> None:
         timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
-        wallet = create_wallet(name="authorizer")
-        authorization = create_uvm_authorization(
-            wallet,
-            "casino-play-1",
-            contract_address="contract-1",
-            code_hash="a" * 64,
-        ).to_dict()
 
         transaction = Transaction.execute(
             sender="alice",
@@ -141,7 +133,6 @@ class TransactionModelTests(unittest.TestCase):
             value=Decimal("2"),
             fee=Decimal("0.2"),
             gas_limit=50_000,
-            authorizations=[authorization],
             timestamp=timestamp,
             nonce=4,
         )
@@ -157,7 +148,39 @@ class TransactionModelTests(unittest.TestCase):
                 "value": "2",
                 "gas_limit": 50_000,
                 "gas_price": "0.0",
-                "authorizations": [authorization],
+            },
+        )
+
+    def test_authorize_constructor_records_contract_request_and_scope(self) -> None:
+        timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
+
+        transaction = Transaction.authorize(
+            sender="alice",
+            contract_address="contract-1",
+            code_hash="a" * 64,
+            request_id="casino-play-1",
+            scope={
+                "valid_from_height": 10,
+                "valid_until_height": 20,
+            },
+            fee=Decimal("0.1"),
+            timestamp=timestamp,
+            nonce=5,
+        )
+
+        self.assertEqual(transaction.kind, TRANSACTION_KIND_AUTHORIZE)
+        self.assertEqual(transaction.receiver, "contract-1")
+        self.assertEqual(transaction.amount, Decimal("0.0"))
+        self.assertEqual(
+            transaction.payload,
+            {
+                "contract_address": "contract-1",
+                "code_hash": "a" * 64,
+                "request_id": "casino-play-1",
+                "scope": {
+                    "valid_from_height": 10,
+                    "valid_until_height": 20,
+                },
             },
         )
 

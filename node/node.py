@@ -23,12 +23,9 @@ from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
 from core.randomness import create_reveal_commitment_hash
 from core.transaction import Transaction
-from core.uvm_authorization import UvmAuthorization
-from core.uvm_authorization import create_uvm_authorization
+from core.uvm_authorization import UvmAuthorizationScope
 from core.utils.constants import MINING_REWARD_SENDER
 from node.alias_store import load_aliases, save_aliases
-from node.authorization_store import add_authorization
-from node.authorization_store import load_authorizations
 from network.p2p_server import P2PServer
 from node.message_store import load_messages, save_messages
 from node.storage import load_blockchain_state, save_blockchain_state, write_blockchain_state
@@ -65,8 +62,6 @@ class Node:
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
-    UVM_AUTHORIZATION_MESSAGE_TYPE = "uvm_authorization"
-    UVM_AUTHORIZATION_MESSAGE_VERSION = 1
 
     def __post_init__(self) -> None:
         if self.blockchain is None:
@@ -310,7 +305,6 @@ class Node:
         gas_price: str,
         value: str,
         fee: str,
-        authorizations: list[dict] | None = None,
     ) -> Transaction:
         if self.wallet is None:
             raise ValueError("A loaded wallet is required to execute contracts.")
@@ -326,11 +320,6 @@ class Node:
                 "must be valid decimal numbers."
             ) from error
 
-        resolved_authorizations = self._merge_uvm_authorizations(
-            authorizations or [],
-            self.matching_stored_uvm_authorizations(contract_address),
-        )
-
         transaction = Transaction.execute(
             sender=self.wallet.address,
             contract_address=contract_address,
@@ -339,7 +328,6 @@ class Node:
             fee=parsed_fee,
             gas_limit=parsed_gas_limit,
             gas_price=parsed_gas_price,
-            authorizations=resolved_authorizations,
             timestamp=datetime.now(),
             nonce=self.get_next_nonce(self.wallet.address),
             sender_public_key=self.wallet.public_key,
@@ -347,79 +335,22 @@ class Node:
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
 
-    def matching_stored_uvm_authorizations(self, contract_address: str) -> list[dict]:
-        if self.wallet is None or self.blockchain is None:
-            return []
-
-        contract = self.blockchain.get_contract(
-            contract_address,
-            tip_hash=self._state_tip_hash(),
-        )
-        if contract is None:
-            return []
-
-        code_hash = str(
-            contract.get(
-                "code_hash",
-                compute_contract_code_hash(
-                    contract.get("program", []),
-                    contract.get("metadata", {}),
-                ),
-            )
-        ).strip()
-        execution_block_height = (
-            self.blockchain._get_state_for_tip(self._state_tip_hash()).height + 1
-        )
-        matching_authorizations: list[dict] = []
-        for authorization in load_authorizations(self.wallet.address):
-            try:
-                parsed_authorization = UvmAuthorization.from_dict(authorization)
-            except (KeyError, TypeError, ValueError):
-                continue
-
-            if (
-                parsed_authorization.validation_error(
-                    contract_address=contract_address,
-                    code_hash=code_hash,
-                    block_height=execution_block_height,
-                )
-                is None
-            ):
-                matching_authorizations.append(parsed_authorization.to_dict())
-
-        return matching_authorizations
-
-    @staticmethod
-    def _merge_uvm_authorizations(
-        explicit_authorizations: list[dict],
-        stored_authorizations: list[dict],
-    ) -> list[dict]:
-        merged_authorizations: list[dict] = []
-        seen_authorizations: set[str] = set()
-        for authorization in [*explicit_authorizations, *stored_authorizations]:
-            authorization_key = json.dumps(
-                authorization,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            if authorization_key in seen_authorizations:
-                continue
-            seen_authorizations.add(authorization_key)
-            merged_authorizations.append(authorization)
-        return merged_authorizations
-
-    def create_uvm_authorization_receipt(
+    def create_signed_authorization(
         self,
         contract_address: str,
         request_id: str,
+        fee: str,
         valid_for_blocks: str | None = None,
-    ) -> dict:
+    ) -> Transaction:
         if self.wallet is None:
             raise ValueError("A loaded wallet is required to authorize contracts.")
         if self.blockchain is None:
             raise ValueError("A blockchain is required to authorize contracts.")
 
-        contract = self.blockchain.get_contract(contract_address)
+        contract = self.blockchain.get_contract(
+            contract_address,
+            tip_hash=self._state_tip_hash(),
+        )
         if contract is None:
             raise ValueError(f"Contract {contract_address} is not deployed locally.")
         code_hash = str(
@@ -434,59 +365,42 @@ class Node:
         if not code_hash:
             raise ValueError(f"Contract {contract_address} does not have a code_hash.")
 
-        current_height = (
-            self.blockchain.blocks[-1].block_id
-            if self.blockchain.blocks
-            else -1
-        )
-        kwargs = {}
-        if valid_for_blocks is not None:
-            kwargs["valid_for_blocks"] = valid_for_blocks
-            kwargs["current_height"] = current_height
+        try:
+            parsed_fee = Decimal(str(fee))
+        except InvalidOperation as error:
+            raise ValueError("Fee must be a valid decimal number.") from error
 
-        return create_uvm_authorization(
-            self.wallet,
-            request_id,
+        scope = {}
+        if valid_for_blocks is not None:
+            try:
+                parsed_valid_for_blocks = int(valid_for_blocks)
+            except ValueError as error:
+                raise ValueError("valid-blocks must be an integer.") from error
+            if parsed_valid_for_blocks <= 0:
+                raise ValueError("valid-blocks must be positive.")
+            current_height = (
+                self.blockchain._get_state_for_tip(self._state_tip_hash()).height
+            )
+            scope = UvmAuthorizationScope.from_dict(
+                {
+                    "valid_from_height": current_height + 1,
+                    "valid_until_height": current_height + parsed_valid_for_blocks,
+                }
+            ).to_dict()
+
+        transaction = Transaction.authorize(
+            sender=self.wallet.address,
             contract_address=contract_address,
             code_hash=code_hash,
-            **kwargs,
-        ).to_dict()
-
-    def create_signed_authorization_message(
-        self,
-        receiver: str,
-        contract_address: str,
-        request_id: str,
-        valid_for_blocks: str | None = None,
-    ) -> dict:
-        authorization = self.create_uvm_authorization_receipt(
-            contract_address=contract_address,
             request_id=request_id,
-            valid_for_blocks=valid_for_blocks,
+            scope=scope,
+            fee=parsed_fee,
+            timestamp=datetime.now(),
+            nonce=self.get_next_nonce(self.wallet.address),
+            sender_public_key=self.wallet.public_key,
         )
-        content = json.dumps(
-            {
-                "type": self.UVM_AUTHORIZATION_MESSAGE_TYPE,
-                "version": self.UVM_AUTHORIZATION_MESSAGE_VERSION,
-                "authorization": authorization,
-            },
-            sort_keys=True,
-        )
-        return self.create_signed_wallet_message(receiver, content)
-
-    def store_uvm_authorization_receipt(self, authorization: dict) -> bool:
-        if self.wallet is None:
-            raise ValueError("A loaded wallet is required to store authorizations.")
-
-        parsed_authorization = UvmAuthorization.from_dict(authorization)
-        validation_error = parsed_authorization.validation_error()
-        if validation_error is not None:
-            raise ValueError(f"authorization is invalid: {validation_error}")
-
-        return add_authorization(
-            self.wallet.address,
-            parsed_authorization.to_dict(),
-        )
+        transaction.signature = self.wallet.sign_message(transaction.signing_payload())
+        return transaction
 
     def create_signed_wallet_message(self, receiver: str, content: str) -> dict:
         if self.wallet is None:
@@ -745,12 +659,10 @@ Commands:
                                   Reveal a seed for a prior commitment
     deploy <fee> <json-or-file>   Deploy UVM code from JSON or state/contracts
     view-contract <contract>      Show deployed UVM contract details
-    authorize <contract> <request-id> [valid-blocks]
-                                  Print and locally store a UVM consent receipt
-    authorize-to <wallet> <contract> <request-id> [valid-blocks]
-                                  Send a UVM consent receipt to an executor
+    authorize <contract> <request-id> <fee> [valid-blocks]
+                                  Broadcast an on-chain UVM consent transaction
     execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
-                                  Execute UVM code with optional/stored authorizations
+                                  Execute UVM code with on-chain authorizations
     receipt <txid-prefix>          Show a UVM execution receipt
     balance [address]             Print one balance
     balances [>amount|<amount]    Print balances, optionally filtered
@@ -1037,58 +949,29 @@ Wallet commands accept either a wallet address or a local alias."""
                     print(f"Invalid view-contract command: {error}")
                 continue
 
-            if line.startswith("authorize-to "):
+            if line.startswith("authorize "):
                 try:
-                    authorize_args = line[len("authorize-to "):].split(
-                        " ",
-                        maxsplit=3,
-                    )
+                    authorize_args = line[len("authorize "):].split(" ", maxsplit=3)
                     if len(authorize_args) not in {3, 4}:
                         raise ValueError(
-                            "Use authorize-to <wallet> <contract> "
-                            "<request-id> [valid-blocks]."
+                            "Use authorize <contract> <request-id> <fee> "
+                            "[valid-blocks]."
                         )
-                    receiver, contract_address, request_id = authorize_args[:3]
+                    contract_address, request_id, fee = authorize_args[:3]
                     valid_for_blocks = (
                         authorize_args[3] if len(authorize_args) == 4 else None
                     )
-                    wallet_message = self.create_signed_authorization_message(
-                        receiver=self.resolve_wallet_reference(receiver),
+                    transaction = self.create_signed_authorization(
                         contract_address=contract_address,
                         request_id=request_id,
+                        fee=fee,
                         valid_for_blocks=valid_for_blocks,
                     )
-                    await self.broadcast_wallet_message(wallet_message)
+                    await self.broadcast_transaction(transaction)
                     print(
-                        "Authorization message broadcast: "
-                        f"{wallet_message['message_id']}"
+                        "Authorize transaction broadcast: "
+                        f"{sha256_transaction_hash(transaction)}"
                     )
-                except ValueError as error:
-                    print(f"Invalid authorize-to command: {error}")
-                continue
-
-            if line.startswith("authorize "):
-                try:
-                    authorize_args = line[len("authorize "):].split(" ", maxsplit=2)
-                    if len(authorize_args) not in {2, 3}:
-                        raise ValueError(
-                            "Use authorize <contract> <request-id> [valid-blocks]."
-                        )
-                    contract_address, request_id = authorize_args[:2]
-                    valid_for_blocks = (
-                        authorize_args[2] if len(authorize_args) == 3 else None
-                    )
-                    authorization = self.create_uvm_authorization_receipt(
-                        contract_address=contract_address,
-                        request_id=request_id,
-                        valid_for_blocks=valid_for_blocks,
-                    )
-                    self.store_uvm_authorization_receipt(authorization)
-                    print(
-                        "Authorization receipt: "
-                        f"{json.dumps(authorization, sort_keys=True)}"
-                    )
-                    print("Authorization stored locally for future execute commands.")
                 except ValueError as error:
                     print(f"Invalid authorize command: {error}")
                 continue
@@ -1112,14 +995,13 @@ Wallet commands accept either a wallet address or a local alias."""
                     execute_payload = json.loads(execute_json)
                     if isinstance(execute_payload, dict):
                         input_data = execute_payload.get("input")
-                        authorizations = execute_payload.get("authorizations", [])
+                        if execute_payload.get("authorizations"):
+                            raise ValueError(
+                                "Execute authorizations are on-chain now; "
+                                "submit authorize transactions before execution."
+                            )
                     else:
                         input_data = execute_payload
-                        authorizations = []
-                    if authorizations is None:
-                        authorizations = []
-                    if not isinstance(authorizations, list):
-                        raise ValueError("Execute authorizations must be a JSON list.")
                     transaction = self.create_signed_execute(
                         contract_address=contract_address,
                         input_data=input_data,
@@ -1127,7 +1009,6 @@ Wallet commands accept either a wallet address or a local alias."""
                         gas_price=gas_price,
                         value=value,
                         fee=fee,
-                        authorizations=authorizations,
                     )
                     await self.broadcast_transaction(transaction)
                     print(
@@ -1321,16 +1202,6 @@ Wallet commands accept either a wallet address or a local alias."""
         ):
             return False
 
-        stored_authorization = False
-        if self.wallet is not None and receiver == self.wallet.address:
-            try:
-                stored_authorization = self._store_uvm_authorization_message(
-                    sender,
-                    content,
-                )
-            except ValueError:
-                return False
-
         if self.wallet is not None and sender == self.wallet.address:
             self._store_wallet_message(
                 {
@@ -1357,42 +1228,8 @@ Wallet commands accept either a wallet address or a local alias."""
                 f"\nMessage from {self.format_wallet_reference(sender)}: {content}",
                 force=True,
             )
-            if stored_authorization:
-                self._print_network_notification(
-                    "\nStored UVM authorization from "
-                    f"{self.format_wallet_reference(sender)}.",
-                    force=True,
-                )
 
         return True
-
-    def _store_uvm_authorization_message(self, sender: str, content: str) -> bool:
-        try:
-            content_data = json.loads(content)
-        except json.JSONDecodeError:
-            return False
-
-        if not isinstance(content_data, dict):
-            return False
-        if content_data.get("type") != self.UVM_AUTHORIZATION_MESSAGE_TYPE:
-            return False
-        if content_data.get("version") != self.UVM_AUTHORIZATION_MESSAGE_VERSION:
-            raise ValueError("unsupported UVM authorization message version")
-
-        authorization_data = content_data.get("authorization")
-        if not isinstance(authorization_data, dict):
-            raise ValueError("UVM authorization message is missing authorization")
-
-        authorization = UvmAuthorization.from_dict(authorization_data)
-        if authorization.wallet != sender:
-            raise ValueError("UVM authorization sender does not match message sender")
-        validation_error = authorization.validation_error()
-        if validation_error is not None:
-            raise ValueError(f"UVM authorization is invalid: {validation_error}")
-
-        if self.wallet is None:
-            return False
-        return add_authorization(self.wallet.address, authorization.to_dict())
 
     def _ensure_genesis_block(self) -> None:
         if self.blockchain is None or self.blockchain.blocks_by_hash:
