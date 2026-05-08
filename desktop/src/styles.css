@@ -1028,9 +1028,45 @@ dd {
   border-color: #3a3332;
 }
 
+.backend-option-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
 .backend-option span {
   color: #f2f5f7;
   font-weight: 760;
+}
+
+.backend-warning-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #806724;
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: #f3d582;
+  background: #221d10;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.backend-option .backend-warning-badge {
+  color: #f3d582;
+}
+
+.backend-warning-icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .backend-option small {

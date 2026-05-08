@@ -200,6 +200,16 @@ function TabIcon({ name }: { name: TabIconName }) {
   }
 }
 
+function WarningIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M10 3.5 17 16H3z" />
+      <path d="M10 7.5v4" />
+      <path d="M10 14h.01" />
+    </svg>
+  );
+}
+
 function emptySnapshot(): Snapshot {
   return {
     nodeInfo: null,
@@ -2636,7 +2646,15 @@ function App() {
                             void handleUseMiningBackend(option.id);
                           }}
                         >
-                          <span>{option.label}</span>
+                          <span className="backend-option-heading">
+                            <span>{option.label}</span>
+                            {!option.available ? (
+                              <span className="backend-warning-badge" title={`${option.label} is not built`}>
+                                <WarningIcon className="backend-warning-icon" />
+                                Not built
+                              </span>
+                            ) : null}
+                          </span>
                           <small>{option.description}</small>
                           <strong>{miningBackendButtonLabel(option, selectedMiningBackend)}</strong>
                         </button>
