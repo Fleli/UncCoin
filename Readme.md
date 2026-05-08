@@ -52,6 +52,7 @@ reveal <request-id> <seed> <fee> [salt]
 deploy <fee> <json-or-file>
 view-contract <contract>
 authorize <contract> <request-id> [valid-blocks]
+authorize-to <wallet> <contract> <request-id> [valid-blocks]
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
 msg <wallet> <content>
@@ -103,12 +104,17 @@ you do not want pushed. For example, `deploy 0 coinflip.uvm` deploys
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
 program by exact address or unique address prefix.
 
-`authorize` prints a signed off-chain UVM consent receipt for a deployed contract and request
-id. The receipt is not broadcast by itself; hand it to the executor, who includes it in the
+`authorize` prints and locally stores a signed off-chain UVM consent receipt for a deployed
+contract and request id. `authorize-to` wraps that receipt in a signed wallet message for an
+executor wallet. When the executor's node receives the message, it validates the outer wallet
+message and inner UVM authorization, then stores the authorization in ignored
+`state/authorizations`. Manual receipt passing still works by including receipts in the
 `authorizations` list of an `execute` transaction.
 
 `execute` runs deployed UVM code, or inline code when no deployed contract exists. The execute
-JSON can be a program directly or an object with `input` and `authorizations` fields.
+JSON can be a program directly or an object with `input` and `authorizations` fields. Execute
+transactions automatically include locally stored authorizations that match the deployed
+contract address, code hash, and current block-height scope.
 
 `receipt` prints a UVM execution receipt by transaction id or unique transaction-id prefix.
 
