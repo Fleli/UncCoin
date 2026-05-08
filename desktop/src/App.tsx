@@ -66,6 +66,7 @@ const DEFAULT_EXECUTE_JSON = "null";
 const RECENT_BLOCK_LIMIT = 12;
 const BLOCKCHAIN_VIEW_BLOCKS = 2;
 const MINING_REWARD_SENDER = "SYSTEM";
+const RANDOMNESS_SEED_MODULUS = 1n << 256n;
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
@@ -248,6 +249,45 @@ function sortBalancesDescending(balances: BalanceRow[]): BalanceRow[] {
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function normalizeRandomnessSeed(seed: string): string {
+  const trimmedSeed = seed.trim();
+  if (!trimmedSeed) {
+    throw new Error("Seed is required.");
+  }
+  const seedValue = trimmedSeed.startsWith("0x") || trimmedSeed.startsWith("0X")
+    ? BigInt(trimmedSeed)
+    : BigInt(trimmedSeed);
+  if (seedValue < 0n || seedValue >= RANDOMNESS_SEED_MODULUS) {
+    throw new Error("Seed must be between 0 and 2^256 - 1.");
+  }
+  return seedValue.toString(10);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function createRevealCommitmentHash(
+  walletAddress: string,
+  requestId: string,
+  seed: string,
+  salt: string,
+): Promise<string> {
+  const payload = [
+    "UVM_REVEAL",
+    "1",
+    walletAddress.trim(),
+    requestId.trim(),
+    normalizeRandomnessSeed(seed),
+    salt.trim(),
+  ].join("|");
+  return sha256Hex(payload);
 }
 
 function formatWalletKey(key: WalletKeyDetails["publicKey"]): string {
@@ -735,6 +775,8 @@ function App() {
   const [autosendTarget, setAutosendTarget] = useState("");
   const [commitRequestId, setCommitRequestId] = useState("");
   const [commitHash, setCommitHash] = useState("");
+  const [commitSeed, setCommitSeed] = useState("");
+  const [commitSalt, setCommitSalt] = useState("");
   const [commitFee, setCommitFee] = useState("0");
   const [revealRequestId, setRevealRequestId] = useState("");
   const [revealSeed, setRevealSeed] = useState("");
@@ -1736,13 +1778,54 @@ function App() {
   async function handleCommit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("commit-randomness", async () => {
+      let commitmentHash = commitHash.trim();
+      if (!commitmentHash && commitSeed.trim()) {
+        const walletAddress = snapshot.nodeInfo?.wallet?.address;
+        if (!walletAddress) {
+          throw new Error("A loaded wallet is required to compute a commitment hash.");
+        }
+        commitmentHash = await createRevealCommitmentHash(
+          walletAddress,
+          commitRequestId,
+          commitSeed,
+          commitSalt,
+        );
+        setCommitHash(commitmentHash);
+        setRevealRequestId(commitRequestId);
+        setRevealSeed(commitSeed);
+        setRevealSalt(commitSalt);
+      }
       const response = await createCommitment(activeApiPort, {
         request_id: commitRequestId,
-        commitment_hash: commitHash,
+        commitment_hash: commitmentHash,
         fee: commitFee,
       });
       return { label: "Broadcast commitment", detail: response.transaction_id };
     });
+  }
+
+  async function handleComputeCommitmentHash() {
+    setError(null);
+    setNotice(null);
+    try {
+      const walletAddress = snapshot.nodeInfo?.wallet?.address;
+      if (!walletAddress) {
+        throw new Error("A loaded wallet is required to compute a commitment hash.");
+      }
+      const commitmentHash = await createRevealCommitmentHash(
+        walletAddress,
+        commitRequestId,
+        commitSeed,
+        commitSalt,
+      );
+      setCommitHash(commitmentHash);
+      setRevealRequestId(commitRequestId);
+      setRevealSeed(commitSeed);
+      setRevealSalt(commitSalt);
+      setNotice(`Computed commitment hash: ${commitmentHash}`);
+    } catch (commitmentError) {
+      setError(commitmentError instanceof Error ? commitmentError.message : String(commitmentError));
+    }
   }
 
   async function handleReveal(event: FormEvent<HTMLFormElement>) {
@@ -3214,21 +3297,38 @@ function App() {
                   <span>commit reveal</span>
                 </div>
                 <form className="form-grid" onSubmit={handleCommit}>
-                  <label>
-                    Request ID
-                    <input value={commitRequestId} onChange={(event) => setCommitRequestId(event.target.value)} />
-                  </label>
+                  <div className="field-row">
+                    <label>
+                      Request ID
+                      <input value={commitRequestId} onChange={(event) => setCommitRequestId(event.target.value)} />
+                    </label>
+                    <label>
+                      Fee
+                      <input value={commitFee} onChange={(event) => setCommitFee(event.target.value)} />
+                    </label>
+                  </div>
+                  <div className="field-row">
+                    <label>
+                      Seed
+                      <input value={commitSeed} onChange={(event) => setCommitSeed(event.target.value)} />
+                    </label>
+                    <label>
+                      Salt
+                      <input value={commitSalt} onChange={(event) => setCommitSalt(event.target.value)} />
+                    </label>
+                  </div>
                   <label>
                     Commitment Hash
                     <input value={commitHash} onChange={(event) => setCommitHash(event.target.value)} />
                   </label>
-                  <label>
-                    Fee
-                    <input value={commitFee} onChange={(event) => setCommitFee(event.target.value)} />
-                  </label>
-                  <button type="submit" disabled={disableNodeAction}>
-                    Commit
-                  </button>
+                  <div className="button-row">
+                    <button type="button" disabled={disableNodeAction} onClick={() => void handleComputeCommitmentHash()}>
+                      Compute Hash
+                    </button>
+                    <button type="submit" disabled={disableNodeAction}>
+                      Commit
+                    </button>
+                  </div>
                 </form>
                 <form className="form-grid separated" onSubmit={handleReveal}>
                   <label>
