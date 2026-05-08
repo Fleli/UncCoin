@@ -1,9 +1,28 @@
 import argparse
 import asyncio
 import contextlib
+import ipaddress
+import os
 
 from node.node import Node
 from wallet import load_wallet
+
+
+def _normalize_api_token(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _api_host_is_loopback(host: str) -> bool:
+    normalized_host = host.strip().lower()
+    if normalized_host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        return False
 
 
 async def _run_from_cli() -> None:
@@ -36,16 +55,34 @@ async def _run_from_cli() -> None:
     parser.add_argument(
         "--api-host",
         default="127.0.0.1",
-        help="Host interface for the optional read-only HTTP API.",
+        help="Host interface for the optional HTTP API.",
     )
     parser.add_argument(
         "--api-port",
         type=int,
-        help="Enable the optional read-only HTTP API on this port.",
+        help="Enable the optional HTTP API on this port.",
+    )
+    parser.add_argument(
+        "--api-token",
+        help=(
+            "Bearer token required for /api/v1/control/* endpoints. "
+            "Can also be set with UNCCOIN_API_TOKEN."
+        ),
     )
     args = parser.parse_args()
     if args.api_port is not None and not 0 < args.api_port < 65536:
         parser.error("--api-port must be between 1 and 65535.")
+    api_token = _normalize_api_token(
+        args.api_token
+        if args.api_token is not None
+        else os.environ.get("UNCCOIN_API_TOKEN")
+    )
+    if (
+        args.api_port is not None
+        and api_token is None
+        and not _api_host_is_loopback(args.api_host)
+    ):
+        parser.error("--api-token or UNCCOIN_API_TOKEN is required when --api-host is not loopback.")
 
     print("Loading node...", flush=True)
     wallet = load_wallet(args.wallet_name) if args.wallet_name else None
@@ -82,13 +119,18 @@ async def _run_from_cli() -> None:
             node=node,
             host=args.api_host,
             port=args.api_port,
+            api_token=api_token,
         )
         await api_server.start()
         print(
-            "Read-only API listening on "
+            "Node API listening on "
             f"http://{args.api_host}:{args.api_port}/api/v1",
             flush=True,
         )
+        if api_token is not None:
+            print("Control API requires bearer-token authentication.", flush=True)
+        else:
+            print("Control API is unauthenticated; keep the API host loopback.", flush=True)
 
     server_task = asyncio.create_task(node.serve_forever())
 

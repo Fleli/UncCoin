@@ -1,12 +1,14 @@
 import asyncio
 import json
+import secrets
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TYPE_CHECKING
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.block import Block
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
 
 
 API_PREFIX = "/api/v1"
+CONTROL_API_PREFIX = f"{API_PREFIX}/control"
 PEER_CONNECT_TIMEOUT_SECONDS = 3.0
 
 
@@ -95,12 +98,27 @@ class AuthorizationRequest(BaseModel):
     valid_for_blocks: str | None = None
 
 
-def create_api_app(node: "Node") -> FastAPI:
+def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
+    normalized_api_token = _normalize_api_token(api_token)
     app = FastAPI(
         title="UncCoin Node API",
         version="1.0.0",
-        description="Read-only HTTP API for local UncCoin node state.",
+        description="HTTP API for local UncCoin node state and authenticated node control.",
     )
+
+    @app.middleware("http")
+    async def require_control_api_token(request: Request, call_next):
+        if (
+            normalized_api_token is not None
+            and request.url.path.startswith(f"{CONTROL_API_PREFIX}/")
+            and not _request_has_valid_bearer_token(request, normalized_api_token)
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid API bearer token."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return await call_next(request)
 
     @app.get("/")
     def root() -> dict[str, Any]:
@@ -108,6 +126,7 @@ def create_api_app(node: "Node") -> FastAPI:
             "name": "UncCoin Node API",
             "version": "1.0.0",
             "api_prefix": API_PREFIX,
+            "control_auth_required": normalized_api_token is not None,
             "openapi": "/openapi.json",
             "docs": "/docs",
         }
@@ -567,13 +586,14 @@ class NodeAPIServer:
     node: "Node"
     host: str
     port: int
+    api_token: str | None = None
     log_level: str = "warning"
     app: FastAPI = field(init=False)
     _server: uvicorn.Server | None = field(default=None, init=False)
     _task: asyncio.Task | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.app = create_api_app(self.node)
+        self.app = create_api_app(self.node, api_token=self.api_token)
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -606,6 +626,21 @@ def _require_blockchain(node: "Node") -> "Blockchain":
     if node.blockchain is None:
         raise HTTPException(status_code=503, detail="blockchain is not loaded")
     return node.blockchain
+
+
+def _normalize_api_token(api_token: str | None) -> str | None:
+    if api_token is None:
+        return None
+    normalized_token = api_token.strip()
+    return normalized_token or None
+
+
+def _request_has_valid_bearer_token(request: Request, expected_token: str) -> bool:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.strip().partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return False
+    return secrets.compare_digest(token.strip(), expected_token)
 
 
 def _state_tip_hash(node: "Node") -> str | None:

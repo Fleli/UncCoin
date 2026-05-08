@@ -220,6 +220,44 @@ class NodeApiServerTests(unittest.TestCase):
             transaction_id,
         )
 
+    def test_control_endpoints_require_bearer_token_when_configured(self) -> None:
+        protected_client = TestClient(create_api_app(self.node, api_token="secret-token"))
+
+        read_response = protected_client.get("/api/v1/chain/head")
+        self.assertEqual(read_response.status_code, 200)
+
+        missing_token_response = protected_client.post(
+            "/api/v1/control/transactions",
+            json={
+                "receiver": self.receiver_wallet.address,
+                "amount": "1.25",
+                "fee": "0.25",
+            },
+        )
+        self.assertEqual(missing_token_response.status_code, 401)
+
+        wrong_token_response = protected_client.post(
+            "/api/v1/control/transactions",
+            headers={"Authorization": "Bearer wrong-token"},
+            json={
+                "receiver": self.receiver_wallet.address,
+                "amount": "1.25",
+                "fee": "0.25",
+            },
+        )
+        self.assertEqual(wrong_token_response.status_code, 401)
+
+        authorized_response = protected_client.post(
+            "/api/v1/control/transactions",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "receiver": self.receiver_wallet.address,
+                "amount": "1.25",
+                "fee": "0.25",
+            },
+        )
+        self.assertEqual(authorized_response.status_code, 200)
+
     def test_control_mine_updates_chain_head(self) -> None:
         response = self.client.post(
             "/api/v1/control/mine",
