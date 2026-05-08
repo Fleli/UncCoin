@@ -1429,19 +1429,38 @@ function App() {
 
     setBusyAction("blockchain-search");
     setBlockchainSearchError(null);
+    setNotice(null);
     try {
-      const targetBlock = await readBlock(activeApiPort, reference);
+      let resolvedReference = reference;
+      let movedToTip = false;
+      if (/^\d+$/.test(reference)) {
+        const requestedHeight = Number(reference);
+        const chainHead = await readChainHead(activeApiPort);
+        if (requestedHeight > chainHead.height) {
+          if (chainHead.height < 0) {
+            setBlockchainSearchError("No blocks are available.");
+            return;
+          }
+          resolvedReference = String(chainHead.height);
+          movedToTip = true;
+        }
+      }
+      const targetBlock = await readBlock(activeApiPort, resolvedReference);
       const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
       const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
       const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
         ? response.blocks
         : [targetBlock];
       setBlockchainWindow({
-        reference,
+        reference: resolvedReference,
         targetHash: targetBlock.block_hash,
         targetHeight: targetBlock.height,
         blocks,
       });
+      if (movedToTip) {
+        setBlockchainSearch(String(targetBlock.height));
+        setNotice(`Moved to tip with hash ${targetBlock.block_hash.slice(0, 8)}`);
+      }
     } catch (searchError) {
       setBlockchainSearchError(searchError instanceof Error ? searchError.message : String(searchError));
     } finally {
