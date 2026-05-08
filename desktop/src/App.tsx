@@ -2533,176 +2533,174 @@ function App() {
 
         {activeTab === "mining" ? (
           <section className="view mining-view">
-            <div className="panel-grid two">
-              <section className="panel mining-panel">
-                <div className="panel-title">
-                  <h3>Mining</h3>
-                  <span>{miningModeLabel}</span>
+            <section className="panel mining-panel">
+              <div className="panel-title">
+                <h3>Mining</h3>
+                <span>{miningModeLabel}</span>
+              </div>
+
+              <div className={`mining-readout ${miningActive ? "active" : ""}`}>
+                <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
+                <strong>{formatNumber(miningStatus?.nonce)}</strong>
+                <small>
+                  {miningActive
+                    ? `running ${formatElapsed(miningStatus?.started_at)}`
+                    : miningStatus?.last_block.block_hash
+                    ? `last block #${miningStatus.last_block.height ?? "-"}`
+                    : "idle"}
+                </small>
+              </div>
+
+              <dl className="detail-list mining-stats">
+                <div>
+                  <dt>Difficulty</dt>
+                  <dd>{formatNumber(miningDifficulty)}</dd>
                 </div>
-
-                <div className={`mining-readout ${miningActive ? "active" : ""}`}>
-                  <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
-                  <strong>{formatNumber(miningStatus?.nonce)}</strong>
-                  <small>
-                    {miningActive
-                      ? `running ${formatElapsed(miningStatus?.started_at)}`
-                      : miningStatus?.last_block.block_hash
-                      ? `last block #${miningStatus.last_block.height ?? "-"}`
-                      : "idle"}
-                  </small>
+                <div>
+                  <dt>Pending Tx</dt>
+                  <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
                 </div>
+                <div>
+                  <dt>Last Checked</dt>
+                  <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
+                </div>
+                <div>
+                  <dt>Tip</dt>
+                  <dd>
+                    <ReferenceText value={miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash} />
+                  </dd>
+                </div>
+              </dl>
 
-                <dl className="detail-list mining-stats">
-                  <div>
-                    <dt>Difficulty</dt>
-                    <dd>{formatNumber(miningDifficulty)}</dd>
-                  </div>
-                  <div>
-                    <dt>Pending Tx</dt>
-                    <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Last Checked</dt>
-                    <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
-                  </div>
-                  <div>
-                    <dt>Tip</dt>
-                    <dd>
-                      <ReferenceText value={miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash} />
-                    </dd>
-                  </div>
-                </dl>
-
-                <section className="miner-backends">
-                  <div className="panel-title compact-title">
-                    <h3>Miner Backend</h3>
-                    <button
-                      type="button"
-                      onClick={() => void handleWarmMinerNow()}
-                      disabled={!isApiAvailable || busyAction !== null || miningActive || miningWarmupStatus?.active === true}
-                    >
-                      {miningWarmupStatus?.active ? "Warming" : "Warm Up Now"}
-                    </button>
-                  </div>
-                  <div className="backend-meta">
-                    <span>Selected: {selectedMiningBackend}</span>
-                    <span>Warmup: {miningWarmupStatus?.status ?? "idle"}</span>
-                  </div>
-                  <div className="backend-grid">
-                    {miningBackendOptions.length === 0 ? (
-                      <p className="empty">Open miner backend status...</p>
-                    ) : (
-                      miningBackendOptions.map((option) => {
-                        const isSelected = option.id === selectedMiningBackend;
-                        const canAct = option.available || option.can_build;
-                        return (
-                          <button
-                            type="button"
-                            className={[
-                              "backend-option",
-                              isSelected ? "selected" : "",
-                              !option.available ? "unavailable" : "",
-                            ].filter(Boolean).join(" ")}
-                            key={option.id}
-                            title={option.description}
-                            disabled={
-                              !isApiAvailable
-                              || busyAction !== null
-                              || miningActive
-                              || automineRunning
-                              || miningWarmupStatus?.active === true
-                              || !canAct
-                              || (option.available && isSelected)
-                            }
-                            onClick={() => {
-                              if (!option.available && option.can_build) {
-                                void handleBuildMiningBackend(option.id);
-                                return;
-                              }
-                              void handleUseMiningBackend(option.id);
-                            }}
-                          >
-                            <span>{option.label}</span>
-                            <small>{option.description}</small>
-                            <strong>{miningBackendButtonLabel(option, selectedMiningBackend)}</strong>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                  {miningWarmupStatus?.error ? (
-                    <p className="inline-warning">{miningWarmupStatus.error}</p>
-                  ) : null}
-                </section>
-
-                <form className="form-grid mining-controls" onSubmit={handleMine}>
-                  <label>
-                    Mine Description
-                    <input
-                      value={mineDescription}
-                      placeholder="Block description"
-                      onChange={(event) => setMineDescription(event.target.value)}
-                      disabled={!isApiAvailable || busyAction === "mine-block"}
-                    />
-                  </label>
-                  <div className="button-row">
-                    <button type="submit" disabled={miningStartDisabled}>
-                      Mine Once
-                    </button>
-                    <button
-                      type="button"
-                      disabled={miningStartDisabled}
-                      onClick={() => void runNodeAction("start-automine", async () => {
-                        const response = await startAutomine(activeApiPort, mineDescription || undefined);
-                        setMiningStatus((currentStatus) => (
-                          currentStatus === null
-                            ? currentStatus
-                            : {
-                              ...currentStatus,
-                              automine: {
-                                running: response.running,
-                                description: response.description,
-                              },
-                            }
-                        ));
-                        return { label: "Automine started", detail: response.description };
-                      }, "mining")}
-                    >
-                      Start Auto
-                    </button>
-                    <button
-                      type="button"
-                      disabled={miningStopDisabled}
-                      onClick={() => void runNodeAction("stop-automine", async () => {
-                        await stopAutomine(activeApiPort);
-                        return { label: "Automine stopped" };
-                      }, "mining")}
-                    >
-                      Stop
-                    </button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="panel miner-board">
+              <section className="miner-backends">
                 <div className="panel-title compact-title">
-                  <h3>Active Miners</h3>
-                  <span>{miningStatus?.recent_miners.length ?? 0}</span>
+                  <h3>Miner Backend</h3>
+                  <button
+                    type="button"
+                    onClick={() => void handleWarmMinerNow()}
+                    disabled={!isApiAvailable || busyAction !== null || miningActive || miningWarmupStatus?.active === true}
+                  >
+                    {miningWarmupStatus?.active ? "Warming" : "Warm Up Now"}
+                  </button>
                 </div>
-                <div className="list">
-                  {miningStatus?.recent_miners.length ? (
-                    miningStatus.recent_miners.map((miner) => (
-                      <div className="list-row stacked" key={miner.address}>
-                        <ReferenceText value={miner.alias || miner.address} title={miner.address} />
-                        <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
-                      </div>
-                    ))
+                <div className="backend-meta">
+                  <span>Selected: {selectedMiningBackend}</span>
+                  <span>Warmup: {miningWarmupStatus?.status ?? "idle"}</span>
+                </div>
+                <div className="backend-grid">
+                  {miningBackendOptions.length === 0 ? (
+                    <p className="empty">Open miner backend status...</p>
                   ) : (
-                    <p className="empty">No recent mined blocks.</p>
+                    miningBackendOptions.map((option) => {
+                      const isSelected = option.id === selectedMiningBackend;
+                      const canAct = option.available || option.can_build;
+                      return (
+                        <button
+                          type="button"
+                          className={[
+                            "backend-option",
+                            isSelected ? "selected" : "",
+                            !option.available ? "unavailable" : "",
+                          ].filter(Boolean).join(" ")}
+                          key={option.id}
+                          title={option.description}
+                          disabled={
+                            !isApiAvailable
+                            || busyAction !== null
+                            || miningActive
+                            || automineRunning
+                            || miningWarmupStatus?.active === true
+                            || !canAct
+                            || (option.available && isSelected)
+                          }
+                          onClick={() => {
+                            if (!option.available && option.can_build) {
+                              void handleBuildMiningBackend(option.id);
+                              return;
+                            }
+                            void handleUseMiningBackend(option.id);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          <small>{option.description}</small>
+                          <strong>{miningBackendButtonLabel(option, selectedMiningBackend)}</strong>
+                        </button>
+                      );
+                    })
                   )}
                 </div>
+                {miningWarmupStatus?.error ? (
+                  <p className="inline-warning">{miningWarmupStatus.error}</p>
+                ) : null}
               </section>
-            </div>
+
+              <form className="form-grid mining-controls" onSubmit={handleMine}>
+                <label>
+                  Mine Description
+                  <input
+                    value={mineDescription}
+                    placeholder="Block description"
+                    onChange={(event) => setMineDescription(event.target.value)}
+                    disabled={!isApiAvailable || busyAction === "mine-block"}
+                  />
+                </label>
+                <div className="button-row">
+                  <button type="submit" disabled={miningStartDisabled}>
+                    Mine Once
+                  </button>
+                  <button
+                    type="button"
+                    disabled={miningStartDisabled}
+                    onClick={() => void runNodeAction("start-automine", async () => {
+                      const response = await startAutomine(activeApiPort, mineDescription || undefined);
+                      setMiningStatus((currentStatus) => (
+                        currentStatus === null
+                          ? currentStatus
+                          : {
+                            ...currentStatus,
+                            automine: {
+                              running: response.running,
+                              description: response.description,
+                            },
+                          }
+                      ));
+                      return { label: "Automine started", detail: response.description };
+                    }, "mining")}
+                  >
+                    Start Auto
+                  </button>
+                  <button
+                    type="button"
+                    disabled={miningStopDisabled}
+                    onClick={() => void runNodeAction("stop-automine", async () => {
+                      await stopAutomine(activeApiPort);
+                      return { label: "Automine stopped" };
+                    }, "mining")}
+                  >
+                    Stop
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section className="panel miner-board">
+              <div className="panel-title compact-title">
+                <h3>Active Miners</h3>
+                <span>{miningStatus?.recent_miners.length ?? 0}</span>
+              </div>
+              <div className="list">
+                {miningStatus?.recent_miners.length ? (
+                  miningStatus.recent_miners.map((miner) => (
+                    <div className="list-row stacked" key={miner.address}>
+                      <ReferenceText value={miner.alias || miner.address} title={miner.address} />
+                      <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
+                    </div>
+                  ))
+                ) : (
+                  <p className="empty">No recent mined blocks.</p>
+                )}
+              </div>
+            </section>
           </section>
         ) : null}
 
