@@ -1,10 +1,12 @@
 import asyncio
+import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TYPE_CHECKING
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from core.block import Block
 from core.hashing import sha256_transaction_hash
@@ -16,6 +18,82 @@ if TYPE_CHECKING:
 
 
 API_PREFIX = "/api/v1"
+
+
+class PeerRequest(BaseModel):
+    peer: str
+
+
+class SyncRequest(BaseModel):
+    fast: bool = True
+
+
+class TransactionRequest(BaseModel):
+    receiver: str
+    amount: str
+    fee: str = "0"
+
+
+class MineRequest(BaseModel):
+    description: str | None = None
+
+
+class MessageRequest(BaseModel):
+    receiver: str
+    content: str
+
+
+class AliasRequest(BaseModel):
+    wallet: str
+    alias: str
+
+
+class AutosendRequest(BaseModel):
+    target: str | None = None
+
+
+class CommitmentRequest(BaseModel):
+    request_id: str
+    commitment_hash: str
+    fee: str = "0"
+
+
+class RevealRequest(BaseModel):
+    request_id: str
+    seed: str
+    fee: str = "0"
+    salt: str = ""
+
+
+class DeployRequest(BaseModel):
+    fee: str = "0"
+    source: str | None = None
+    program: Any | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecuteRequest(BaseModel):
+    contract_address: str
+    gas_limit: str = "1000"
+    gas_price: str = "0"
+    value: str = "0"
+    fee: str = "0"
+    input: Any | None = None
+    authorizations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AuthorizationRequest(BaseModel):
+    contract_address: str
+    request_id: str
+    valid_for_blocks: str | None = None
+
+
+class SendAuthorizationRequest(AuthorizationRequest):
+    receiver: str
+
+
+class StoreAuthorizationRequest(BaseModel):
+    authorization: dict[str, Any]
 
 
 def create_api_app(node: "Node") -> FastAPI:
@@ -68,6 +146,13 @@ def create_api_app(node: "Node") -> FastAPI:
                 "target": node.autosend_target,
                 "enabled": node.autosend_target is not None,
             },
+        }
+
+    @app.get(f"{API_PREFIX}/peers")
+    def peers() -> dict[str, Any]:
+        return {
+            "connected": node.list_peers(),
+            "known": node.list_known_peers(),
         }
 
     @app.get(f"{API_PREFIX}/chain/head")
@@ -139,6 +224,29 @@ def create_api_app(node: "Node") -> FastAPI:
             ],
         }
 
+    @app.get(f"{API_PREFIX}/messages")
+    def messages() -> dict[str, Any]:
+        return {
+            "count": len(node.message_history),
+            "messages": [message.copy() for message in node.message_history],
+        }
+
+    @app.get(f"{API_PREFIX}/contracts")
+    def contracts() -> dict[str, Any]:
+        state = _current_state(node)
+        return {
+            "tip_hash": _state_tip_hash(node),
+            "height": state.height,
+            "contracts": [
+                {
+                    "address": contract_address,
+                    "contract": _jsonable(contract),
+                    "storage": state.contract_storage.get(contract_address, {}).copy(),
+                }
+                for contract_address, contract in sorted(state.contracts.items())
+            ],
+        }
+
     @app.get(f"{API_PREFIX}/contracts/{{contract_address}}")
     def contract(contract_address: str) -> dict[str, Any]:
         blockchain = _require_blockchain(node)
@@ -163,6 +271,21 @@ def create_api_app(node: "Node") -> FastAPI:
                 contract_address,
                 tip_hash=_state_tip_hash(node),
             ),
+        }
+
+    @app.get(f"{API_PREFIX}/receipts")
+    def receipts() -> dict[str, Any]:
+        state = _current_state(node)
+        return {
+            "tip_hash": _state_tip_hash(node),
+            "height": state.height,
+            "receipts": [
+                {
+                    "transaction_id": transaction_id,
+                    "receipt": receipt.copy(),
+                }
+                for transaction_id, receipt in sorted(state.uvm_receipts.items())
+            ],
         }
 
     @app.get(f"{API_PREFIX}/receipts/{{transaction_reference}}")
@@ -200,6 +323,218 @@ def create_api_app(node: "Node") -> FastAPI:
                 tip_hash=_state_tip_hash(node),
             ),
         }
+
+    @app.get(f"{API_PREFIX}/authorizations")
+    def authorizations() -> dict[str, Any]:
+        if node.wallet is None:
+            return {"count": 0, "authorizations": []}
+        try:
+            from node.authorization_store import load_authorizations
+        except ImportError:
+            return {"count": 0, "authorizations": []}
+        stored_authorizations = load_authorizations(node.wallet.address)
+        return {
+            "count": len(stored_authorizations),
+            "authorizations": stored_authorizations,
+        }
+
+    @app.post(f"{API_PREFIX}/control/peers/connect")
+    async def connect_peer(request: PeerRequest) -> dict[str, Any]:
+        host, port = _parse_peer(request.peer)
+        try:
+            await node.connect_to_peer(host, port)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"connected": node.list_peers(), "known": node.list_known_peers()}
+
+    @app.post(f"{API_PREFIX}/control/peers/discover")
+    async def discover_peers() -> dict[str, Any]:
+        await node.discover_peers()
+        return {"connected": node.list_peers(), "known": node.list_known_peers()}
+
+    @app.post(f"{API_PREFIX}/control/sync")
+    async def sync(request: SyncRequest) -> dict[str, Any]:
+        peer_count = await node.sync_chain(fast=request.fast)
+        return {"requested_peers": peer_count, "fast": request.fast}
+
+    @app.post(f"{API_PREFIX}/control/transactions")
+    async def create_transaction(request: TransactionRequest) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_transaction(
+                receiver=node.resolve_wallet_reference(request.receiver),
+                amount=request.amount,
+                fee=request.fee,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return await _broadcast_transaction(node, transaction)
+
+    @app.post(f"{API_PREFIX}/control/messages")
+    async def create_message(request: MessageRequest) -> dict[str, Any]:
+        try:
+            message = node.create_signed_wallet_message(
+                node.resolve_wallet_reference(request.receiver),
+                request.content,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        accepted, reason = await node.p2p_server.broadcast_wallet_message(message)
+        if not accepted:
+            raise HTTPException(status_code=400, detail=reason or "message rejected")
+        return {"message": message}
+
+    @app.post(f"{API_PREFIX}/control/mine")
+    async def mine(request: MineRequest) -> dict[str, Any]:
+        description = request.description or node.default_block_description("Mined block")
+        try:
+            block = await node.mine_pending_transactions(description)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"block": _block_payload(block)}
+
+    @app.post(f"{API_PREFIX}/control/automine/start")
+    async def automine_start(request: MineRequest) -> dict[str, Any]:
+        description = request.description or node.default_block_description("Auto-mined block")
+        try:
+            await node.start_automine(description)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"running": True, "description": description}
+
+    @app.post(f"{API_PREFIX}/control/automine/stop")
+    async def automine_stop() -> dict[str, Any]:
+        await node.stop_automine(wait=False)
+        return {"running": False}
+
+    @app.post(f"{API_PREFIX}/control/aliases")
+    def create_alias(request: AliasRequest) -> dict[str, Any]:
+        try:
+            wallet_address = node.set_wallet_alias(request.wallet, request.alias)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {
+            "wallet": wallet_address,
+            "alias": node.alias_for_wallet(wallet_address),
+        }
+
+    @app.post(f"{API_PREFIX}/control/autosend")
+    def autosend(request: AutosendRequest) -> dict[str, Any]:
+        try:
+            if request.target is None or not request.target.strip():
+                node.disable_autosend()
+                return {"enabled": False, "target": None}
+            target = node.enable_autosend(request.target)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"enabled": True, "target": target}
+
+    @app.post(f"{API_PREFIX}/control/commitments")
+    async def create_commitment(request: CommitmentRequest) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_commitment(
+                request_id=request.request_id,
+                commitment_hash=request.commitment_hash,
+                fee=request.fee,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return await _broadcast_transaction(node, transaction)
+
+    @app.post(f"{API_PREFIX}/control/reveals")
+    async def create_reveal(request: RevealRequest) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_reveal(
+                request_id=request.request_id,
+                seed=request.seed,
+                fee=request.fee,
+                salt=request.salt,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return await _broadcast_transaction(node, transaction)
+
+    @app.post(f"{API_PREFIX}/control/contracts/deploy")
+    async def deploy_contract(request: DeployRequest) -> dict[str, Any]:
+        try:
+            if request.source is not None and request.source.strip():
+                transaction = node.create_signed_deploy_from_source(
+                    contract_source=request.source,
+                    fee=request.fee,
+                )
+            elif request.program is not None:
+                transaction = node.create_signed_deploy(
+                    program=request.program,
+                    metadata=request.metadata,
+                    fee=request.fee,
+                )
+            else:
+                raise ValueError("Deploy requires source or program.")
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        result = await _broadcast_transaction(node, transaction)
+        result["contract_address"] = transaction.receiver
+        result["code_hash"] = transaction.payload.get("code_hash")
+        return result
+
+    @app.post(f"{API_PREFIX}/control/contracts/execute")
+    async def execute_contract(request: ExecuteRequest) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_execute(
+                contract_address=request.contract_address,
+                input_data=request.input,
+                gas_limit=request.gas_limit,
+                gas_price=request.gas_price,
+                value=request.value,
+                fee=request.fee,
+                authorizations=request.authorizations,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        result = await _broadcast_transaction(node, transaction)
+        result["contract_address"] = transaction.receiver
+        return result
+
+    @app.post(f"{API_PREFIX}/control/contracts/authorize")
+    def authorize_contract(request: AuthorizationRequest) -> dict[str, Any]:
+        try:
+            authorization = node.create_uvm_authorization_receipt(
+                contract_address=request.contract_address,
+                request_id=request.request_id,
+                valid_for_blocks=request.valid_for_blocks,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"authorization": authorization}
+
+    @app.post(f"{API_PREFIX}/control/authorizations/store")
+    def store_authorization(request: StoreAuthorizationRequest) -> dict[str, Any]:
+        store_authorization_receipt = getattr(node, "store_uvm_authorization_receipt", None)
+        if not callable(store_authorization_receipt):
+            raise HTTPException(status_code=404, detail="authorization storage is unavailable")
+        try:
+            stored = store_authorization_receipt(request.authorization)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"stored": bool(stored)}
+
+    @app.post(f"{API_PREFIX}/control/authorizations/send")
+    async def send_authorization(request: SendAuthorizationRequest) -> dict[str, Any]:
+        create_authorization_message = getattr(node, "create_signed_authorization_message", None)
+        if not callable(create_authorization_message):
+            raise HTTPException(status_code=404, detail="authorization messages are unavailable")
+        try:
+            message = create_authorization_message(
+                receiver=node.resolve_wallet_reference(request.receiver),
+                contract_address=request.contract_address,
+                request_id=request.request_id,
+                valid_for_blocks=request.valid_for_blocks,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        accepted, reason = await node.p2p_server.broadcast_wallet_message(message)
+        if not accepted:
+            raise HTTPException(status_code=400, detail=reason or "authorization message rejected")
+        return {"message": message}
 
     return app
 
@@ -333,6 +668,27 @@ def _find_receipt(node: "Node", transaction_reference: str) -> tuple[str, dict]:
     return matches[0]
 
 
+def _parse_peer(peer: str) -> tuple[str, int]:
+    try:
+        host, raw_port = peer.strip().split(":", maxsplit=1)
+        port = int(raw_port)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="peer must be host:port") from error
+    if not host or port <= 0 or port > 65535:
+        raise HTTPException(status_code=400, detail="peer must be host:port")
+    return host, port
+
+
+async def _broadcast_transaction(node: "Node", transaction: Transaction) -> dict[str, Any]:
+    accepted, reason = await node.p2p_server.broadcast_transaction(transaction)
+    if not accepted:
+        raise HTTPException(status_code=400, detail=reason or "transaction rejected")
+    return {
+        "transaction_id": sha256_transaction_hash(transaction),
+        "transaction": _transaction_payload(transaction),
+    }
+
+
 def _wallet_payload(node: "Node") -> dict[str, Any] | None:
     if node.wallet is None:
         return None
@@ -366,3 +722,22 @@ def _transaction_payload(transaction: Transaction) -> dict[str, Any]:
     transaction_data = transaction.to_dict()
     transaction_data["transaction_id"] = sha256_transaction_hash(transaction)
     return transaction_data
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return value

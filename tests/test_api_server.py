@@ -97,6 +97,62 @@ class NodeApiServerTests(unittest.TestCase):
         response = self.client.get("/api/v1/contracts/missing-contract")
         self.assertEqual(response.status_code, 404)
 
+    def test_control_transaction_broadcasts_pending_transaction(self) -> None:
+        response = self.client.post(
+            "/api/v1/control/transactions",
+            json={
+                "receiver": self.receiver_wallet.address,
+                "amount": "1.25",
+                "fee": "0.25",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        transaction_id = response.json()["transaction_id"]
+        pending_response = self.client.get("/api/v1/transactions/pending")
+        self.assertEqual(pending_response.status_code, 200)
+        self.assertEqual(pending_response.json()["count"], 1)
+        self.assertEqual(
+            pending_response.json()["transactions"][0]["transaction_id"],
+            transaction_id,
+        )
+
+    def test_control_mine_updates_chain_head(self) -> None:
+        response = self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "API mined block"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["block"]["height"], 2)
+        head_response = self.client.get("/api/v1/chain/head")
+        self.assertEqual(head_response.status_code, 200)
+        self.assertEqual(head_response.json()["height"], 2)
+
+    def test_control_deploy_exposes_contract(self) -> None:
+        deploy_response = self.client.post(
+            "/api/v1/control/contracts/deploy",
+            json={
+                "fee": "0",
+                "program": [["HALT"]],
+                "metadata": {"name": "noop"},
+            },
+        )
+        self.assertEqual(deploy_response.status_code, 200)
+        contract_address = deploy_response.json()["contract_address"]
+
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "deploy contract"},
+        )
+        contract_response = self.client.get(f"/api/v1/contracts/{contract_address}")
+
+        self.assertEqual(contract_response.status_code, 200)
+        self.assertEqual(
+            contract_response.json()["contract"]["metadata"]["name"],
+            "noop",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
