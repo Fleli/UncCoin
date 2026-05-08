@@ -36,6 +36,10 @@ type DeletedWalletSummary = {
   deletedPath: string;
 };
 
+type DesktopState = {
+  seenReceivedMessageCount: number;
+};
+
 type ApiRequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
@@ -50,6 +54,8 @@ interface Window {
     createWallet(name: string, bitLength?: number, preferredPort?: number): Promise<WalletSummary>;
     updateWalletPreferredPort(name: string, preferredPort: number): Promise<WalletSummary>;
     deleteWallet(name: string): Promise<DeletedWalletSummary>;
+    readDesktopState(walletKey: string): Promise<DesktopState>;
+    updateDesktopState(walletKey: string, state: Partial<DesktopState>): Promise<DesktopState>;
     getLocalAddresses(): Promise<string[]>;
     fetchApi(apiPort: number, path: string, options?: ApiRequestOptions): Promise<unknown>;
     onNodeLog(callback: (entry: NodeLogEntry) => void): () => void;

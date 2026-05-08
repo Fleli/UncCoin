@@ -684,6 +684,8 @@ pre {
 }
 
 .tabs button {
+  display: flex;
+  align-items: center;
   justify-content: flex-start;
   width: 100%;
   border-color: transparent;
@@ -696,6 +698,28 @@ pre {
   border-color: #355869;
   color: #f4f7f8;
   background: #20313a;
+}
+
+.tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unread-badge {
+  display: inline-flex;
+  min-width: 24px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid #98463d;
+  border-radius: 6px;
+  padding: 0 7px;
+  color: #fff0ed;
+  background: #9e2f28;
+  font-size: 12px;
+  font-weight: 780;
 }
 
 .mini-list,

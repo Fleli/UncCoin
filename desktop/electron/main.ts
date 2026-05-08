@@ -48,6 +48,16 @@ type DeletedWalletSummary = {
   deletedPath: string;
 };
 
+type DesktopState = {
+  seenReceivedMessageCount: number;
+};
+
+type DesktopStateRequest = {
+  walletKey: string;
+};
+
+type UpdateDesktopStateRequest = DesktopStateRequest & Partial<DesktopState>;
+
 type NodeApiRequest = {
   apiPort: number;
   path: string;
@@ -104,6 +114,26 @@ function requirePort(value: unknown, label: string): number {
     return port;
   }
   throw new Error(`${label} must be between 1 and 65535.`);
+}
+
+function desktopStatePath(walletKey: string): string {
+  const normalizedKey = walletKey.trim();
+  if (!normalizedKey) {
+    throw new Error("Wallet key is required.");
+  }
+  const safeKey = normalizedKey.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  return path.join(repoRoot(), "state", "desktop", `${safeKey}.json`);
+}
+
+function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
+  const seenReceivedMessageCount = Number(value.seenReceivedMessageCount);
+  return {
+    seenReceivedMessageCount: (
+      Number.isInteger(seenReceivedMessageCount) && seenReceivedMessageCount >= 0
+        ? seenReceivedMessageCount
+        : 0
+    ),
+  };
 }
 
 function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
@@ -381,6 +411,32 @@ async function deleteWallet(request: DeleteWalletRequest): Promise<DeletedWallet
   return { name, deletedPath };
 }
 
+async function readDesktopState(request: DesktopStateRequest): Promise<DesktopState> {
+  const statePath = desktopStatePath(request.walletKey);
+  try {
+    const stateData = JSON.parse(await readFile(statePath, "utf-8")) as Partial<DesktopState>;
+    return normalizeDesktopState(stateData);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return normalizeDesktopState({});
+    }
+    throw error;
+  }
+}
+
+async function updateDesktopState(request: UpdateDesktopStateRequest): Promise<DesktopState> {
+  const statePath = desktopStatePath(request.walletKey);
+  const currentState = await readDesktopState(request);
+  const nextState = normalizeDesktopState({
+    ...currentState,
+    ...request,
+  });
+
+  await mkdir(path.dirname(statePath), { recursive: true });
+  await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  return nextState;
+}
+
 async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   const apiPort = Number(request.apiPort);
   if (!Number.isInteger(apiPort) || apiPort <= 0 || apiPort > 65535) {
@@ -449,6 +505,11 @@ ipcMain.handle(
   (_event, request: UpdateWalletPreferredPortRequest) => updateWalletPreferredPort(request),
 );
 ipcMain.handle("wallets:delete", (_event, request: DeleteWalletRequest) => deleteWallet(request));
+ipcMain.handle("desktop-state:read", (_event, request: DesktopStateRequest) => readDesktopState(request));
+ipcMain.handle(
+  "desktop-state:update",
+  (_event, request: UpdateDesktopStateRequest) => updateDesktopState(request),
+);
 ipcMain.handle("node-api:fetch", (_event, request: NodeApiRequest) => fetchNodeApi(request));
 ipcMain.handle("system:local-addresses", () => localAddresses());
 

@@ -273,6 +273,7 @@ function App() {
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
+  const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
 
@@ -329,6 +330,15 @@ function App() {
     () => wallets.find((wallet) => wallet.name === walletName),
     [walletName, wallets],
   );
+  const desktopStateKey = useMemo(
+    () => snapshot.nodeInfo?.wallet?.address || selectedWallet?.address || "",
+    [selectedWallet?.address, snapshot.nodeInfo?.wallet?.address],
+  );
+  const receivedMessageCount = useMemo(
+    () => snapshot.messages.filter((message) => message.direction === "received").length,
+    [snapshot.messages],
+  );
+  const unreadMessageCount = Math.max(0, receivedMessageCount - seenReceivedMessageCount);
   const isPreferredPortDirty = (
     selectedWallet !== undefined
     && Number(port) !== selectedWallet.preferredPort
@@ -352,6 +362,17 @@ function App() {
       nextWallets.some((wallet) => wallet.name === current) ? current : ""
     ));
   }, []);
+
+  const markReceivedMessagesSeen = useCallback(async (messageCount: number) => {
+    if (!desktopStateKey) {
+      return;
+    }
+    const normalizedMessageCount = Math.max(0, messageCount);
+    setSeenReceivedMessageCount(normalizedMessageCount);
+    await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
+      seenReceivedMessageCount: normalizedMessageCount,
+    });
+  }, [desktopStateKey]);
 
   const loadSnapshot = useCallback(async (apiPortToUse: number) => {
     const [
@@ -427,6 +448,50 @@ function App() {
         : [...currentPeers, peer]
     ));
   }
+
+  useEffect(() => {
+    if (!desktopStateKey) {
+      setSeenReceivedMessageCount(0);
+      return undefined;
+    }
+
+    let cancelled = false;
+    window.unccoinDesktop.readDesktopState(desktopStateKey)
+      .then((state) => {
+        if (!cancelled) {
+          setSeenReceivedMessageCount(state.seenReceivedMessageCount);
+        }
+      })
+      .catch((stateError) => {
+        if (!cancelled) {
+          setError(String(stateError));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopStateKey]);
+
+  useEffect(() => {
+    if (
+      activeTab !== "messages"
+      || !desktopStateKey
+      || receivedMessageCount <= seenReceivedMessageCount
+    ) {
+      return;
+    }
+
+    void markReceivedMessagesSeen(receivedMessageCount).catch((stateError) => {
+      setError(String(stateError));
+    });
+  }, [
+    activeTab,
+    desktopStateKey,
+    markReceivedMessagesSeen,
+    receivedMessageCount,
+    seenReceivedMessageCount,
+  ]);
 
   useEffect(() => {
     void refreshWallets().catch((walletError) => {
@@ -1452,7 +1517,10 @@ function App() {
               className={activeTab === tab.id ? "active" : ""}
               onClick={() => setActiveTab(tab.id)}
             >
-              {tab.label}
+              <span className="tab-label">{tab.label}</span>
+              {tab.id === "messages" && unreadMessageCount > 0 ? (
+                <span className="unread-badge">{unreadMessageCount}</span>
+              ) : null}
             </button>
           ))}
         </nav>

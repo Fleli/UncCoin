@@ -38,6 +38,10 @@ type DeletedWalletSummary = {
   deletedPath: string;
 };
 
+type DesktopState = {
+  seenReceivedMessageCount: number;
+};
+
 type ApiRequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
@@ -65,6 +69,15 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
   ),
   deleteWallet: (name: string): Promise<DeletedWalletSummary> => (
     ipcRenderer.invoke("wallets:delete", { name })
+  ),
+  readDesktopState: (walletKey: string): Promise<DesktopState> => (
+    ipcRenderer.invoke("desktop-state:read", { walletKey })
+  ),
+  updateDesktopState: (
+    walletKey: string,
+    state: Partial<DesktopState>,
+  ): Promise<DesktopState> => (
+    ipcRenderer.invoke("desktop-state:update", { walletKey, ...state })
   ),
   getLocalAddresses: (): Promise<string[]> => ipcRenderer.invoke("system:local-addresses"),
   fetchApi: (apiPort: number, path: string, options: ApiRequestOptions = {}): Promise<unknown> => (
