@@ -782,6 +782,16 @@ code.reference-text {
   gap: 12px;
 }
 
+.alias-autosend-panel .form-grid {
+  gap: 16px;
+}
+
+.autosend-form {
+  margin-top: 22px;
+  border-top: 1px solid #283138;
+  padding-top: 20px;
+}
+
 .compact {
   padding: 12px;
 }

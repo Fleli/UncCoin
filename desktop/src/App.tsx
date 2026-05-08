@@ -2175,7 +2175,7 @@ function App() {
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
-  const walletBalancesByAmount = sortBalancesDescending(snapshot.balances);
+  const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
   const knownPeers = snapshot.peers.known;
   const disableNodeAction = !isApiAvailable || busyAction !== null;
@@ -2393,45 +2393,25 @@ function App() {
               </article>
             </div>
 
-            <div className="panel-grid two">
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Balances</h3>
-                  <span>{snapshot.balances.length}</span>
-                </div>
-                <div className="list">
-                  {snapshot.balances.length === 0 ? (
-                    <p className="empty">No balances loaded.</p>
-                  ) : (
-                    snapshot.balances.map((balance) => (
-                      <div className="list-row" key={balance.address}>
-                        <ReferenceText value={balance.alias || balance.address} title={balance.address} />
-                        <strong>{balance.balance}</strong>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Pending Transactions</h3>
-                  <span>{snapshot.pendingTransactions.length}</span>
-                </div>
-                <div className="list">
-                  {snapshot.pendingTransactions.length === 0 ? (
-                    <p className="empty">Mempool is empty.</p>
-                  ) : (
-                    snapshot.pendingTransactions.map((transaction) => (
-                      <div className="list-row stacked" key={transaction.transaction_id}>
-                        <ReferenceText value={transactionSummary(transaction)} />
-                        <ReferenceCode value={transaction.transaction_id} />
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            </div>
+            <section className="panel">
+              <div className="panel-title">
+                <h3>All Balances</h3>
+                <span>{snapshot.balances.length}</span>
+              </div>
+              <div className="table">
+                {balancesByAmount.length === 0 ? (
+                  <p className="empty">No balances loaded.</p>
+                ) : (
+                  balancesByAmount.map((balance) => (
+                    <div className="table-row" key={balance.address}>
+                      <ReferenceCode value={balance.address} />
+                      <span>{balance.alias || "-"}</span>
+                      <strong>{balance.balance}</strong>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
 
             <section className="panel">
               <div className="panel-title">
@@ -2763,7 +2743,7 @@ function App() {
 
         {activeTab === "wallet" ? (
           <section className="view">
-            <section className="panel">
+            <section className="panel alias-autosend-panel">
               <div className="panel-title">
                 <h3>Aliases and Autosend</h3>
                 <span>{snapshot.nodeInfo?.autosend.enabled ? "autosend on" : "autosend off"}</span>
@@ -2781,7 +2761,7 @@ function App() {
                   Save Alias
                 </button>
               </form>
-              <form className="form-grid" onSubmit={handleAutosend}>
+              <form className="form-grid autosend-form" onSubmit={handleAutosend}>
                 <label>
                   Autosend Target
                   <input value={autosendTarget} onChange={(event) => setAutosendTarget(event.target.value)} />
@@ -2855,21 +2835,6 @@ function App() {
               ) : null}
             </section>
 
-            <section className="panel">
-              <div className="panel-title">
-                <h3>All Balances</h3>
-                <span>{snapshot.balances.length}</span>
-              </div>
-              <div className="table">
-                {walletBalancesByAmount.map((balance) => (
-                  <div className="table-row" key={balance.address}>
-                    <ReferenceCode value={balance.address} />
-                    <span>{balance.alias || "-"}</span>
-                    <strong>{balance.balance}</strong>
-                  </div>
-                ))}
-              </div>
-            </section>
           </section>
         ) : null}
 
