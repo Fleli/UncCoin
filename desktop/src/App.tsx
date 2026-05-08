@@ -56,6 +56,7 @@ const DEFAULT_DEPLOY_JSON = `{
 }`;
 const DEFAULT_EXECUTE_JSON = "null";
 const DEFAULT_AUTH_JSON = "[]";
+const RECENT_BLOCK_LIMIT = 12;
 
 type TabId = "overview" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 
@@ -404,9 +405,10 @@ function App() {
   }, [desktopStateKey]);
 
   const loadSnapshot = useCallback(async (apiPortToUse: number) => {
+    const chainHead = await readChainHead(apiPortToUse);
+    const recentBlockStartHeight = Math.max(0, chainHead.height - RECENT_BLOCK_LIMIT + 1);
     const [
       nodeInfo,
-      chainHead,
       balances,
       peers,
       pendingTransactions,
@@ -418,11 +420,10 @@ function App() {
       mining,
     ] = await Promise.all([
       readNodeInfo(apiPortToUse),
-      readChainHead(apiPortToUse),
       readBalances(apiPortToUse),
       readPeers(apiPortToUse),
       readPendingTransactions(apiPortToUse),
-      readBlocks(apiPortToUse),
+      readBlocks(apiPortToUse, RECENT_BLOCK_LIMIT, recentBlockStartHeight),
       readMessages(apiPortToUse),
       readContracts(apiPortToUse),
       readReceipts(apiPortToUse),

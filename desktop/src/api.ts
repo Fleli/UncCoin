@@ -216,8 +216,8 @@ export function readPendingTransactions(apiPort: number): Promise<PendingTransac
   return requestApi<PendingTransactionsResponse>(apiPort, "/transactions/pending");
 }
 
-export function readBlocks(apiPort: number, limit = 12): Promise<BlocksResponse> {
-  return requestApi<BlocksResponse>(apiPort, `/chain/blocks?limit=${limit}`);
+export function readBlocks(apiPort: number, limit = 12, fromHeight = 0): Promise<BlocksResponse> {
+  return requestApi<BlocksResponse>(apiPort, `/chain/blocks?from_height=${fromHeight}&limit=${limit}`);
 }
 
 export function readMessages(apiPort: number): Promise<MessagesResponse> {
