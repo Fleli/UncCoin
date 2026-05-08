@@ -647,7 +647,7 @@ def _sync_status_payload(node: "Node") -> dict[str, Any]:
 def _recent_miners_payload(
     node: "Node",
     blockchain: "Blockchain",
-    block_limit: int = 25,
+    block_limit: int = 100,
 ) -> list[dict[str, Any]]:
     miner_counts: Counter[str] = Counter()
     for block in blockchain.get_chain(_state_tip_hash(node))[-block_limit:]:
