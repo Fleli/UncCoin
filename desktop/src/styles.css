@@ -127,7 +127,7 @@ pre {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 330px;
+  grid-template-columns: 300px minmax(0, 1fr);
   min-height: 100vh;
   background: #101214;
 }
@@ -757,16 +757,7 @@ dd {
   padding: 18px 22px 28px;
 }
 
-.mining-column {
-  min-width: 0;
-  border-left: 1px solid #283138;
-  padding: 18px;
-  background: #14181b;
-}
-
 .mining-panel {
-  position: sticky;
-  top: 18px;
   display: grid;
   gap: 14px;
 }
@@ -816,12 +807,13 @@ dd {
 }
 
 .miner-board {
-  border-top: 1px solid #283138;
-  padding-top: 14px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
 }
 
 .compact-title {
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .topbar {

@@ -57,7 +57,7 @@ const DEFAULT_DEPLOY_JSON = `{
 const DEFAULT_EXECUTE_JSON = "null";
 const DEFAULT_AUTH_JSON = "[]";
 
-type TabId = "overview" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabId = "overview" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -87,6 +87,7 @@ type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-boots
 
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "mining", label: "Mining" },
   { id: "wallet", label: "Wallet" },
   { id: "network", label: "Network" },
   { id: "messages", label: "Messages" },
@@ -1750,6 +1751,106 @@ function App() {
           </section>
         ) : null}
 
+        {activeTab === "mining" ? (
+          <section className="view mining-view">
+            <div className="panel-grid two">
+              <section className="panel mining-panel">
+                <div className="panel-title">
+                  <h3>Mining</h3>
+                  <span>{miningModeLabel}</span>
+                </div>
+
+                <div className={`mining-readout ${miningActive ? "active" : ""}`}>
+                  <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
+                  <strong>{formatNumber(miningStatus?.nonce)}</strong>
+                  <small>
+                    {miningActive
+                      ? `running ${formatElapsed(miningStatus?.started_at)}`
+                      : miningStatus?.last_block.block_hash
+                      ? `last block #${miningStatus.last_block.height ?? "-"}`
+                      : "idle"}
+                  </small>
+                </div>
+
+                <dl className="detail-list mining-stats">
+                  <div>
+                    <dt>Difficulty</dt>
+                    <dd>{formatNumber(miningDifficulty)}</dd>
+                  </div>
+                  <div>
+                    <dt>Pending Tx</dt>
+                    <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Last Checked</dt>
+                    <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
+                  </div>
+                  <div>
+                    <dt>Tip</dt>
+                    <dd>{shortHash(miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash, 14)}</dd>
+                  </div>
+                </dl>
+
+                <form className="form-grid mining-controls" onSubmit={handleMine}>
+                  <label>
+                    Mine Description
+                    <input
+                      value={mineDescription}
+                      placeholder="Block description"
+                      onChange={(event) => setMineDescription(event.target.value)}
+                      disabled={!isApiAvailable || busyAction === "mine-block"}
+                    />
+                  </label>
+                  <div className="button-row">
+                    <button type="submit" disabled={miningStartDisabled}>
+                      Mine Once
+                    </button>
+                    <button
+                      type="button"
+                      disabled={miningStartDisabled}
+                      onClick={() => void runNodeAction("start-automine", async () => {
+                        const response = await startAutomine(activeApiPort, mineDescription || undefined);
+                        return { label: "Automine started", detail: response.description };
+                      })}
+                    >
+                      Start Auto
+                    </button>
+                    <button
+                      type="button"
+                      disabled={miningStopDisabled}
+                      onClick={() => void runNodeAction("stop-automine", async () => {
+                        await stopAutomine(activeApiPort);
+                        return { label: "Automine stopped" };
+                      })}
+                    >
+                      Stop
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="panel miner-board">
+                <div className="panel-title compact-title">
+                  <h3>Active Miners</h3>
+                  <span>{miningStatus?.recent_miners.length ?? 0}</span>
+                </div>
+                <div className="list">
+                  {miningStatus?.recent_miners.length ? (
+                    miningStatus.recent_miners.map((miner) => (
+                      <div className="list-row stacked" key={miner.address}>
+                        <span>{miner.alias || shortHash(miner.address, 16)}</span>
+                        <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty">No recent mined blocks.</p>
+                  )}
+                </div>
+              </section>
+            </div>
+          </section>
+        ) : null}
+
         {activeTab === "wallet" ? (
           <section className="view">
             <div className="panel-grid two">
@@ -2210,102 +2311,6 @@ function App() {
           </section>
         ) : null}
       </section>
-
-      <aside className="mining-column">
-        <section className="panel mining-panel">
-          <div className="panel-title">
-            <h3>Mining</h3>
-            <span>{miningModeLabel}</span>
-          </div>
-
-          <div className={`mining-readout ${miningActive ? "active" : ""}`}>
-            <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
-            <strong>{formatNumber(miningStatus?.nonce)}</strong>
-            <small>
-              {miningActive
-                ? `running ${formatElapsed(miningStatus?.started_at)}`
-                : miningStatus?.last_block.block_hash
-                ? `last block #${miningStatus.last_block.height ?? "-"}`
-                : "idle"}
-            </small>
-          </div>
-
-          <dl className="detail-list mining-stats">
-            <div>
-              <dt>Difficulty</dt>
-              <dd>{formatNumber(miningDifficulty)}</dd>
-            </div>
-            <div>
-              <dt>Pending Tx</dt>
-              <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Last Checked</dt>
-              <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
-            </div>
-            <div>
-              <dt>Tip</dt>
-              <dd>{shortHash(miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash, 14)}</dd>
-            </div>
-          </dl>
-
-          <form className="form-grid mining-controls" onSubmit={handleMine}>
-            <label>
-              Mine Description
-              <input
-                value={mineDescription}
-                placeholder="Block description"
-                onChange={(event) => setMineDescription(event.target.value)}
-                disabled={!isApiAvailable || busyAction === "mine-block"}
-              />
-            </label>
-            <div className="button-row">
-              <button type="submit" disabled={miningStartDisabled}>
-                Mine Once
-              </button>
-              <button
-                type="button"
-                disabled={miningStartDisabled}
-                onClick={() => void runNodeAction("start-automine", async () => {
-                  const response = await startAutomine(activeApiPort, mineDescription || undefined);
-                  return { label: "Automine started", detail: response.description };
-                })}
-              >
-                Start Auto
-              </button>
-              <button
-                type="button"
-                disabled={miningStopDisabled}
-                onClick={() => void runNodeAction("stop-automine", async () => {
-                  await stopAutomine(activeApiPort);
-                  return { label: "Automine stopped" };
-                })}
-              >
-                Stop
-              </button>
-            </div>
-          </form>
-
-          <section className="miner-board">
-            <div className="panel-title compact-title">
-              <h3>Active Miners</h3>
-              <span>{miningStatus?.recent_miners.length ?? 0}</span>
-            </div>
-            <div className="list">
-              {miningStatus?.recent_miners.length ? (
-                miningStatus.recent_miners.map((miner) => (
-                  <div className="list-row stacked" key={miner.address}>
-                    <span>{miner.alias || shortHash(miner.address, 16)}</span>
-                    <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
-                  </div>
-                ))
-              ) : (
-                <p className="empty">No recent mined blocks.</p>
-              )}
-            </div>
-          </section>
-        </section>
-      </aside>
     </main>
   );
 }
