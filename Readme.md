@@ -231,7 +231,10 @@ bitwise `XOR`, then hash the result with `SHA256`.
 The repo includes `state/contracts/coinflip.uvm`, a two-wallet example that should be deployed
 with `deploy 0 coinflip.uvm`. It expects both hardcoded wallets to authorize the printed
 contract address and reveal under request id `coinflip`, stakes 100 from each wallet, and pays
-200 to the derived winner.
+200 to the derived winner. The toy contract has a hardcoded reveal deadline at block 10:
+before then, a missing reveal no-ops; after then, a single missing revealer forfeits 100 to
+the revealer who showed up. It stores `settled = 1` after a payout or timeout close so replay
+execution cannot pay twice.
 
 ## Local Convenience Commands
 
