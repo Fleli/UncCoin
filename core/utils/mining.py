@@ -28,6 +28,25 @@ def validate_mining_reward_transaction(block: Block) -> bool:
 
 
 def get_mining_reward_validation_error(block: Block) -> str | None:
+    structure_error = get_mining_reward_structure_error(block)
+    if structure_error is not None:
+        return structure_error
+
+    if block.block_id == 0:
+        return None
+
+    expected_total_fees = sum(
+        (
+            transaction.fee
+            for transaction in block.transactions
+            if not is_mining_reward_transaction(transaction)
+        ),
+        start=Decimal("0.0"),
+    )
+    return get_mining_reward_amount_validation_error(block, expected_total_fees)
+
+
+def get_mining_reward_structure_error(block: Block) -> str | None:
     reward_transactions = [
         transaction
         for transaction in block.transactions
@@ -45,24 +64,32 @@ def get_mining_reward_validation_error(block: Block) -> str | None:
         return "block contains multiple mining reward transactions"
 
     reward_transaction = reward_transactions[0]
-    expected_reward_amount = MINING_REWARD_AMOUNT + sum(
-        (
-            transaction.fee
-            for transaction in block.transactions
-            if not is_mining_reward_transaction(transaction)
-        ),
-        start=Decimal("0.0"),
-    )
     if block.transactions[0] != reward_transaction:
         return "mining reward transaction must be the first transaction in the block"
-    if reward_transaction.amount != expected_reward_amount:
-        return (
-            f"mining reward amount {reward_transaction.amount} does not match "
-            f"expected reward {expected_reward_amount}"
-        )
     if reward_transaction.fee != Decimal("0.0"):
         return "mining reward transaction fee must be 0.0"
     if not reward_transaction.receiver:
         return "mining reward transaction receiver is empty"
 
+    return None
+
+
+def get_mining_reward_amount_validation_error(
+    block: Block,
+    total_fees: Decimal,
+) -> str | None:
+    if block.block_id == 0:
+        return None
+
+    reward_transaction = next(
+        transaction
+        for transaction in block.transactions
+        if is_mining_reward_transaction(transaction)
+    )
+    expected_reward_amount = MINING_REWARD_AMOUNT + total_fees
+    if reward_transaction.amount != expected_reward_amount:
+        return (
+            f"mining reward amount {reward_transaction.amount} does not match "
+            f"expected reward {expected_reward_amount}"
+        )
     return None

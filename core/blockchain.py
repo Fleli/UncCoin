@@ -23,7 +23,8 @@ from core.uvm_authorization import build_authorization_index
 from core.utils.constants import GENESIS_PREVIOUS_HASH, MAX_TRANSACTIONS_PER_BLOCK
 from core.utils.mining import (
     create_mining_reward_transaction,
-    get_mining_reward_validation_error,
+    get_mining_reward_amount_validation_error,
+    get_mining_reward_structure_error,
     is_mining_reward_transaction,
 )
 from wallet.wallet import Wallet
@@ -305,9 +306,9 @@ class Blockchain:
 
         base_state = self._get_state_for_tip(base_tip_hash)
         selected_transactions = self._select_transactions_for_block(base_tip_hash)
-        total_fees = sum(
-            (transaction.fee for transaction in selected_transactions),
-            start=Decimal("0.0"),
+        total_fees = self._calculate_transaction_fees_for_block(
+            selected_transactions,
+            base_state,
         )
         reward_transaction = create_mining_reward_transaction(
             miner_address,
@@ -465,7 +466,7 @@ class Blockchain:
                 f"max is {MAX_TRANSACTIONS_PER_BLOCK}",
             )
 
-        mining_reward_error = get_mining_reward_validation_error(block)
+        mining_reward_error = get_mining_reward_structure_error(block)
         if mining_reward_error is not None:
             return None, mining_reward_error
 
@@ -478,12 +479,14 @@ class Blockchain:
 
         state = parent_state.copy()
         state.height = block.block_id
+        fee_collector: list[Decimal] = []
 
         for index, transaction in enumerate(block.transactions):
             transaction_error = self._apply_transaction_to_state_error(
                 transaction,
                 state,
                 execution_block_height=block.block_id,
+                fee_collector=fee_collector,
             )
             if transaction_error is not None:
                 transaction_id = sha256_transaction_hash(transaction)[:12]
@@ -492,6 +495,13 @@ class Blockchain:
                     f"transaction {index} ({transaction_id}) is invalid: "
                     f"{transaction_error}",
                 )
+
+        reward_amount_error = get_mining_reward_amount_validation_error(
+            block,
+            sum(fee_collector, start=Decimal("0.0")),
+        )
+        if reward_amount_error is not None:
+            return None, reward_amount_error
 
         return state, None
 
@@ -639,6 +649,30 @@ class Blockchain:
 
         return selected_transactions
 
+    def _calculate_transaction_fees_for_block(
+        self,
+        transactions: list[Transaction],
+        base_state: ChainState,
+    ) -> Decimal:
+        state = base_state.copy()
+        fee_collector: list[Decimal] = []
+        execution_block_height = base_state.height + 1
+
+        for transaction in transactions:
+            transaction_error = self._apply_transaction_to_state_error(
+                transaction,
+                state,
+                execution_block_height=execution_block_height,
+                fee_collector=fee_collector,
+            )
+            if transaction_error is not None:
+                raise ValueError(
+                    "Selected transaction became invalid while calculating fees: "
+                    f"{transaction_error}"
+                )
+
+        return sum(fee_collector, start=Decimal("0.0"))
+
     def reconcile_pending_transactions(
         self,
         previous_head: str | None,
@@ -778,7 +812,12 @@ class Blockchain:
         transaction: Transaction,
         state: ChainState,
         execution_block_height: int | None = None,
+        fee_collector: list[Decimal] | None = None,
     ) -> str | None:
+        def collect_fee(fee_paid: Decimal) -> None:
+            if fee_collector is not None and not is_mining_reward_transaction(transaction):
+                fee_collector.append(fee_paid)
+
         authenticity_error = self._validate_transaction_authenticity_error(transaction)
         if authenticity_error is not None:
             return authenticity_error
@@ -826,6 +865,7 @@ class Blockchain:
             state.balances[transaction.receiver] = (
                 state.balances.get(transaction.receiver, Decimal("0.0")) + transaction.amount
             )
+            collect_fee(transaction.fee)
             return None
 
         if transaction.kind == TRANSACTION_KIND_COMMIT:
@@ -845,6 +885,7 @@ class Blockchain:
             state.nonces[transaction.sender] = expected_nonce + 1
             state.balances[transaction.sender] = sender_balance - total_cost
             state.commitments.setdefault(request_id, {})[transaction.sender] = commitment_hash
+            collect_fee(transaction.fee)
             return None
 
         if transaction.kind == TRANSACTION_KIND_REVEAL:
@@ -870,6 +911,7 @@ class Blockchain:
                 "salt": salt,
                 "commitment_hash": commitment_hash,
             }
+            collect_fee(transaction.fee)
             return None
 
         if transaction.kind == TRANSACTION_KIND_DEPLOY:
@@ -893,6 +935,7 @@ class Blockchain:
                 "metadata": deepcopy(transaction.payload.get("metadata", {})),
             }
             state.contract_storage.setdefault(contract_address, {})
+            collect_fee(transaction.fee)
             return None
 
         if transaction.kind == TRANSACTION_KIND_EXECUTE:
@@ -902,6 +945,7 @@ class Blockchain:
                 sender_balance,
                 expected_nonce,
                 execution_block_height,
+                fee_collector,
             )
 
         return f"unsupported transaction kind {transaction.kind}"
@@ -913,6 +957,7 @@ class Blockchain:
         sender_balance: Decimal,
         expected_nonce: int,
         execution_block_height: int | None,
+        fee_collector: list[Decimal] | None,
     ) -> str | None:
         if not transaction.receiver:
             return "execute transaction contract address is empty"
@@ -952,6 +997,14 @@ class Blockchain:
         except ValueError as error:
             return str(error)
 
+        maximum_fuel_fee = Decimal(gas_limit) * gas_price
+        if gas_price > Decimal("0.0") and transaction.fee < maximum_fuel_fee:
+            return (
+                f"execute transaction fee {transaction.fee} is below maximum "
+                f"fuel cost gas_limit {gas_limit} * gas_price {gas_price} "
+                f"= {maximum_fuel_fee}"
+            )
+
         total_cost = transaction.amount + transaction.fee
         if sender_balance < total_cost:
             return (
@@ -988,16 +1041,14 @@ class Blockchain:
             ),
         )
 
-        expected_fuel_fee = Decimal(execution_result.gas_used) * gas_price
-        if gas_price > Decimal("0.0") and transaction.fee != expected_fuel_fee:
-            return (
-                f"execute transaction fee {transaction.fee} does not match "
-                f"gas_used {execution_result.gas_used} * gas_price {gas_price} "
-                f"= {expected_fuel_fee}"
-            )
+        fee_paid = (
+            Decimal(execution_result.gas_used) * gas_price
+            if gas_price > Decimal("0.0")
+            else transaction.fee
+        )
 
         state.nonces[transaction.sender] = expected_nonce + 1
-        state.balances[transaction.sender] = sender_balance - transaction.fee
+        state.balances[transaction.sender] = sender_balance - fee_paid
         if execution_result.success:
             state.balances[transaction.sender] -= transaction.amount
             if transaction.amount > Decimal("0.0"):
@@ -1010,7 +1061,13 @@ class Blockchain:
                     state.balances.get(address, Decimal("0.0")) + balance_change
                 )
             state.contract_storage[contract_address] = execution_result.storage
-        state.uvm_receipts[sha256_transaction_hash(transaction)] = execution_result.to_dict()
+        receipt = execution_result.to_dict()
+        receipt["fee_escrowed"] = str(transaction.fee)
+        receipt["fee_paid"] = str(fee_paid)
+        receipt["fee_refunded"] = str(transaction.fee - fee_paid)
+        state.uvm_receipts[sha256_transaction_hash(transaction)] = receipt
+        if fee_collector is not None:
+            fee_collector.append(fee_paid)
         return None
 
     @staticmethod

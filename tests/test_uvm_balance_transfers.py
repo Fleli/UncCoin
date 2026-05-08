@@ -161,7 +161,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
                     ["HALT"],
                 ],
                 value=Decimal("0"),
-                fee=Decimal("0.51"),
+                fee=Decimal("1.00"),
                 gas_limit=100,
                 gas_price=Decimal("0.01"),
                 authorizations=[
@@ -223,7 +223,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
                     ["HALT"],
                 ],
                 value=Decimal("2"),
-                fee=Decimal("0.51"),
+                fee=Decimal("1.00"),
                 gas_limit=100,
                 gas_price=Decimal("0.01"),
                 timestamp=datetime.now(),
@@ -337,7 +337,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
         self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
         self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
 
-    def test_execute_charges_exact_fuel_fee_for_sender_transfer(self) -> None:
+    def test_execute_refunds_unused_fuel_escrow_for_sender_transfer(self) -> None:
         blockchain = create_blockchain()
         caller = create_wallet(name="caller")
         receiver = create_wallet(name="receiver")
@@ -357,7 +357,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
                     ["HALT"],
                 ],
                 value=Decimal("0"),
-                fee=Decimal("0.51"),
+                fee=Decimal("1.00"),
                 gas_limit=100,
                 gas_price=Decimal("0.01"),
                 timestamp=datetime.now(),
@@ -379,8 +379,11 @@ class UvmBalanceTransferTests(unittest.TestCase):
         self.assertIsNotNone(receipt)
         assert receipt is not None
         self.assertEqual(receipt["gas_used"], 51)
+        self.assertEqual(receipt["fee_escrowed"], "1.00")
+        self.assertEqual(receipt["fee_paid"], "0.51")
+        self.assertEqual(receipt["fee_refunded"], "0.49")
 
-    def test_execute_rejects_fuel_fee_mismatch(self) -> None:
+    def test_execute_rejects_insufficient_fuel_escrow(self) -> None:
         blockchain = create_blockchain()
         caller = create_wallet(name="caller")
         blockchain.mine_pending_transactions(
@@ -406,7 +409,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "does not match"):
+        with self.assertRaisesRegex(ValueError, "below maximum fuel cost"):
             blockchain.add_transaction(transaction)
 
         self.assertEqual(blockchain.get_balance(caller.address), Decimal("10.0"))
