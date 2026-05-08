@@ -107,7 +107,8 @@ that a single UVM run can move from that wallet for the signed request id.
 
 The UVM is a deterministic stack machine. Programs can be provided as a JSON instruction list
 or as simple assembly text. Each instruction is charged gas before it executes; if gas runs
-out, the execute transaction is invalid and the block is rejected.
+out, the execute transaction is still included with a failed receipt, but no UVM state changes
+are applied.
 
 Example program:
 
@@ -198,6 +199,9 @@ the VM finishes successfully and all source authorization checks pass.
 Fuel economics are represented by the execute transaction fee. If `gas_price` is zero, the fee
 is a flat fee as in earlier transactions. If `gas_price` is positive, the chain requires the
 declared fee to equal `gas_used * gas_price`; that fee is then included in the miner reward.
+Failed UVM runs still consume the execute transaction sender's fee, advance the sender nonce,
+and store a failed receipt. Contract storage, call value, and UVM balance transfers are applied
+only after successful execution.
 
 For simple shared randomness, contracts can read multiple revealed seeds, combine them with
 bitwise `XOR`, then hash the result with `SHA256`.

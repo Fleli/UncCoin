@@ -88,7 +88,7 @@ class UvmBalanceTransferTests(unittest.TestCase):
             ],
         )
 
-    def test_execute_rejects_unsigned_balance_transfer(self) -> None:
+    def test_execute_records_unsigned_balance_transfer_as_failed(self) -> None:
         blockchain = create_blockchain()
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")
@@ -121,21 +121,34 @@ class UvmBalanceTransferTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "not authorized"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="include failed unsigned transfer",
+        )
 
         self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
         self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertFalse(receipt["success"])
+        self.assertIn("not authorized", receipt["error"] or "")
 
-    def test_execute_rejects_transfer_above_authorized_amount_limit(self) -> None:
+    def test_execute_records_amount_limit_failure_and_burns_fuel(self) -> None:
         blockchain = create_blockchain()
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")
         caller = create_wallet(name="caller")
+        miner = create_wallet(name="miner")
         request_id = "casino-payout-1"
         blockchain.mine_pending_transactions(
             miner_address=source.address,
             description="fund source",
+        )
+        blockchain.mine_pending_transactions(
+            miner_address=caller.address,
+            description="fund caller",
         )
         transaction = sign_transaction(
             caller,
@@ -148,8 +161,9 @@ class UvmBalanceTransferTests(unittest.TestCase):
                     ["HALT"],
                 ],
                 value=Decimal("0"),
-                fee=Decimal("0"),
+                fee=Decimal("0.51"),
                 gas_limit=100,
+                gas_price=Decimal("0.01"),
                 authorizations=[
                     create_uvm_authorization(
                         source,
@@ -163,9 +177,69 @@ class UvmBalanceTransferTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "exceeds amount limit"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address=miner.address,
+            description="include failed amount-limited transfer",
+        )
 
+        self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
+        self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
+        self.assertEqual(blockchain.get_balance(caller.address), Decimal("9.49"))
+        self.assertEqual(blockchain.get_balance(miner.address), Decimal("10.51"))
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertFalse(receipt["success"])
+        self.assertEqual(receipt["gas_used"], 51)
+        self.assertIn("exceeds amount limit", receipt["error"] or "")
+
+    def test_execute_reverts_value_transfer_on_failed_run(self) -> None:
+        blockchain = create_blockchain()
+        source = create_wallet(name="source")
+        receiver = create_wallet(name="receiver")
+        caller = create_wallet(name="caller")
+        blockchain.mine_pending_transactions(
+            miner_address=source.address,
+            description="fund source",
+        )
+        blockchain.mine_pending_transactions(
+            miner_address=caller.address,
+            description="fund caller",
+        )
+        transaction = sign_transaction(
+            caller,
+            Transaction.execute(
+                sender=caller.address,
+                contract_address="casino-contract",
+                input_data=[
+                    ["PUSH", 3],
+                    [
+                        "TRANSFER_FROM",
+                        source.address,
+                        receiver.address,
+                        "casino-payout-1",
+                    ],
+                    ["HALT"],
+                ],
+                value=Decimal("2"),
+                fee=Decimal("0.51"),
+                gas_limit=100,
+                gas_price=Decimal("0.01"),
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(caller.address),
+                sender_public_key=caller.public_key,
+            ),
+        )
+
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="include failed value transfer",
+        )
+
+        self.assertEqual(blockchain.get_balance(caller.address), Decimal("9.49"))
+        self.assertEqual(blockchain.get_balance("casino-contract"), Decimal("0.0"))
         self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
         self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
 

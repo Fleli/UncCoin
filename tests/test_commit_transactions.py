@@ -218,9 +218,10 @@ class CommitTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "signature verification failed"):
             blockchain.add_transaction(transaction)
 
-    def test_execute_rejects_out_of_gas_runs(self) -> None:
+    def test_execute_records_out_of_gas_runs_and_burns_fuel(self) -> None:
         blockchain = create_blockchain()
         wallet = create_wallet(name="caller")
+        miner = create_wallet(name="miner")
         blockchain.mine_pending_transactions(
             miner_address=wallet.address,
             description="fund caller",
@@ -236,16 +237,30 @@ class CommitTransactionTests(unittest.TestCase):
                     ["HALT"],
                 ],
                 value=Decimal("0"),
-                fee=Decimal("0"),
+                fee=Decimal("1"),
                 gas_limit=100,
+                gas_price=Decimal("0.01"),
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(wallet.address),
                 sender_public_key=wallet.public_key,
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "out of gas"):
-            blockchain.add_transaction(transaction)
+        blockchain.add_transaction(transaction)
+        blockchain.mine_pending_transactions(
+            miner_address=miner.address,
+            description="include failed uvm run",
+        )
+
+        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertFalse(receipt["success"])
+        self.assertTrue(receipt["gas_exhausted"])
+        self.assertEqual(receipt["gas_used"], 100)
+        self.assertEqual(blockchain.get_contract_storage("contract-address"), {})
+        self.assertEqual(blockchain.get_balance(wallet.address), Decimal("9.0"))
+        self.assertEqual(blockchain.get_balance(miner.address), Decimal("11.0"))
 
 
 class NodeCommitTransactionTests(unittest.TestCase):

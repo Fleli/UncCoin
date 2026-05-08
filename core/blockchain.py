@@ -987,12 +987,6 @@ class Blockchain:
                 authorization_index=authorization_index,
             ),
         )
-        if not execution_result.success:
-            gas_status = "out of gas" if execution_result.gas_exhausted else "failed"
-            return (
-                f"uvm execution {gas_status}: "
-                f"{execution_result.error or 'unknown error'}"
-            )
 
         expected_fuel_fee = Decimal(execution_result.gas_used) * gas_price
         if gas_price > Decimal("0.0") and transaction.fee != expected_fuel_fee:
@@ -1003,16 +997,19 @@ class Blockchain:
             )
 
         state.nonces[transaction.sender] = expected_nonce + 1
-        state.balances[transaction.sender] = sender_balance - total_cost
-        if transaction.amount > Decimal("0.0"):
-            state.balances[contract_address] = (
-                state.balances.get(contract_address, Decimal("0.0")) + transaction.amount
-            )
-        for address, balance_change in execution_result.balance_changes.items():
-            state.balances[address] = (
-                state.balances.get(address, Decimal("0.0")) + balance_change
-            )
-        state.contract_storage[contract_address] = execution_result.storage
+        state.balances[transaction.sender] = sender_balance - transaction.fee
+        if execution_result.success:
+            state.balances[transaction.sender] -= transaction.amount
+            if transaction.amount > Decimal("0.0"):
+                state.balances[contract_address] = (
+                    state.balances.get(contract_address, Decimal("0.0"))
+                    + transaction.amount
+                )
+            for address, balance_change in execution_result.balance_changes.items():
+                state.balances[address] = (
+                    state.balances.get(address, Decimal("0.0")) + balance_change
+                )
+            state.contract_storage[contract_address] = execution_result.storage
         state.uvm_receipts[sha256_transaction_hash(transaction)] = execution_result.to_dict()
         return None
 
