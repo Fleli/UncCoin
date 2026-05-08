@@ -757,6 +757,7 @@ function App() {
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
+  const [randomnessCommits, setRandomnessCommits] = useState<RandomnessCommitRecord[]>([]);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
   const latestSnapshotRef = useRef<Snapshot>(snapshot);
@@ -823,6 +824,14 @@ function App() {
     [snapshot.messages],
   );
   const unreadMessageCount = Math.max(0, receivedMessageCount - seenReceivedMessageCount);
+  const pendingRandomnessCommits = useMemo(
+    () => randomnessCommits.filter((record) => record.status === "pending").reverse(),
+    [randomnessCommits],
+  );
+  const finishedRandomnessCommits = useMemo(
+    () => randomnessCommits.filter((record) => record.status === "revealed").reverse(),
+    [randomnessCommits],
+  );
   const isPreferredPortDirty = (
     selectedWallet !== undefined
     && Number(port) !== selectedWallet.preferredPort
@@ -856,6 +865,17 @@ function App() {
     await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
       seenReceivedMessageCount: normalizedMessageCount,
     });
+  }, [desktopStateKey]);
+
+  const saveRandomnessCommits = useCallback(async (records: RandomnessCommitRecord[]) => {
+    setRandomnessCommits(records);
+    if (!desktopStateKey) {
+      return;
+    }
+    const nextState = await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
+      randomnessCommits: records,
+    });
+    setRandomnessCommits(nextState.randomnessCommits);
   }, [desktopStateKey]);
 
   const loadSnapshot = useCallback(async (apiPortToUse: number) => {
@@ -990,6 +1010,7 @@ function App() {
   useEffect(() => {
     if (!desktopStateKey) {
       setSeenReceivedMessageCount(0);
+      setRandomnessCommits([]);
       return undefined;
     }
 
@@ -998,6 +1019,7 @@ function App() {
       .then((state) => {
         if (!cancelled) {
           setSeenReceivedMessageCount(state.seenReceivedMessageCount);
+          setRandomnessCommits(state.randomnessCommits);
         }
       })
       .catch((stateError) => {
@@ -1781,21 +1803,58 @@ function App() {
       if (!walletAddress) {
         throw new Error("A loaded wallet is required to commit randomness.");
       }
+      const requestId = commitRequestId.trim();
+      const seed = normalizeRandomnessSeed(commitSeed);
+      const salt = commitSalt.trim();
       const commitmentHash = await createRevealCommitmentHash(
         walletAddress,
-        commitRequestId,
-        commitSeed,
-        commitSalt,
+        requestId,
+        seed,
+        salt,
       );
-      setRevealRequestId(commitRequestId);
-      setRevealSeed(commitSeed);
-      setRevealSalt(commitSalt);
+      setRevealRequestId(requestId);
+      setRevealSeed(seed);
+      setRevealSalt(salt);
       const response = await createCommitment(activeApiPort, {
-        request_id: commitRequestId,
+        request_id: requestId,
         commitment_hash: commitmentHash,
         fee: commitFee,
       });
+      const nextRecord: RandomnessCommitRecord = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        requestId,
+        seed,
+        salt,
+        commitmentHash,
+        transactionId: response.transaction_id,
+        createdAt: new Date().toISOString(),
+        status: "pending",
+      };
+      await saveRandomnessCommits([...randomnessCommits, nextRecord]);
       return { label: "Broadcast commitment", detail: response.transaction_id };
+    });
+  }
+
+  async function handleRevealSavedCommit(record: RandomnessCommitRecord) {
+    await runNodeAction("reveal-randomness", async () => {
+      const response = await revealCommitment(activeApiPort, {
+        request_id: record.requestId,
+        seed: record.seed,
+        fee: revealFee,
+        salt: record.salt,
+      });
+      const revealedRecord: RandomnessCommitRecord = {
+        ...record,
+        status: "revealed",
+        revealTransactionId: response.transaction_id,
+        revealedAt: new Date().toISOString(),
+      };
+      await saveRandomnessCommits(
+        randomnessCommits.map((currentRecord) => (
+          currentRecord.id === record.id ? revealedRecord : currentRecord
+        )),
+      );
+      return { label: "Broadcast reveal", detail: response.transaction_id };
     });
   }
 
@@ -3292,11 +3351,78 @@ function App() {
                     Commit
                   </button>
                 </form>
+
+                <div className="randomness-overview">
+                  <div className="randomness-section">
+                    <div className="randomness-section-title">
+                      <h4>Pending</h4>
+                      <label>
+                        Reveal Fee
+                        <input value={revealFee} onChange={(event) => setRevealFee(event.target.value)} />
+                      </label>
+                    </div>
+                    <div className="list">
+                      {pendingRandomnessCommits.length === 0 ? (
+                        <p className="empty">No pending randomness commits.</p>
+                      ) : (
+                        pendingRandomnessCommits.map((record) => (
+                          <div className="list-row stacked randomness-record" key={record.id}>
+                            <div className="auth-summary">
+                              <strong>{record.requestId}</strong>
+                              <button
+                                type="button"
+                                disabled={disableNodeAction}
+                                onClick={() => void handleRevealSavedCommit(record)}
+                              >
+                                Reveal
+                              </button>
+                            </div>
+                            <ReferenceCode value={record.transactionId} prefix="commit " />
+                            <span>{formatTimestamp(record.createdAt)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="randomness-section">
+                    <div className="randomness-section-title">
+                      <h4>Finished</h4>
+                      <span>{finishedRandomnessCommits.length}</span>
+                    </div>
+                    <div className="list">
+                      {finishedRandomnessCommits.length === 0 ? (
+                        <p className="empty">No finished reveals.</p>
+                      ) : (
+                        finishedRandomnessCommits.map((record) => (
+                          <div className="list-row stacked randomness-record" key={record.id}>
+                            <div className="auth-summary">
+                              <strong>{record.requestId}</strong>
+                              <span>{formatTimestamp(record.revealedAt)}</span>
+                            </div>
+                            <ReferenceCode value={record.transactionId} prefix="commit " />
+                            <ReferenceCode value={record.revealTransactionId} prefix="reveal " />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <form className="form-grid separated" onSubmit={handleReveal}>
-                  <label>
-                    Request ID
-                    <input value={revealRequestId} onChange={(event) => setRevealRequestId(event.target.value)} />
-                  </label>
+                  <div className="randomness-section-title">
+                    <h4>Manual Reveal</h4>
+                  </div>
+                  <div className="field-row">
+                    <label>
+                      Request ID
+                      <input value={revealRequestId} onChange={(event) => setRevealRequestId(event.target.value)} />
+                    </label>
+                    <label>
+                      Fee
+                      <input value={revealFee} onChange={(event) => setRevealFee(event.target.value)} />
+                    </label>
+                  </div>
                   <div className="field-row">
                     <label>
                       Seed
@@ -3305,10 +3431,6 @@ function App() {
                     <label>
                       Salt
                       <input value={revealSalt} onChange={(event) => setRevealSalt(event.target.value)} />
-                    </label>
-                    <label>
-                      Fee
-                      <input value={revealFee} onChange={(event) => setRevealFee(event.target.value)} />
                     </label>
                   </div>
                   <button type="submit" disabled={disableNodeAction}>
