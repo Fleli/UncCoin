@@ -1,0 +1,236 @@
+import { app, BrowserWindow, ipcMain } from "electron";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import path from "node:path";
+
+type StartNodeConfig = {
+  walletName: string;
+  host: string;
+  port: number;
+  apiPort?: number;
+  peers?: string[];
+};
+
+type NodeRuntimeState = {
+  running: boolean;
+  pid: number | null;
+  config: Required<Omit<StartNodeConfig, "peers">> & { peers: string[] } | null;
+};
+
+let mainWindow: BrowserWindow | null = null;
+let nodeProcess: ChildProcessWithoutNullStreams | null = null;
+let nodeConfig: NodeRuntimeState["config"] = null;
+
+function repoRoot(): string {
+  return path.resolve(app.getAppPath(), "..");
+}
+
+function pythonCommand(): string {
+  if (process.env.UNCCOIN_PYTHON) {
+    return process.env.UNCCOIN_PYTHON;
+  }
+  return process.platform === "win32" ? "python" : "python3";
+}
+
+function runtimeState(): NodeRuntimeState {
+  return {
+    running: nodeProcess !== null && nodeProcess.exitCode === null,
+    pid: nodeProcess?.pid ?? null,
+    config: nodeConfig,
+  };
+}
+
+function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
+  mainWindow?.webContents.send("node-log", {
+    stream,
+    message,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function sendNodeState(): void {
+  mainWindow?.webContents.send("node-state", runtimeState());
+}
+
+async function waitForNodeExit(processToStop: ChildProcessWithoutNullStreams): Promise<void> {
+  if (processToStop.exitCode !== null) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      if (processToStop.exitCode === null) {
+        processToStop.kill();
+      }
+      resolve();
+    }, 5000);
+
+    processToStop.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
+async function stopNode(): Promise<NodeRuntimeState> {
+  const processToStop = nodeProcess;
+  if (processToStop === null) {
+    return runtimeState();
+  }
+
+  sendNodeLog("system", "Stopping UncCoin node...");
+  if (process.platform === "win32") {
+    processToStop.kill();
+  } else {
+    processToStop.kill("SIGINT");
+  }
+  await waitForNodeExit(processToStop);
+  nodeProcess = null;
+  nodeConfig = null;
+  sendNodeState();
+  return runtimeState();
+}
+
+async function startNode(config: StartNodeConfig): Promise<NodeRuntimeState> {
+  if (nodeProcess !== null && nodeProcess.exitCode === null) {
+    return runtimeState();
+  }
+
+  const walletName = config.walletName.trim();
+  const port = Number(config.port);
+  const apiPort = Number(config.apiPort || port + 10000);
+  const host = config.host.trim() || "127.0.0.1";
+  const peers = config.peers ?? [];
+
+  if (!walletName) {
+    throw new Error("Wallet name is required.");
+  }
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error("Node port must be between 1 and 65535.");
+  }
+  if (!Number.isInteger(apiPort) || apiPort <= 0 || apiPort > 65535) {
+    throw new Error("API port must be between 1 and 65535.");
+  }
+
+  const args = [
+    "-m",
+    "node.cli",
+    "--host",
+    host,
+    "--wallet-name",
+    walletName,
+    "--port",
+    String(port),
+    "--api-port",
+    String(apiPort),
+    "--no-interactive",
+    ...peers.flatMap((peer) => ["--peer", peer]),
+  ];
+
+  const child = spawn(pythonCommand(), args, {
+    cwd: repoRoot(),
+    env: {
+      ...process.env,
+      PYTHONUNBUFFERED: "1",
+    },
+  });
+
+  nodeProcess = child;
+  nodeConfig = {
+    walletName,
+    host,
+    port,
+    apiPort,
+    peers,
+  };
+  sendNodeLog("system", `${pythonCommand()} ${args.join(" ")}`);
+  sendNodeState();
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    sendNodeLog("stdout", chunk.toString());
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    sendNodeLog("stderr", chunk.toString());
+  });
+  child.once("error", (error) => {
+    sendNodeLog("stderr", `Failed to start node: ${error.message}`);
+  });
+  child.once("exit", (code, signal) => {
+    sendNodeLog("system", `Node exited with code ${code ?? "null"} signal ${signal ?? "none"}.`);
+    nodeProcess = null;
+    nodeConfig = null;
+    sendNodeState();
+  });
+
+  return runtimeState();
+}
+
+async function fetchNodeApi(apiPort: number, endpointPath: string): Promise<unknown> {
+  const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+  const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`);
+  const bodyText = await response.text();
+  const body = bodyText ? JSON.parse(bodyText) : null;
+  if (!response.ok) {
+    throw new Error(
+      typeof body?.detail === "string"
+        ? body.detail
+        : `API request failed with status ${response.status}`,
+    );
+  }
+  return body;
+}
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1180,
+    height: 760,
+    minWidth: 980,
+    minHeight: 640,
+    backgroundColor: "#101417",
+    webPreferences: {
+      preload: path.join(app.getAppPath(), "dist-electron", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (process.env.VITE_DEV_SERVER_URL) {
+    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    return;
+  }
+
+  void mainWindow.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
+}
+
+ipcMain.handle("node:start", (_event, config: StartNodeConfig) => startNode(config));
+ipcMain.handle("node:stop", () => stopNode());
+ipcMain.handle("node:state", () => runtimeState());
+ipcMain.handle(
+  "node-api:fetch",
+  (_event, request: { apiPort: number; path: string }) => (
+    fetchNodeApi(Number(request.apiPort), request.path)
+  ),
+);
+
+app.whenReady().then(createWindow).catch((error) => {
+  console.error(error);
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+app.on("before-quit", (event) => {
+  if (nodeProcess === null) {
+    return;
+  }
+  event.preventDefault();
+  stopNode()
+    .catch((error) => {
+      console.error(error);
+    })
+    .finally(() => {
+      app.quit();
+    });
+});
