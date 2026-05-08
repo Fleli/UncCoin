@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
   connectPeer,
@@ -57,8 +57,10 @@ const DEFAULT_DEPLOY_JSON = `{
 const DEFAULT_EXECUTE_JSON = "null";
 const DEFAULT_AUTH_JSON = "[]";
 const RECENT_BLOCK_LIMIT = 12;
+const BLOCKCHAIN_VIEW_BLOCKS = 3;
+const MINING_REWARD_SENDER = "SYSTEM";
 
-type TabId = "overview" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -88,6 +90,7 @@ type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-boots
 
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "blockchain", label: "Blockchain" },
   { id: "transfer", label: "Transfer" },
   { id: "mining", label: "Mining" },
   { id: "wallet", label: "Wallet" },
@@ -186,6 +189,112 @@ function transactionSummary(transaction: TransactionPayload): string {
 
 function newestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
   return [...items].sort((left, right) => String(right.timestamp ?? "").localeCompare(String(left.timestamp ?? "")));
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return "-";
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return value;
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
+function payloadValue(transaction: TransactionPayload, key: string): string | null {
+  const value = transaction.payload?.[key];
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function displayReference(value: string | null | undefined, length = 16): { value: string; title?: string } {
+  if (!value) {
+    return { value: "-" };
+  }
+  return {
+    value: shortHash(value, length),
+    title: value.length > length ? value : undefined,
+  };
+}
+
+function isMiningRewardTransaction(transaction: TransactionPayload): boolean {
+  return transaction.sender === MINING_REWARD_SENDER;
+}
+
+function transactionKindLabel(transaction: TransactionPayload): string {
+  if (isMiningRewardTransaction(transaction)) {
+    return "Mining Reward";
+  }
+  const kind = transactionKind(transaction);
+  if (kind === "deploy") {
+    return "Contract Deploy";
+  }
+  if (kind === "execute") {
+    return "Contract Execute";
+  }
+  if (kind === "authorize") {
+    return "Authorization";
+  }
+  if (kind === "commit") {
+    return "Commit";
+  }
+  if (kind === "reveal") {
+    return "Reveal";
+  }
+  return kind === "transfer" ? "Transfer" : kind;
+}
+
+function transactionRows(transaction: TransactionPayload): Array<{ label: string; value: string; title?: string }> {
+  const kind = transactionKind(transaction);
+  const rows: Array<{ label: string; value: string; title?: string }> = [];
+  const pushReference = (label: string, value: string | null | undefined, length = 16) => {
+    rows.push({ label, ...displayReference(value, length) });
+  };
+  const pushValue = (label: string, value: string | null | undefined) => {
+    if (value) {
+      rows.push({ label, value });
+    }
+  };
+
+  if (isMiningRewardTransaction(transaction)) {
+    pushReference("Miner", transaction.receiver, 18);
+    pushValue("Reward", transaction.amount);
+  } else if (kind === "deploy") {
+    pushReference("Deployer", transaction.sender, 14);
+    pushReference("Contract", payloadValue(transaction, "contract_address") ?? transaction.receiver, 14);
+    pushReference("Code Hash", payloadValue(transaction, "code_hash"), 14);
+    pushValue("Fee", transaction.fee);
+  } else if (kind === "execute") {
+    pushReference("Caller", transaction.sender, 14);
+    pushReference("Contract", payloadValue(transaction, "contract_address") ?? transaction.receiver, 14);
+    pushValue("Value", payloadValue(transaction, "value") ?? transaction.amount);
+    pushValue("Gas", payloadValue(transaction, "gas_limit"));
+    pushValue("Fee", transaction.fee);
+  } else if (kind === "authorize") {
+    pushReference("Wallet", transaction.sender, 14);
+    pushReference("Contract", payloadValue(transaction, "contract_address") ?? transaction.receiver, 14);
+    pushValue("Request", payloadValue(transaction, "request_id"));
+    pushValue("Fee", transaction.fee);
+  } else if (kind === "commit" || kind === "reveal") {
+    pushReference("Wallet", transaction.sender, 14);
+    pushValue("Request", payloadValue(transaction, "request_id"));
+    pushValue("Fee", transaction.fee);
+  } else {
+    pushReference("From", transaction.sender, 14);
+    pushReference("To", transaction.receiver, 14);
+    pushValue("Amount", transaction.amount);
+    pushValue("Fee", transaction.fee);
+  }
+
+  rows.push({ label: "Nonce", value: String(transaction.nonce) });
+  rows.push({ label: "Tx", ...displayReference(transaction.transaction_id, 14) });
+  return rows;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -1535,6 +1644,11 @@ function App() {
   const ownBalance = loadedWallet
     ? snapshot.balances.find((balance) => balance.address === loadedWallet.address)
     : undefined;
+  const blockchainBlocks = snapshot.blocks.slice(-BLOCKCHAIN_VIEW_BLOCKS);
+  const blockchainSlots = [
+    ...Array<BlockPayload | null>(Math.max(0, BLOCKCHAIN_VIEW_BLOCKS - blockchainBlocks.length)).fill(null),
+    ...blockchainBlocks,
+  ];
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
@@ -1840,6 +1954,23 @@ function App() {
                 )}
               </div>
             </section>
+          </section>
+        ) : null}
+
+        {activeTab === "blockchain" ? (
+          <section className="view blockchain-view">
+            <div className="blockchain-strip">
+              {blockchainSlots.map((block, index) => (
+                <Fragment key={block?.block_hash ?? `empty-${index}`}>
+                  <BlockchainBlockCard block={block} />
+                  {index < BLOCKCHAIN_VIEW_BLOCKS - 1 ? (
+                    <div className="block-arrow" aria-label="Next block">
+                      <span aria-hidden="true">&rarr;</span>
+                    </div>
+                  ) : null}
+                </Fragment>
+              ))}
+            </div>
           </section>
         ) : null}
 
@@ -2541,6 +2672,93 @@ function App() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function BlockchainBlockCard({ block }: { block: BlockPayload | null }) {
+  if (!block) {
+    return (
+      <section className="block-card empty-block">
+        <header>
+          <span>Block</span>
+          <strong>Waiting</strong>
+        </header>
+        <p className="empty">No earlier canonical block loaded.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="block-card">
+      <header>
+        <span>Block #{block.height}</span>
+        <strong>{shortHash(block.block_hash, 14)}</strong>
+      </header>
+
+      <dl className="block-meta">
+        <div>
+          <dt>Hash</dt>
+          <dd title={block.block_hash}>{shortHash(block.block_hash, 18)}</dd>
+        </div>
+        <div>
+          <dt>Previous</dt>
+          <dd title={block.previous_hash}>{shortHash(block.previous_hash, 18)}</dd>
+        </div>
+        <div>
+          <dt>Nonce</dt>
+          <dd>{formatNumber(block.nonce)}</dd>
+        </div>
+        <div>
+          <dt>Checked</dt>
+          <dd>{formatNumber(block.nonces_checked)}</dd>
+        </div>
+        <div>
+          <dt>Time</dt>
+          <dd>{formatTimestamp(block.timestamp)}</dd>
+        </div>
+        <div>
+          <dt>Description</dt>
+          <dd>{block.description || "-"}</dd>
+        </div>
+      </dl>
+
+      <div className="block-transactions">
+        <div className="block-subtitle">
+          <h3>Transactions</h3>
+          <span>{block.transactions.length}</span>
+        </div>
+        {block.transactions.length === 0 ? (
+          <p className="empty">No transactions in this block.</p>
+        ) : (
+          block.transactions.map((transaction) => (
+            <BlockchainTransactionCard transaction={transaction} key={transaction.transaction_id} />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function BlockchainTransactionCard({ transaction }: { transaction: TransactionPayload }) {
+  const transactionClass = isMiningRewardTransaction(transaction)
+    ? "reward"
+    : transactionKind(transaction).replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+
+  return (
+    <article className={`chain-transaction ${transactionClass}`}>
+      <div className="transaction-heading">
+        <strong>{transactionKindLabel(transaction)}</strong>
+        <span>{shortHash(transaction.transaction_id, 10)}</span>
+      </div>
+      <dl>
+        {transactionRows(transaction).map((row) => (
+          <div key={`${transaction.transaction_id}-${row.label}`}>
+            <dt>{row.label}</dt>
+            <dd title={row.title}>{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
   );
 }
 

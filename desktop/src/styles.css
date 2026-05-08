@@ -964,6 +964,131 @@ dd {
   gap: 16px;
 }
 
+.blockchain-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.block-arrow {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  min-width: 0;
+  color: #9fc3d3;
+  font-size: 24px;
+  font-weight: 760;
+}
+
+.block-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid #2b353c;
+  border-radius: 8px;
+  padding: 14px;
+  background: #171c1f;
+}
+
+.block-card.empty-block {
+  border-style: dashed;
+  background: #14181b;
+}
+
+.block-card header,
+.transaction-heading,
+.block-subtitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.block-card header span,
+.block-subtitle span,
+.transaction-heading span {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.block-card header strong {
+  min-width: 0;
+  color: #f2f5f7;
+  overflow-wrap: anywhere;
+}
+
+.block-meta,
+.chain-transaction dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.block-meta {
+  border: 1px solid #283138;
+  border-radius: 8px;
+  padding: 10px;
+  background: #101416;
+}
+
+.block-meta div,
+.chain-transaction dl div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.block-meta dt,
+.chain-transaction dt {
+  color: #8f9aa1;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.block-meta dd,
+.chain-transaction dd {
+  min-width: 0;
+  margin: 0;
+  color: #eef2f4;
+  font-size: 12px;
+  font-weight: 680;
+  overflow-wrap: anywhere;
+}
+
+.block-transactions {
+  display: grid;
+  gap: 9px;
+}
+
+.chain-transaction {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #2d3a40;
+  border-radius: 8px;
+  padding: 10px;
+  background: #111619;
+}
+
+.chain-transaction.reward {
+  border-color: #6f6237;
+  background: #1d1a10;
+}
+
+.chain-transaction.deploy,
+.chain-transaction.execute,
+.chain-transaction.authorize {
+  border-color: #365a70;
+  background: #111923;
+}
+
+.transaction-heading strong {
+  color: #f2f5f7;
+  font-size: 13px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

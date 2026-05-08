@@ -108,6 +108,7 @@ export type BlockPayload = {
   block_hash: string;
   previous_hash: string;
   nonce: number;
+  nonces_checked?: number;
   timestamp: string;
   description: string;
   transaction_count: number;
