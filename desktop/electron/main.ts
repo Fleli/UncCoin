@@ -1,6 +1,7 @@
 import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { cpus, networkInterfaces } from "node:os";
 import path from "node:path";
@@ -82,6 +83,7 @@ type NodeApiRequest = {
 let mainWindow: BrowserWindowType | null = null;
 let nodeProcess: ChildProcessWithoutNullStreams | null = null;
 let nodeConfig: NodeRuntimeState["config"] = null;
+let nodeApiToken: string | null = null;
 
 const DEFAULT_PREFERRED_PORT = 9000;
 const NODE_API_TIMEOUT_MS = 8000;
@@ -100,6 +102,10 @@ function pythonCommand(): string {
 function desktopMiningCpuWorkers(): string {
   const logicalCpuCount = cpus().length || 1;
   return String(Math.max(1, logicalCpuCount - 2));
+}
+
+function createApiToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
 function runtimeState(): NodeRuntimeState {
@@ -203,6 +209,7 @@ async function stopNode(): Promise<NodeRuntimeState> {
   await waitForNodeExit(processToStop);
   nodeProcess = null;
   nodeConfig = null;
+  nodeApiToken = null;
   sendNodeState();
   return runtimeState();
 }
@@ -243,16 +250,19 @@ async function startNode(config: StartNodeConfig): Promise<NodeRuntimeState> {
     ...peers.flatMap((peer) => ["--peer", peer]),
   ];
 
+  const apiToken = createApiToken();
   const child = spawn(pythonCommand(), args, {
     cwd: repoRoot(),
     env: {
       ...process.env,
       PYTHONUNBUFFERED: "1",
       UNCCOIN_MINING_CPU_WORKERS: process.env.UNCCOIN_MINING_CPU_WORKERS ?? desktopMiningCpuWorkers(),
+      UNCCOIN_API_TOKEN: apiToken,
     },
   });
 
   nodeProcess = child;
+  nodeApiToken = apiToken;
   nodeConfig = {
     walletName,
     host,
@@ -276,6 +286,7 @@ async function startNode(config: StartNodeConfig): Promise<NodeRuntimeState> {
     sendNodeLog("system", `Node exited with code ${code ?? "null"} signal ${signal ?? "none"}.`);
     nodeProcess = null;
     nodeConfig = null;
+    nodeApiToken = null;
     sendNodeState();
   });
 
@@ -520,13 +531,18 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   const timeout = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
+  const headers: Record<string, string> = {};
+  if (request.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (nodeConfig?.apiPort === apiPort && nodeApiToken !== null) {
+    headers.Authorization = `Bearer ${nodeApiToken}`;
+  }
 
   try {
     const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`, {
       method,
-      headers: request.body === undefined ? undefined : {
-        "Content-Type": "application/json",
-      },
+      headers: Object.keys(headers).length === 0 ? undefined : headers,
       body: request.body === undefined ? undefined : JSON.stringify(request.body),
       signal: controller.signal,
     });
