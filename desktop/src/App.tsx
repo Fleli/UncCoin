@@ -9,6 +9,7 @@ import {
   mineBlock,
   readAuthorizations,
   readBalances,
+  readBlock,
   readBlocks,
   readChainHead,
   readContracts,
@@ -59,7 +60,7 @@ const DEFAULT_DEPLOY_JSON = `{
 const DEFAULT_EXECUTE_JSON = "null";
 const DEFAULT_AUTH_JSON = "[]";
 const RECENT_BLOCK_LIMIT = 12;
-const BLOCKCHAIN_VIEW_BLOCKS = 3;
+const BLOCKCHAIN_VIEW_BLOCKS = 2;
 const MINING_REWARD_SENDER = "SYSTEM";
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
@@ -85,6 +86,13 @@ type ActionResult = {
 };
 
 type NodeActionRefreshMode = "snapshot" | "mining" | "none";
+
+type BlockchainWindow = {
+  reference: string;
+  targetHash: string;
+  targetHeight: number;
+  blocks: BlockPayload[];
+};
 
 type BootstrapAttempt = {
   peer: string;
@@ -516,6 +524,9 @@ function App() {
   const [networkBootstrapAttempts, setNetworkBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
+  const [blockchainSearch, setBlockchainSearch] = useState("");
+  const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
+  const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
@@ -1234,6 +1245,47 @@ function App() {
     }
   }
 
+  async function handleBlockchainSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const reference = blockchainSearch.trim();
+    if (!reference) {
+      setBlockchainWindow(null);
+      setBlockchainSearchError(null);
+      return;
+    }
+    if (!isApiAvailable) {
+      setBlockchainSearchError("Start the node before searching blocks.");
+      return;
+    }
+
+    setBusyAction("blockchain-search");
+    setBlockchainSearchError(null);
+    try {
+      const targetBlock = await readBlock(activeApiPort, reference);
+      const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
+      const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
+      const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
+        ? response.blocks
+        : [targetBlock];
+      setBlockchainWindow({
+        reference,
+        targetHash: targetBlock.block_hash,
+        targetHeight: targetBlock.height,
+        blocks,
+      });
+    } catch (searchError) {
+      setBlockchainSearchError(searchError instanceof Error ? searchError.message : String(searchError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  function clearBlockchainSearch() {
+    setBlockchainSearch("");
+    setBlockchainWindow(null);
+    setBlockchainSearchError(null);
+  }
+
   async function handleTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("send-transaction", async () => {
@@ -1834,11 +1886,15 @@ function App() {
   const ownBalance = loadedWallet
     ? snapshot.balances.find((balance) => balance.address === loadedWallet.address)
     : undefined;
-  const blockchainBlocks = snapshot.blocks.slice(-BLOCKCHAIN_VIEW_BLOCKS);
+  const latestBlockchainBlocks = snapshot.blocks.slice(-BLOCKCHAIN_VIEW_BLOCKS);
+  const blockchainBlocks = blockchainWindow?.blocks ?? latestBlockchainBlocks;
   const blockchainSlots = [
     ...Array<BlockPayload | null>(Math.max(0, BLOCKCHAIN_VIEW_BLOCKS - blockchainBlocks.length)).fill(null),
     ...blockchainBlocks,
   ];
+  const blockchainWindowLabel = blockchainWindow
+    ? `Focused on block #${blockchainWindow.targetHeight}`
+    : "Latest blocks";
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
@@ -2119,10 +2175,34 @@ function App() {
 
         {activeTab === "blockchain" ? (
           <section className="view blockchain-view">
+            <section className="panel blockchain-toolbar">
+              <div>
+                <strong>{blockchainWindowLabel}</strong>
+                <span>{blockchainWindow ? shortHash(blockchainWindow.targetHash, 18) : shortHash(snapshot.chainHead?.tip_hash, 18)}</span>
+              </div>
+              <form className="block-search-form" onSubmit={handleBlockchainSearch}>
+                <input
+                  value={blockchainSearch}
+                  placeholder="Block height or hash"
+                  onChange={(event) => setBlockchainSearch(event.target.value)}
+                  disabled={busyAction === "blockchain-search"}
+                />
+                <button type="submit" disabled={!isApiAvailable || busyAction === "blockchain-search"}>
+                  Jump
+                </button>
+                <button type="button" onClick={clearBlockchainSearch} disabled={busyAction === "blockchain-search"}>
+                  Latest
+                </button>
+              </form>
+              {blockchainSearchError ? <p>{blockchainSearchError}</p> : null}
+            </section>
             <div className="blockchain-strip">
               {blockchainSlots.map((block, index) => (
                 <Fragment key={block?.block_hash ?? `empty-${index}`}>
-                  <BlockchainBlockCard block={block} />
+                  <BlockchainBlockCard
+                    block={block}
+                    focused={block !== null && block.block_hash === blockchainWindow?.targetHash}
+                  />
                   {index < BLOCKCHAIN_VIEW_BLOCKS - 1 ? (
                     <div className="block-arrow" aria-label="Next block">
                       <span aria-hidden="true">&rarr;</span>
@@ -2890,7 +2970,7 @@ function App() {
   );
 }
 
-function BlockchainBlockCard({ block }: { block: BlockPayload | null }) {
+function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload | null; focused?: boolean }) {
   if (!block) {
     return (
       <section className="block-card empty-block">
@@ -2904,7 +2984,7 @@ function BlockchainBlockCard({ block }: { block: BlockPayload | null }) {
   }
 
   return (
-    <section className="block-card">
+    <section className={`block-card ${focused ? "focused-block" : ""}`}>
       <header>
         <span>Block #{block.height}</span>
         <strong>{shortHash(block.block_hash, 14)}</strong>

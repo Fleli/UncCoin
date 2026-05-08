@@ -1093,9 +1093,46 @@ dd {
 
 .blockchain-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
   gap: 10px;
   align-items: stretch;
+}
+
+.blockchain-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.5fr) minmax(360px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.blockchain-toolbar > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.blockchain-toolbar strong {
+  color: #f2f5f7;
+  font-size: 14px;
+}
+
+.blockchain-toolbar span {
+  color: #9fc3d3;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blockchain-toolbar p {
+  grid-column: 1 / -1;
+  color: #ffb7aa;
+}
+
+.block-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
 }
 
 .block-arrow {
@@ -1122,6 +1159,11 @@ dd {
 .block-card.empty-block {
   border-style: dashed;
   background: #14181b;
+}
+
+.block-card.focused-block {
+  border-color: #6aa0b8;
+  box-shadow: inset 0 0 0 1px rgba(106, 160, 184, 0.35);
 }
 
 .block-card header,

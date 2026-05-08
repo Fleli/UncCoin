@@ -243,6 +243,10 @@ export function readBlocks(apiPort: number, limit = 12, fromHeight = 0): Promise
   return requestApi<BlocksResponse>(apiPort, `/chain/blocks?from_height=${fromHeight}&limit=${limit}`);
 }
 
+export function readBlock(apiPort: number, reference: string): Promise<BlockPayload> {
+  return requestApi<BlockPayload>(apiPort, `/chain/block/${encodeURIComponent(reference)}`);
+}
+
 export function readMessages(apiPort: number): Promise<MessagesResponse> {
   return requestApi<MessagesResponse>(apiPort, "/messages");
 }
