@@ -2627,11 +2627,19 @@ function App() {
 
               <section className="miner-backends">
                 <div className="panel-title compact-title">
-                  <h3>Miner Backend</h3>
+                  <h3 className="backend-title">
+                    <span>Miner Backend</span>
+                    {miningWarmupStatus?.active ? (
+                      <span className="backend-header-spinner" title="Miner warmup in progress" />
+                    ) : null}
+                  </h3>
                 </div>
                 <div className="backend-meta">
                   <span>Selected: {selectedMiningBackend}</span>
-                  <span>Warmup: {miningWarmupStatus?.status ?? "idle"}</span>
+                  <span className={miningWarmupStatus?.active ? "warmup-pill active" : "warmup-pill"}>
+                    {miningWarmupStatus?.active ? <span className="warmup-pill-spinner" /> : null}
+                    Warmup: {miningWarmupStatus?.status ?? "idle"}
+                  </span>
                 </div>
                 <div className="backend-grid">
                   {miningBackendOptions.length === 0 ? (

@@ -990,6 +990,22 @@ dd {
   background: #151a1d;
 }
 
+.backend-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.backend-header-spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border: 3px solid rgba(255, 212, 92, 0.25);
+  border-top-color: #ffd45c;
+  border-radius: 50%;
+  animation: backend-spin 0.75s linear infinite;
+}
+
 .backend-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1004,6 +1020,28 @@ dd {
   border-radius: 6px;
   padding: 5px 8px;
   background: #0d1113;
+}
+
+.backend-meta .warmup-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.backend-meta .warmup-pill.active {
+  border-color: #806724;
+  color: #f3d582;
+  background: #221d10;
+}
+
+.warmup-pill-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(243, 213, 130, 0.28);
+  border-top-color: #f3d582;
+  border-radius: 50%;
+  animation: backend-spin 0.75s linear infinite;
 }
 
 .backend-grid {
