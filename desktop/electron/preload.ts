@@ -26,14 +26,29 @@ type NodeLogEntry = {
   timestamp: string;
 };
 
+type WalletSummary = {
+  name: string;
+  address: string;
+  path: string;
+};
+
+type ApiRequestOptions = {
+  method?: "GET" | "POST";
+  body?: unknown;
+};
+
 contextBridge.exposeInMainWorld("unccoinDesktop", {
   startNode: (config: StartNodeConfig): Promise<NodeRuntimeState> => (
     ipcRenderer.invoke("node:start", config)
   ),
   stopNode: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:stop"),
   getNodeState: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:state"),
-  fetchApi: (apiPort: number, path: string): Promise<unknown> => (
-    ipcRenderer.invoke("node-api:fetch", { apiPort, path })
+  listWallets: (): Promise<WalletSummary[]> => ipcRenderer.invoke("wallets:list"),
+  createWallet: (name: string, bitLength?: number): Promise<WalletSummary> => (
+    ipcRenderer.invoke("wallets:create", { name, bitLength })
+  ),
+  fetchApi: (apiPort: number, path: string, options: ApiRequestOptions = {}): Promise<unknown> => (
+    ipcRenderer.invoke("node-api:fetch", { apiPort, path, ...options })
   ),
   onNodeLog: (callback: (entry: NodeLogEntry) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, entry: NodeLogEntry) => {

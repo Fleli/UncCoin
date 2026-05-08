@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 type StartNodeConfig = {
@@ -14,6 +15,24 @@ type NodeRuntimeState = {
   running: boolean;
   pid: number | null;
   config: Required<Omit<StartNodeConfig, "peers">> & { peers: string[] } | null;
+};
+
+type WalletSummary = {
+  name: string;
+  address: string;
+  path: string;
+};
+
+type CreateWalletRequest = {
+  name: string;
+  bitLength?: number;
+};
+
+type NodeApiRequest = {
+  apiPort: number;
+  path: string;
+  method?: "GET" | "POST";
+  body?: unknown;
 };
 
 let mainWindow: BrowserWindow | null = null;
@@ -164,9 +183,118 @@ async function startNode(config: StartNodeConfig): Promise<NodeRuntimeState> {
   return runtimeState();
 }
 
-async function fetchNodeApi(apiPort: number, endpointPath: string): Promise<unknown> {
+async function listWallets(): Promise<WalletSummary[]> {
+  const walletsDir = path.join(repoRoot(), "state", "wallets");
+  let entries: string[] = [];
+  try {
+    entries = await readdir(walletsDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const wallets = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry): Promise<WalletSummary | null> => {
+        const filePath = path.join(walletsDir, entry);
+        try {
+          const walletData = JSON.parse(await readFile(filePath, "utf-8")) as {
+            name?: string;
+            address?: string;
+          };
+          return {
+            name: walletData.name || path.basename(entry, ".json"),
+            address: walletData.address || "",
+            path: filePath,
+          };
+        } catch (error) {
+          sendNodeLog("stderr", `Skipping unreadable wallet ${filePath}: ${String(error)}`);
+          return null;
+        }
+      }),
+  );
+
+  return wallets
+    .filter((wallet): wallet is WalletSummary => wallet !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function runPython(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonCommand(), args, {
+      cwd: repoRoot(),
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+      },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `Python exited with code ${code}`));
+    });
+  });
+}
+
+async function createWallet(request: CreateWalletRequest): Promise<WalletSummary> {
+  const name = request.name.trim();
+  if (!name) {
+    throw new Error("Wallet name is required.");
+  }
+  const bitLength = Number(request.bitLength || 1024);
+  if (!Number.isInteger(bitLength) || bitLength < 512) {
+    throw new Error("Wallet bit length must be at least 512.");
+  }
+
+  await runPython([
+    "-m",
+    "wallet.cli",
+    "create",
+    "--name",
+    name,
+    "--bit-length",
+    String(bitLength),
+  ]);
+
+  const wallet = (await listWallets()).find((candidate) => candidate.name === name);
+  if (!wallet) {
+    throw new Error(`Created wallet '${name}', but could not read it from disk.`);
+  }
+  return wallet;
+}
+
+async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
+  const apiPort = Number(request.apiPort);
+  if (!Number.isInteger(apiPort) || apiPort <= 0 || apiPort > 65535) {
+    throw new Error("API port must be between 1 and 65535.");
+  }
+  const method = request.method || "GET";
+  if (!["GET", "POST"].includes(method)) {
+    throw new Error("Unsupported API method.");
+  }
+  const endpointPath = request.path;
   const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
-  const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`);
+  const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`, {
+    method,
+    headers: request.body === undefined ? undefined : {
+      "Content-Type": "application/json",
+    },
+    body: request.body === undefined ? undefined : JSON.stringify(request.body),
+  });
   const bodyText = await response.text();
   const body = bodyText ? JSON.parse(bodyText) : null;
   if (!response.ok) {
@@ -204,12 +332,9 @@ function createWindow(): void {
 ipcMain.handle("node:start", (_event, config: StartNodeConfig) => startNode(config));
 ipcMain.handle("node:stop", () => stopNode());
 ipcMain.handle("node:state", () => runtimeState());
-ipcMain.handle(
-  "node-api:fetch",
-  (_event, request: { apiPort: number; path: string }) => (
-    fetchNodeApi(Number(request.apiPort), request.path)
-  ),
-);
+ipcMain.handle("wallets:list", () => listWallets());
+ipcMain.handle("wallets:create", (_event, request: CreateWalletRequest) => createWallet(request));
+ipcMain.handle("node-api:fetch", (_event, request: NodeApiRequest) => fetchNodeApi(request));
 
 app.whenReady().then(createWindow).catch((error) => {
   console.error(error);

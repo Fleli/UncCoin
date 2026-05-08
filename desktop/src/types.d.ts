@@ -24,12 +24,25 @@ type NodeLogEntry = {
   timestamp: string;
 };
 
+type WalletSummary = {
+  name: string;
+  address: string;
+  path: string;
+};
+
+type ApiRequestOptions = {
+  method?: "GET" | "POST";
+  body?: unknown;
+};
+
 interface Window {
   unccoinDesktop: {
     startNode(config: StartNodeConfig): Promise<NodeRuntimeState>;
     stopNode(): Promise<NodeRuntimeState>;
     getNodeState(): Promise<NodeRuntimeState>;
-    fetchApi(apiPort: number, path: string): Promise<unknown>;
+    listWallets(): Promise<WalletSummary[]>;
+    createWallet(name: string, bitLength?: number): Promise<WalletSummary>;
+    fetchApi(apiPort: number, path: string, options?: ApiRequestOptions): Promise<unknown>;
     onNodeLog(callback: (entry: NodeLogEntry) => void): () => void;
     onNodeState(callback: (state: NodeRuntimeState) => void): () => void;
   };
