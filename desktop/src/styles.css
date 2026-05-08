@@ -923,7 +923,8 @@ dd {
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(720px, 1fr) auto;
   align-items: stretch;
   justify-content: space-between;
   position: sticky;
@@ -1067,16 +1068,22 @@ dd {
 .address-copy {
   display: block;
   width: 100%;
+  min-width: 0;
   border-color: #2d414c;
   padding: 7px 9px;
   background: #0e1214;
+  overflow: hidden;
   text-align: left;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .address-copy code {
+  display: block;
+  min-width: 0;
   color: #9fc3d3;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-actions {
