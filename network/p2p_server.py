@@ -29,6 +29,14 @@ class FastSyncState:
     active: bool = True
 
 
+@dataclass
+class NetworkTrafficStats:
+    ingress_bytes: int = 0
+    egress_bytes: int = 0
+    ingress_messages: int = 0
+    egress_messages: int = 0
+
+
 @dataclass(frozen=True)
 class PeerAddress:
     host: str
@@ -56,6 +64,14 @@ class P2PServer:
         init=False,
     )
     fast_sync_states: dict[PeerAddress, FastSyncState] = field(
+        default_factory=dict,
+        init=False,
+    )
+    network_stats: NetworkTrafficStats = field(
+        default_factory=NetworkTrafficStats,
+        init=False,
+    )
+    peer_network_stats: dict[PeerAddress, NetworkTrafficStats] = field(
         default_factory=dict,
         init=False,
     )
@@ -108,7 +124,9 @@ class P2PServer:
         self.peers.add(peer)
         self.active_connections[peer] = writer
 
-        await self._send_message(writer, self._create_handshake_message())
+        handshake_message = self._create_handshake_message()
+        self._record_egress(peer, self._encode_message(handshake_message))
+        await self._send_message(writer, handshake_message)
         asyncio.create_task(self._read_messages(reader, writer, peer))
         self._notify(f"Connected to peer {host}:{port}")
 
@@ -199,6 +217,7 @@ class P2PServer:
             if exclude_peer is not None and peer == exclude_peer:
                 continue
             try:
+                self._record_egress(peer, self._encode_message(message))
                 await self._send_message(writer, message)
             except ConnectionError:
                 disconnected_peers.append(peer)
@@ -296,6 +315,7 @@ class P2PServer:
         if writer is None:
             raise ValueError(f"Peer {host}:{port} is not connected.")
 
+        self._record_egress(peer, self._encode_message(message))
         await self._send_message(writer, message)
 
     def list_peers(self) -> list[str]:
@@ -303,6 +323,66 @@ class P2PServer:
 
     def list_known_peers(self) -> list[str]:
         return sorted(f"{peer.host}:{peer.port}" for peer in self.peers)
+
+    def network_traffic_stats(self) -> dict:
+        peers = sorted(
+            set(self.peer_network_stats) | set(self.active_connections),
+            key=lambda peer: (peer.host, peer.port),
+        )
+        return {
+            "ingress": {
+                "bytes": self.network_stats.ingress_bytes,
+                "messages": self.network_stats.ingress_messages,
+            },
+            "egress": {
+                "bytes": self.network_stats.egress_bytes,
+                "messages": self.network_stats.egress_messages,
+            },
+            "peers": [
+                {
+                    "peer": f"{peer.host}:{peer.port}",
+                    "connected": peer in self.active_connections,
+                    "ingress": {
+                        "bytes": self._stats_for_peer(peer).ingress_bytes,
+                        "messages": self._stats_for_peer(peer).ingress_messages,
+                    },
+                    "egress": {
+                        "bytes": self._stats_for_peer(peer).egress_bytes,
+                        "messages": self._stats_for_peer(peer).egress_messages,
+                    },
+                }
+                for peer in peers
+            ],
+        }
+
+    def _stats_for_peer(self, peer: PeerAddress) -> NetworkTrafficStats:
+        return self.peer_network_stats.setdefault(peer, NetworkTrafficStats())
+
+    def _record_ingress(self, peer: PeerAddress, payload: bytes) -> None:
+        byte_count = len(payload)
+        self.network_stats.ingress_bytes += byte_count
+        self.network_stats.ingress_messages += 1
+        peer_stats = self._stats_for_peer(peer)
+        peer_stats.ingress_bytes += byte_count
+        peer_stats.ingress_messages += 1
+
+    def _record_egress(self, peer: PeerAddress, payload: bytes) -> None:
+        byte_count = len(payload)
+        self.network_stats.egress_bytes += byte_count
+        self.network_stats.egress_messages += 1
+        peer_stats = self._stats_for_peer(peer)
+        peer_stats.egress_bytes += byte_count
+        peer_stats.egress_messages += 1
+
+    def _move_peer_stats(self, old_peer: PeerAddress, new_peer: PeerAddress) -> None:
+        if old_peer == new_peer or old_peer not in self.peer_network_stats:
+            return
+        old_stats = self.peer_network_stats.pop(old_peer)
+        new_stats = self._stats_for_peer(new_peer)
+        new_stats.ingress_bytes += old_stats.ingress_bytes
+        new_stats.egress_bytes += old_stats.egress_bytes
+        new_stats.ingress_messages += old_stats.ingress_messages
+        new_stats.egress_messages += old_stats.egress_messages
 
     async def _handle_connection(
         self,
@@ -314,7 +394,9 @@ class P2PServer:
         self.peers.add(peer)
         self.active_connections[peer] = writer
         self._notify(f"Accepted peer connection from {peer.host}:{peer.port}")
-        await self._send_message(writer, self._create_handshake_message())
+        handshake_message = self._create_handshake_message()
+        self._record_egress(peer, self._encode_message(handshake_message))
+        await self._send_message(writer, handshake_message)
 
         await self._read_messages(reader, writer, peer)
 
@@ -330,6 +412,7 @@ class P2PServer:
                 if not raw_message:
                     break
 
+                self._record_ingress(peer, raw_message)
                 message = json.loads(raw_message.decode("utf-8"))
                 peer = await self._handle_message(message, peer)
         finally:
@@ -353,6 +436,7 @@ class P2PServer:
             writer = self.active_connections.pop(peer, None)
             if writer is not None:
                 self.active_connections[advertised_peer] = writer
+            self._move_peer_stats(peer, advertised_peer)
             if existing_fast_sync is not None:
                 self.fast_sync_states[advertised_peer] = existing_fast_sync
             self._notify(
@@ -643,14 +727,14 @@ class P2PServer:
                 blocks=blocks,
                 chain_height=chain_height,
             )
-            writer.write(
-                self._encode_message(
-                    {
-                        "type": "chain_chunk",
-                        **payload,
-                    }
-                )
+            encoded_message = self._encode_message(
+                {
+                    "type": "chain_chunk",
+                    **payload,
+                }
             )
+            writer.write(encoded_message)
+            self._record_egress(peer, encoded_message)
 
         await writer.drain()
 
@@ -674,14 +758,14 @@ class P2PServer:
                 blocks=blocks,
                 chain_height=chain_height,
             )
-            writer.write(
-                self._encode_message(
-                    {
-                        "type": "chain_chunk",
-                        **payload,
-                    }
-                )
+            encoded_message = self._encode_message(
+                {
+                    "type": "chain_chunk",
+                    **payload,
+                }
             )
+            writer.write(encoded_message)
+            self._record_egress(peer, encoded_message)
 
             chunk_count += 1
             if (

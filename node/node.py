@@ -165,6 +165,9 @@ class Node:
     def list_known_peers(self) -> list[str]:
         return self.p2p_server.list_known_peers()
 
+    def network_stats(self) -> dict:
+        return self.p2p_server.network_traffic_stats()
+
     def get_next_nonce(self, address: str) -> int:
         if self.blockchain is None:
             return 0

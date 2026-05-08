@@ -123,6 +123,31 @@ class NodeApiServerTests(unittest.TestCase):
             ],
         )
 
+    def test_network_stats_reports_p2p_traffic(self) -> None:
+        peer = PeerAddress(host="100.98.249.35", port=9000)
+        self.node.p2p_server._record_ingress(peer, b'{"type":"peer_list"}\n')
+        self.node.p2p_server._record_egress(peer, b'{"type":"peer_request"}\n')
+
+        response = self.client.get("/api/v1/network/stats")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["ingress"]["bytes"], 21)
+        self.assertEqual(body["ingress"]["messages"], 1)
+        self.assertEqual(body["egress"]["bytes"], 24)
+        self.assertEqual(body["egress"]["messages"], 1)
+        self.assertEqual(
+            body["peers"],
+            [
+                {
+                    "peer": "100.98.249.35:9000",
+                    "connected": False,
+                    "ingress": {"bytes": 21, "messages": 1},
+                    "egress": {"bytes": 24, "messages": 1},
+                }
+            ],
+        )
+
     def test_mining_status_reports_progress_and_recent_miners(self) -> None:
         self.node._start_mining_progress(
             mode="automine",

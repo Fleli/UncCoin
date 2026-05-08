@@ -152,6 +152,10 @@ def create_api_app(node: "Node") -> FastAPI:
             "known": node.list_known_peers(),
         }
 
+    @app.get(f"{API_PREFIX}/network/stats")
+    def network_stats() -> dict[str, Any]:
+        return node.network_stats()
+
     @app.get(f"{API_PREFIX}/sync/status")
     def sync_status() -> dict[str, Any]:
         return _sync_status_payload(node)
