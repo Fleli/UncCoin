@@ -669,6 +669,8 @@ function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [miningBackends, setMiningBackends] = useState<MiningBackendsResponse | null>(null);
+  const [miningBackendsLoading, setMiningBackendsLoading] = useState(false);
+  const [miningBackendsError, setMiningBackendsError] = useState<string | null>(null);
   const [warmMinerOnStartup, setWarmMinerOnStartup] = useState(true);
   const [blockchainSearch, setBlockchainSearch] = useState("");
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
@@ -865,8 +867,19 @@ function App() {
   }, [activeApiPort, isApiAvailable, loadSnapshot]);
 
   const refreshMiningBackends = useCallback(async (apiPortToUse = activeApiPort) => {
-    const response = await readMiningBackends(apiPortToUse);
-    setMiningBackends(response);
+    setMiningBackendsLoading(true);
+    setMiningBackendsError(null);
+    try {
+      const response = await readMiningBackends(apiPortToUse);
+      setMiningBackends(response);
+      return response;
+    } catch (backendError) {
+      const message = backendError instanceof Error ? backendError.message : String(backendError);
+      setMiningBackendsError(message);
+      throw backendError;
+    } finally {
+      setMiningBackendsLoading(false);
+    }
   }, [activeApiPort]);
 
   function applyWalletSelection(walletNameToSelect: string, availableWallets = wallets) {
@@ -970,6 +983,8 @@ function App() {
       setApiStatus("offline");
       setMiningStatus(null);
       setMiningBackends(null);
+      setMiningBackendsLoading(false);
+      setMiningBackendsError(null);
       return undefined;
     }
     if (!startupComplete) {
@@ -1126,14 +1141,14 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!isApiAvailable || activeTab !== "mining") {
+    if (!isApiAvailable || !startupComplete) {
       return;
     }
 
     void refreshMiningBackends().catch(() => {
       setMiningBackends(null);
     });
-  }, [activeTab, isApiAvailable, refreshMiningBackends]);
+  }, [isApiAvailable, refreshMiningBackends, startupComplete]);
 
   async function waitForNodeApi(apiPortToCheck: number) {
     setStartupPhase("waiting-api");
@@ -2643,7 +2658,19 @@ function App() {
                 </div>
                 <div className="backend-grid">
                   {miningBackendOptions.length === 0 ? (
-                    <p className="empty">Open miner backend status...</p>
+                    <p className={miningBackendsError ? "inline-warning" : "empty"}>
+                      {miningBackendsLoading ? (
+                        <>
+                          <span className="backend-loading-spinner" /> Loading miner backend status...
+                        </>
+                      ) : miningBackendsError ? (
+                        `Miner backend status unavailable: ${miningBackendsError}`
+                      ) : isApiAvailable ? (
+                        "Miner backend status has not loaded yet."
+                      ) : (
+                        "Start the node to inspect miner backends."
+                      )}
+                    </p>
                   ) : (
                     miningBackendOptions.map((option) => {
                       const isSelected = option.id === selectedMiningBackend;
