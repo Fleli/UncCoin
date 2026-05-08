@@ -4,6 +4,9 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Any
 
+from core.contracts import compute_contract_address
+from core.contracts import compute_contract_code_hash
+
 
 TRANSACTION_VERSION_LEGACY = 1
 TRANSACTION_VERSION_TYPED = 2
@@ -123,18 +126,25 @@ class Transaction:
     def deploy(
         cls,
         sender: str,
-        contract_address: str,
         program: Any,
         fee: Decimal | str,
         timestamp: datetime,
         nonce: int = 0,
+        contract_address: str | None = None,
         metadata: dict[str, Any] | None = None,
         sender_public_key: tuple[int, int] | None = None,
         signature: str | None = None,
     ) -> "Transaction":
+        contract_metadata = metadata or {}
+        code_hash = compute_contract_code_hash(program, contract_metadata)
+        resolved_contract_address = contract_address or compute_contract_address(
+            sender,
+            nonce,
+            code_hash,
+        )
         return cls(
             sender=sender,
-            receiver=contract_address,
+            receiver=resolved_contract_address,
             amount=Decimal("0.0"),
             fee=fee,
             timestamp=timestamp,
@@ -143,9 +153,10 @@ class Transaction:
             signature=signature,
             kind=TRANSACTION_KIND_DEPLOY,
             payload={
-                "contract_address": contract_address,
+                "contract_address": resolved_contract_address,
+                "code_hash": code_hash,
                 "program": program,
-                "metadata": metadata or {},
+                "metadata": contract_metadata,
             },
         )
 

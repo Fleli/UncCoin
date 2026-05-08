@@ -128,7 +128,10 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
-deploy <contract> <fee> <json>
+deploy <fee> <json-or-file>
+authorize <contract> <request-id> [valid-blocks]
+execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
+receipt <txid-prefix>
 msg <wallet> <content>
 messages
 mine [description]

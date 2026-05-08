@@ -14,14 +14,16 @@ from config import DEFAULT_DIFFICULTY_GROWTH_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
 from core.block import Block, ProofOfWorkCancelled
-from core.genesis import create_genesis_block
 from core.blockchain import Blockchain
+from core.contracts import compute_contract_code_hash
+from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
 from core.randomness import create_reveal_commitment_hash
 from core.transaction import Transaction
+from core.uvm_authorization import create_uvm_authorization
 from core.utils.constants import MINING_REWARD_SENDER
 from node.alias_store import load_aliases, save_aliases
 from network.p2p_server import P2PServer
@@ -243,10 +245,10 @@ class Node:
 
     def create_signed_deploy(
         self,
-        contract_address: str,
         program,
         fee: str,
         metadata: dict | None = None,
+        contract_address: str | None = None,
     ) -> Transaction:
         if self.wallet is None:
             raise ValueError("A loaded wallet is required to deploy contracts.")
@@ -258,12 +260,12 @@ class Node:
 
         transaction = Transaction.deploy(
             sender=self.wallet.address,
-            contract_address=contract_address,
             program=program,
             metadata=metadata or {},
             fee=parsed_fee,
             timestamp=datetime.now(),
             nonce=self.get_next_nonce(self.wallet.address),
+            contract_address=contract_address,
             sender_public_key=self.wallet.public_key,
         )
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
@@ -271,16 +273,16 @@ class Node:
 
     def create_signed_deploy_from_source(
         self,
-        contract_address: str,
         contract_source: str,
         fee: str,
+        contract_address: str | None = None,
     ) -> Transaction:
         program, metadata = self.load_contract_deploy_source(contract_source)
         return self.create_signed_deploy(
-            contract_address=contract_address,
             program=program,
             metadata=metadata,
             fee=fee,
+            contract_address=contract_address,
         )
 
     def load_contract_deploy_source(self, contract_source: str) -> tuple[object, dict]:
@@ -334,6 +336,50 @@ class Node:
         )
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
+
+    def create_uvm_authorization_receipt(
+        self,
+        contract_address: str,
+        request_id: str,
+        valid_for_blocks: str | None = None,
+    ) -> dict:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to authorize contracts.")
+        if self.blockchain is None:
+            raise ValueError("A blockchain is required to authorize contracts.")
+
+        contract = self.blockchain.get_contract(contract_address)
+        if contract is None:
+            raise ValueError(f"Contract {contract_address} is not deployed locally.")
+        code_hash = str(
+            contract.get(
+                "code_hash",
+                compute_contract_code_hash(
+                    contract.get("program", []),
+                    contract.get("metadata", {}),
+                ),
+            )
+        ).strip()
+        if not code_hash:
+            raise ValueError(f"Contract {contract_address} does not have a code_hash.")
+
+        current_height = (
+            self.blockchain.blocks[-1].block_id
+            if self.blockchain.blocks
+            else -1
+        )
+        kwargs = {}
+        if valid_for_blocks is not None:
+            kwargs["valid_for_blocks"] = valid_for_blocks
+            kwargs["current_height"] = current_height
+
+        return create_uvm_authorization(
+            self.wallet,
+            request_id,
+            contract_address=contract_address,
+            code_hash=code_hash,
+            **kwargs,
+        ).to_dict()
 
     def create_signed_wallet_message(self, receiver: str, content: str) -> dict:
         if self.wallet is None:
@@ -590,8 +636,9 @@ Commands:
                                   Commit a randomness hash for a request
     reveal <request-id> <seed> <fee> [salt]
                                   Reveal a seed for a prior commitment
-    deploy <contract> <fee> <json-or-file>
-                                  Deploy UVM code from JSON or state/contracts
+    deploy <fee> <json-or-file>   Deploy UVM code from JSON or state/contracts
+    authorize <contract> <request-id> [valid-blocks]
+                                  Print a signed off-chain UVM consent receipt
     execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
                                   Execute UVM code with optional authorizations
     receipt <txid-prefix>          Show a UVM execution receipt
@@ -845,12 +892,11 @@ Wallet commands accept either a wallet address or a local alias."""
 
             if line.startswith("deploy "):
                 try:
-                    contract_address, fee, deploy_json = line[len("deploy "):].split(
-                        " ",
-                        maxsplit=2,
-                    )
+                    deploy_args = line[len("deploy "):].split(" ", maxsplit=1)
+                    if len(deploy_args) != 2:
+                        raise ValueError("Use deploy <fee> <json-or-file>.")
+                    fee, deploy_json = deploy_args
                     transaction = self.create_signed_deploy_from_source(
-                        contract_address=contract_address,
                         contract_source=deploy_json,
                         fee=fee,
                     )
@@ -859,8 +905,34 @@ Wallet commands accept either a wallet address or a local alias."""
                         "Deploy transaction broadcast: "
                         f"{sha256_transaction_hash(transaction)}"
                     )
+                    print(f"Contract address: {transaction.receiver}")
+                    print(f"Code hash: {transaction.payload['code_hash']}")
                 except ValueError as error:
                     print(f"Invalid deploy command: {error}")
+                continue
+
+            if line.startswith("authorize "):
+                try:
+                    authorize_args = line[len("authorize "):].split(" ", maxsplit=2)
+                    if len(authorize_args) not in {2, 3}:
+                        raise ValueError(
+                            "Use authorize <contract> <request-id> [valid-blocks]."
+                        )
+                    contract_address, request_id = authorize_args[:2]
+                    valid_for_blocks = (
+                        authorize_args[2] if len(authorize_args) == 3 else None
+                    )
+                    authorization = self.create_uvm_authorization_receipt(
+                        contract_address=contract_address,
+                        request_id=request_id,
+                        valid_for_blocks=valid_for_blocks,
+                    )
+                    print(
+                        "Authorization receipt: "
+                        f"{json.dumps(authorization, sort_keys=True)}"
+                    )
+                except ValueError as error:
+                    print(f"Invalid authorize command: {error}")
                 continue
 
             if line.startswith("execute "):

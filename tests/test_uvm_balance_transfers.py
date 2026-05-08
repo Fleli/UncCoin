@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from core.blockchain import Blockchain
+from core.contracts import compute_contract_code_hash
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
@@ -25,6 +26,16 @@ def sign_transaction(wallet, transaction: Transaction) -> Transaction:
     return transaction
 
 
+def create_authorization(wallet, request_id: str, contract_address: str, program, **kwargs):
+    return create_uvm_authorization(
+        wallet,
+        request_id,
+        contract_address=contract_address,
+        code_hash=compute_contract_code_hash(program, {}),
+        **kwargs,
+    )
+
+
 class UvmBalanceTransferTests(unittest.TestCase):
     def test_execute_applies_authorized_balance_transfer(self) -> None:
         blockchain = create_blockchain()
@@ -32,6 +43,12 @@ class UvmBalanceTransferTests(unittest.TestCase):
         receiver = create_wallet(name="receiver")
         caller = create_wallet(name="caller")
         request_id = "casino-payout-1"
+        contract_address = "casino-contract"
+        program = [
+            ["PUSH", 3],
+            ["TRANSFER_FROM", source.address, receiver.address, request_id],
+            ["HALT"],
+        ]
         blockchain.mine_pending_transactions(
             miner_address=source.address,
             description="fund source",
@@ -40,17 +57,18 @@ class UvmBalanceTransferTests(unittest.TestCase):
             caller,
             Transaction.execute(
                 sender=caller.address,
-                contract_address="casino-contract",
-                input_data=[
-                    ["PUSH", 3],
-                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
-                    ["HALT"],
-                ],
+                contract_address=contract_address,
+                input_data=program,
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,
                 authorizations=[
-                    create_uvm_authorization(source, request_id).to_dict()
+                    create_authorization(
+                        source,
+                        request_id,
+                        contract_address,
+                        program,
+                    ).to_dict()
                 ],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(caller.address),
@@ -135,65 +153,6 @@ class UvmBalanceTransferTests(unittest.TestCase):
         self.assertFalse(receipt["success"])
         self.assertIn("not authorized", receipt["error"] or "")
 
-    def test_execute_records_amount_limit_failure_and_burns_fuel(self) -> None:
-        blockchain = create_blockchain()
-        source = create_wallet(name="source")
-        receiver = create_wallet(name="receiver")
-        caller = create_wallet(name="caller")
-        miner = create_wallet(name="miner")
-        request_id = "casino-payout-1"
-        blockchain.mine_pending_transactions(
-            miner_address=source.address,
-            description="fund source",
-        )
-        blockchain.mine_pending_transactions(
-            miner_address=caller.address,
-            description="fund caller",
-        )
-        transaction = sign_transaction(
-            caller,
-            Transaction.execute(
-                sender=caller.address,
-                contract_address="casino-contract",
-                input_data=[
-                    ["PUSH", 3],
-                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
-                    ["HALT"],
-                ],
-                value=Decimal("0"),
-                fee=Decimal("1.00"),
-                gas_limit=100,
-                gas_price=Decimal("0.01"),
-                authorizations=[
-                    create_uvm_authorization(
-                        source,
-                        request_id,
-                        max_amount=Decimal("2"),
-                    ).to_dict()
-                ],
-                timestamp=datetime.now(),
-                nonce=blockchain.get_next_nonce(caller.address),
-                sender_public_key=caller.public_key,
-            ),
-        )
-
-        blockchain.add_transaction(transaction)
-        blockchain.mine_pending_transactions(
-            miner_address=miner.address,
-            description="include failed amount-limited transfer",
-        )
-
-        self.assertEqual(blockchain.get_balance(source.address), Decimal("10.0"))
-        self.assertEqual(blockchain.get_balance(receiver.address), Decimal("0.0"))
-        self.assertEqual(blockchain.get_balance(caller.address), Decimal("9.49"))
-        self.assertEqual(blockchain.get_balance(miner.address), Decimal("10.51"))
-        receipt = blockchain.get_uvm_receipt(sha256_transaction_hash(transaction))
-        self.assertIsNotNone(receipt)
-        assert receipt is not None
-        self.assertFalse(receipt["success"])
-        self.assertEqual(receipt["gas_used"], 51)
-        self.assertIn("exceeds amount limit", receipt["error"] or "")
-
     def test_execute_reverts_value_transfer_on_failed_run(self) -> None:
         blockchain = create_blockchain()
         source = create_wallet(name="source")
@@ -249,6 +208,12 @@ class UvmBalanceTransferTests(unittest.TestCase):
         receiver = create_wallet(name="receiver")
         caller = create_wallet(name="caller")
         request_id = "casino-payout-1"
+        contract_address = "casino-contract"
+        program = [
+            ["PUSH", 3],
+            ["TRANSFER_FROM", source.address, receiver.address, request_id],
+            ["HALT"],
+        ]
         blockchain.mine_pending_transactions(
             miner_address=source.address,
             description="fund source",
@@ -258,19 +223,17 @@ class UvmBalanceTransferTests(unittest.TestCase):
             caller,
             Transaction.execute(
                 sender=caller.address,
-                contract_address="casino-contract",
-                input_data=[
-                    ["PUSH", 3],
-                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
-                    ["HALT"],
-                ],
+                contract_address=contract_address,
+                input_data=program,
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,
                 authorizations=[
-                    create_uvm_authorization(
+                    create_authorization(
                         source,
                         request_id,
+                        contract_address,
+                        program,
                         current_height=current_height,
                         valid_for_blocks=1,
                     ).to_dict()
@@ -296,14 +259,22 @@ class UvmBalanceTransferTests(unittest.TestCase):
         receiver = create_wallet(name="receiver")
         caller = create_wallet(name="caller")
         request_id = "casino-payout-1"
+        contract_address = "casino-contract"
+        program = [
+            ["PUSH", 3],
+            ["TRANSFER_FROM", source.address, receiver.address, request_id],
+            ["HALT"],
+        ]
         blockchain.mine_pending_transactions(
             miner_address=source.address,
             description="fund source",
         )
         current_height = blockchain.blocks[-1].block_id
-        authorization = create_uvm_authorization(
+        authorization = create_authorization(
             source,
             request_id,
+            contract_address,
+            program,
             current_height=current_height,
             valid_for_blocks=1,
         ).to_dict()
@@ -315,12 +286,8 @@ class UvmBalanceTransferTests(unittest.TestCase):
             caller,
             Transaction.execute(
                 sender=caller.address,
-                contract_address="casino-contract",
-                input_data=[
-                    ["PUSH", 3],
-                    ["TRANSFER_FROM", source.address, receiver.address, request_id],
-                    ["HALT"],
-                ],
+                contract_address=contract_address,
+                input_data=program,
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=100,

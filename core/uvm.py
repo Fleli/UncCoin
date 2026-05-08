@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from core.uvm_authorization import get_authorization_scope
+from core.contracts import CONTRACT_SELF_ADDRESS
 from core.uvm_authorization import is_request_authorized
 
 
@@ -173,7 +173,6 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
     }
     balance_changes: dict[str, Decimal] = {}
     transfers: list[dict[str, str]] = []
-    authorization_spend: dict[tuple[str, str], Decimal] = {}
     pc = 0
     gas_remaining = gas_limit
 
@@ -216,7 +215,6 @@ def execute_uvm_program(program: Any, context: UvmExecutionContext) -> UvmExecut
                 balances,
                 balance_changes,
                 transfers,
-                authorization_spend,
                 len(instructions),
             )
         except _UvmRevert as error:
@@ -354,7 +352,6 @@ def _execute_instruction(
     balances: dict[str, Decimal],
     balance_changes: dict[str, Decimal],
     transfers: list[dict[str, str]],
-    authorization_spend: dict[tuple[str, str], Decimal],
     program_length: int,
 ) -> int | None:
     opcode = instruction.opcode
@@ -499,36 +496,17 @@ def _execute_instruction(
 
     if opcode == "TRANSFER_FROM":
         _require_operand_count(opcode, operands, 3)
-        source = _require_key_operand(opcode, operands[0])
-        receiver = _require_key_operand(opcode, operands[1])
+        source = _resolve_account_operand(opcode, operands[0], context)
+        receiver = _resolve_account_operand(opcode, operands[1], context)
         request_id = _require_key_operand(opcode, operands[2])
         amount = Decimal(_pop(stack))
         if amount <= Decimal("0"):
             raise _UvmExecutionError("transfer amount must be positive")
-        new_authorized_spend: Decimal | None = None
         if source != context.tx_sender and source != context.contract_address:
-            authorization_scope = get_authorization_scope(
-                context.authorization_index,
-                source,
-                request_id,
-            )
-            if authorization_scope is None:
+            if not is_request_authorized(context.authorization_index, source, request_id):
                 raise _UvmExecutionError(
                     f"wallet {source} is not authorized for request_id {request_id}"
                 )
-            spent_key = (source, request_id)
-            new_authorized_spend = authorization_spend.get(
-                spent_key,
-                Decimal("0.0"),
-            ) + amount
-            raw_max_amount = authorization_scope.get("max_amount")
-            if raw_max_amount is not None:
-                max_amount = Decimal(str(raw_max_amount))
-                if new_authorized_spend > max_amount:
-                    raise _UvmExecutionError(
-                        f"wallet {source} authorization for request_id {request_id} "
-                        f"exceeds amount limit {max_amount}"
-                    )
 
         source_balance = balances.get(source, Decimal("0.0"))
         if source_balance < amount:
@@ -536,8 +514,6 @@ def _execute_instruction(
                 f"source balance {source_balance} is below transfer amount {amount}"
             )
 
-        if new_authorized_spend is not None:
-            authorization_spend[(source, request_id)] = new_authorized_spend
         balances[source] = source_balance - amount
         balances[receiver] = balances.get(receiver, Decimal("0.0")) + amount
         balance_changes[source] = balance_changes.get(source, Decimal("0.0")) - amount
@@ -615,6 +591,17 @@ def _require_key_operand(opcode: str, operand: Any) -> str:
     if not isinstance(operand, str) or not operand:
         raise _UvmExecutionError(f"{opcode} operand must be a non-empty string")
     return operand
+
+
+def _resolve_account_operand(
+    opcode: str,
+    operand: Any,
+    context: UvmExecutionContext,
+) -> str:
+    account = _require_key_operand(opcode, operand)
+    if account == CONTRACT_SELF_ADDRESS:
+        return context.contract_address
+    return account
 
 
 def _validate_jump_target(target: int, program_length: int) -> int:

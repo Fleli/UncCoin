@@ -4,6 +4,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from core.block import Block, get_block_verification_error, proof_of_work
+from core.contracts import compute_contract_address
+from core.contracts import compute_contract_code_hash
 from core.genesis import get_genesis_block_validation_error
 from core.hashing import sha256_transaction_hash
 from core.randomness import MAX_RANDOMNESS_REQUEST_ID_LENGTH
@@ -931,6 +933,7 @@ class Blockchain:
             state.balances[transaction.sender] = sender_balance - total_cost
             state.contracts[contract_address] = {
                 "deployer": transaction.sender,
+                "code_hash": transaction.payload["code_hash"],
                 "program": deepcopy(transaction.payload["program"]),
                 "metadata": deepcopy(transaction.payload.get("metadata", {})),
             }
@@ -986,17 +989,6 @@ class Blockchain:
         if gas_price < Decimal("0.0"):
             return "execute transaction gas_price must be non-negative"
 
-        raw_authorizations = transaction.payload.get("authorizations", [])
-        if not isinstance(raw_authorizations, list):
-            return "execute transaction authorizations must be a list"
-        try:
-            authorization_index = build_authorization_index(
-                raw_authorizations,
-                block_height=execution_block_height,
-            )
-        except ValueError as error:
-            return str(error)
-
         maximum_fuel_fee = Decimal(gas_limit) * gas_price
         if gas_price > Decimal("0.0") and transaction.fee < maximum_fuel_fee:
             return (
@@ -1024,8 +1016,32 @@ class Blockchain:
         contract = state.contracts.get(contract_address)
         if contract is not None:
             program = contract["program"]
+            code_hash = str(
+                contract.get(
+                    "code_hash",
+                    compute_contract_code_hash(
+                        contract["program"],
+                        contract.get("metadata", {}),
+                    ),
+                )
+            )
         elif program is None:
             return f"execute transaction references undeployed contract {contract_address}"
+        else:
+            code_hash = compute_contract_code_hash(program, {})
+
+        raw_authorizations = transaction.payload.get("authorizations", [])
+        if not isinstance(raw_authorizations, list):
+            return "execute transaction authorizations must be a list"
+        try:
+            authorization_index = build_authorization_index(
+                raw_authorizations,
+                contract_address=contract_address,
+                code_hash=code_hash,
+                block_height=execution_block_height,
+            )
+        except ValueError as error:
+            return str(error)
 
         execution_result = execute_uvm_program(
             program,
@@ -1100,6 +1116,25 @@ class Blockchain:
         metadata = transaction.payload.get("metadata", {})
         if not isinstance(metadata, dict):
             return "deploy transaction metadata must be an object"
+
+        expected_code_hash = compute_contract_code_hash(
+            transaction.payload["program"],
+            metadata,
+        )
+        code_hash = str(transaction.payload.get("code_hash", "")).strip().lower()
+        if code_hash != expected_code_hash:
+            return "deploy transaction code_hash does not match program and metadata"
+
+        expected_contract_address = compute_contract_address(
+            transaction.sender,
+            transaction.nonce,
+            expected_code_hash,
+        )
+        if contract_address != expected_contract_address:
+            return (
+                "deploy transaction contract_address must be deterministic address "
+                "derived from sender, nonce, and code_hash"
+            )
 
         request_ids = metadata.get("request_ids", [])
         if request_ids is None:

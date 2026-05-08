@@ -49,7 +49,8 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
-deploy <contract> <fee> <json-or-file>
+deploy <fee> <json-or-file>
+authorize <contract> <request-id> [valid-blocks]
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
 msg <wallet> <content>
@@ -89,11 +90,16 @@ sha256("UVM_REVEAL|1|<wallet>|<request_id>|<seed>|<salt>")
 Seeds are normalized as unsigned 256-bit integers. Decimal and `0x` hexadecimal seed strings
 are accepted. Salt is optional.
 
-`deploy` stores UVM code and metadata under a contract address. The deploy source can be
-inline JSON or a file in `state/contracts`. The JSON can be either a program directly or an
-object with `program` and `metadata` fields. Metadata is an object; `metadata.request_ids` is
-reserved for request ids relevant to the contract. For example,
-`deploy coinflip 0 coinflip.uvm` deploys `state/contracts/coinflip.uvm`.
+`deploy` stores UVM code and metadata under a deterministic contract address derived from the
+deployer, deploy nonce, and code hash. The deploy source can be inline JSON or a file in
+`state/contracts`. The JSON can be either a program directly or an object with `program` and
+`metadata` fields. Metadata is an object; `metadata.request_ids` is reserved for request ids
+relevant to the contract. For example, `deploy 0 coinflip.uvm` deploys
+`state/contracts/coinflip.uvm` and prints the derived contract address and code hash.
+
+`authorize` prints a signed off-chain UVM consent receipt for a deployed contract and request
+id. The receipt is not broadcast by itself; hand it to the executor, who includes it in the
+`authorizations` list of an `execute` transaction.
 
 `execute` runs deployed UVM code, or inline code when no deployed contract exists. The execute
 JSON can be a program directly or an object with `input` and `authorizations` fields.
@@ -102,15 +108,14 @@ JSON can be a program directly or an object with `input` and `authorizations` fi
 
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
 the contract address, gas limit, optional value, max fee escrow, gas price, and signed request
-authorizations of the form `wallet -> request_id` plus optional scope limits. If the contract
+authorizations bound to `wallet + contract_address + code_hash + request_id`. If the contract
 address has deployed code, that deployed program runs; otherwise `execute` can still carry an
 inline program for compatibility.
 
-UVM authorizations may be scoped with `valid_from_height`, `valid_until_height`, and
-`max_amount`. Height limits make the authorization valid only for specific block heights;
+UVM authorizations may be scoped with `valid_from_height` and `valid_until_height`. Height
+limits make the authorization valid only for specific block heights;
 `create_uvm_authorization(..., current_height=<h>, valid_for_blocks=<n>)` signs a window for
-the next `n` blocks, from `h + 1` through `h + n`. `max_amount` caps the cumulative amount
-that a single UVM run can move from that wallet for the signed request id.
+the next `n` blocks, from `h + 1` through `h + n`.
 
 ## UncCoin Virtual Machine
 
@@ -143,9 +148,9 @@ which lets contracts distinguish "not revealed yet" from "missed the deadline."
 `TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
 that amount between balances. The source must be the execute transaction sender, the contract
 itself, or a wallet that provided a valid UVM authorization for the exact request id. The
-receiver does not need to sign because receiving funds is not a sensitive operation. If the
-authorization has `max_amount`, repeated transfers from the same source and request id are
-counted together during the run.
+receiver does not need to sign because receiving funds is not a sensitive operation. Use the
+reserved account operand `$CONTRACT` when an instruction needs to refer to the currently
+executing contract's deterministic address.
 
 Instructions:
 
@@ -224,8 +229,9 @@ For simple shared randomness, contracts can read multiple revealed seeds, combin
 bitwise `XOR`, then hash the result with `SHA256`.
 
 The repo includes `state/contracts/coinflip.uvm`, a two-wallet example that should be deployed
-under contract address `coinflip`. It expects both hardcoded wallets to authorize and reveal
-under request id `coinflip`, stakes 100 from each wallet, and pays 200 to the derived winner.
+with `deploy 0 coinflip.uvm`. It expects both hardcoded wallets to authorize the printed
+contract address and reveal under request id `coinflip`, stakes 100 from each wallet, and pays
+200 to the derived winner.
 
 ## Local Convenience Commands
 

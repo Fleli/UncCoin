@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime
 from decimal import Decimal
 
+from core.contracts import compute_contract_address
+from core.contracts import compute_contract_code_hash
 from core.serialization import serialize_transaction
 from core.transaction import TRANSACTION_KIND_COMMIT
 from core.transaction import TRANSACTION_KIND_DEPLOY
@@ -100,21 +102,23 @@ class TransactionModelTests(unittest.TestCase):
 
         transaction = Transaction.deploy(
             sender="alice",
-            contract_address="contract-number-store",
             program=program,
             metadata=metadata,
             fee=Decimal("0.1"),
             timestamp=timestamp,
             nonce=5,
         )
+        code_hash = compute_contract_code_hash(program, metadata)
+        contract_address = compute_contract_address("alice", 5, code_hash)
 
         self.assertEqual(transaction.kind, TRANSACTION_KIND_DEPLOY)
-        self.assertEqual(transaction.receiver, "contract-number-store")
+        self.assertEqual(transaction.receiver, contract_address)
         self.assertEqual(transaction.amount, Decimal("0.0"))
         self.assertEqual(
             transaction.payload,
             {
-                "contract_address": "contract-number-store",
+                "contract_address": contract_address,
+                "code_hash": code_hash,
                 "program": program,
                 "metadata": metadata,
             },
@@ -123,7 +127,12 @@ class TransactionModelTests(unittest.TestCase):
     def test_execute_constructor_carries_future_uvm_payload(self) -> None:
         timestamp = datetime.fromisoformat("2026-05-07T10:00:00")
         wallet = create_wallet(name="authorizer")
-        authorization = create_uvm_authorization(wallet, "casino-play-1").to_dict()
+        authorization = create_uvm_authorization(
+            wallet,
+            "casino-play-1",
+            contract_address="contract-1",
+            code_hash="a" * 64,
+        ).to_dict()
 
         transaction = Transaction.execute(
             sender="alice",

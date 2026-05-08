@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from core.blockchain import Blockchain
+from core.contracts import compute_contract_code_hash
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
@@ -43,7 +44,6 @@ class DeployTransactionTests(unittest.TestCase):
             deployer,
             Transaction.deploy(
                 sender=deployer.address,
-                contract_address="contract-number-store",
                 program=program,
                 metadata=metadata,
                 fee=Decimal("0"),
@@ -58,11 +58,13 @@ class DeployTransactionTests(unittest.TestCase):
             miner_address="miner",
             description="deploy contract",
         )
+        code_hash = compute_contract_code_hash(program, metadata)
 
         self.assertEqual(
-            blockchain.get_contract("contract-number-store"),
+            blockchain.get_contract(deploy_transaction.receiver),
             {
                 "deployer": deployer.address,
+                "code_hash": code_hash,
                 "program": program,
                 "metadata": metadata,
             },
@@ -76,7 +78,6 @@ class DeployTransactionTests(unittest.TestCase):
             deployer,
             Transaction.deploy(
                 sender=deployer.address,
-                contract_address="contract-number-store",
                 program=[
                     ["PUSH", 7],
                     ["STORE", "number"],
@@ -94,11 +95,12 @@ class DeployTransactionTests(unittest.TestCase):
             miner_address="miner",
             description="deploy contract",
         )
+        contract_address = deploy_transaction.receiver
         execute_transaction = sign_transaction(
             caller,
             Transaction.execute(
                 sender=caller.address,
-                contract_address="contract-number-store",
+                contract_address=contract_address,
                 input_data=[],
                 value=Decimal("0"),
                 fee=Decimal("0"),
@@ -116,28 +118,14 @@ class DeployTransactionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            blockchain.get_contract_storage("contract-number-store"),
+            blockchain.get_contract_storage(contract_address),
             {"number": 7},
         )
 
-    def test_deploy_rejects_duplicate_contract_address(self) -> None:
+    def test_deploy_rejects_non_deterministic_contract_address(self) -> None:
         blockchain = create_blockchain()
         deployer = create_wallet(name="deployer")
-        first_deploy = sign_transaction(
-            deployer,
-            Transaction.deploy(
-                sender=deployer.address,
-                contract_address="contract-number-store",
-                program=[["HALT"]],
-                fee=Decimal("0"),
-                timestamp=datetime.now(),
-                nonce=blockchain.get_next_nonce(deployer.address),
-                sender_public_key=deployer.public_key,
-            ),
-        )
-        blockchain.add_transaction(first_deploy)
-
-        second_deploy = sign_transaction(
+        deploy_transaction = sign_transaction(
             deployer,
             Transaction.deploy(
                 sender=deployer.address,
@@ -150,8 +138,8 @@ class DeployTransactionTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "already deployed"):
-            blockchain.add_transaction(second_deploy)
+        with self.assertRaisesRegex(ValueError, "deterministic address"):
+            blockchain.add_transaction(deploy_transaction)
 
     def test_deploy_validates_metadata_request_ids(self) -> None:
         blockchain = create_blockchain()
@@ -160,7 +148,6 @@ class DeployTransactionTests(unittest.TestCase):
             deployer,
             Transaction.deploy(
                 sender=deployer.address,
-                contract_address="contract-number-store",
                 program=[["HALT"]],
                 metadata={"request_ids": [""]},
                 fee=Decimal("0"),
@@ -207,7 +194,6 @@ class NodeDeployTransactionTests(unittest.TestCase):
         )
 
         deploy_transaction = node.create_signed_deploy(
-            contract_address="contract-number-store",
             program=[["HALT"]],
             metadata={"request_ids": ["casino-play-1"]},
             fee="0",
@@ -215,6 +201,7 @@ class NodeDeployTransactionTests(unittest.TestCase):
 
         accepted, reason = node._handle_incoming_transaction(deploy_transaction)
         self.assertTrue(accepted, reason)
+        self.assertEqual(len(deploy_transaction.receiver), 64)
 
     def test_node_creates_signed_deploy_transaction_from_contract_file(self) -> None:
         blockchain = create_blockchain()
@@ -227,7 +214,6 @@ class NodeDeployTransactionTests(unittest.TestCase):
         )
 
         deploy_transaction = node.create_signed_deploy_from_source(
-            contract_address="coinflip",
             contract_source="coinflip",
             fee="0",
         )
@@ -242,11 +228,50 @@ class NodeDeployTransactionTests(unittest.TestCase):
         expected_program = json.loads(
             (Node.CONTRACTS_DIR / "coinflip.uvm").read_text(encoding="utf-8")
         )
-        contract = blockchain.get_contract("coinflip")
+        contract = blockchain.get_contract(deploy_transaction.receiver)
         self.assertIsNotNone(contract)
         assert contract is not None
+        self.assertEqual(contract["code_hash"], deploy_transaction.payload["code_hash"])
         self.assertEqual(contract["program"], expected_program)
         self.assertEqual(contract["metadata"], {})
+
+    def test_node_creates_contract_bound_authorization_receipt(self) -> None:
+        blockchain = create_blockchain()
+        wallet = create_wallet(name="wallet")
+        node = Node(
+            host="127.0.0.1",
+            port=9503,
+            wallet=wallet,
+            blockchain=blockchain,
+        )
+        deploy_transaction = node.create_signed_deploy(
+            program=[["HALT"]],
+            fee="0",
+        )
+        accepted, reason = node._handle_incoming_transaction(deploy_transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="deploy contract",
+        )
+
+        authorization = node.create_uvm_authorization_receipt(
+            contract_address=deploy_transaction.receiver,
+            request_id="casino-play-1",
+            valid_for_blocks="2",
+        )
+
+        self.assertEqual(authorization["wallet"], wallet.address)
+        self.assertEqual(authorization["contract_address"], deploy_transaction.receiver)
+        self.assertEqual(authorization["code_hash"], deploy_transaction.payload["code_hash"])
+        self.assertEqual(authorization["request_id"], "casino-play-1")
+        self.assertEqual(
+            authorization["scope"],
+            {
+                "valid_from_height": blockchain.blocks[-1].block_id + 1,
+                "valid_until_height": blockchain.blocks[-1].block_id + 2,
+            },
+        )
 
     def test_node_creates_signed_execute_transaction_and_formats_receipt(self) -> None:
         blockchain = create_blockchain()

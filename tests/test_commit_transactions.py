@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from core.blockchain import Blockchain
+from core.contracts import compute_contract_code_hash
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
@@ -148,21 +149,28 @@ class CommitTransactionTests(unittest.TestCase):
             miner_address="miner",
             description="include authorizer commitment",
         )
+        program = [
+            ["READ_COMMIT", authorizer.address, "casino-play-1"],
+            ["STORE", "commitment"],
+            ["HALT"],
+        ]
+        contract_address = "contract-address"
         transaction = sign_transaction(
             wallet,
             Transaction.execute(
                 sender=wallet.address,
-                contract_address="contract-address",
-                input_data=[
-                    ["READ_COMMIT", authorizer.address, "casino-play-1"],
-                    ["STORE", "commitment"],
-                    ["HALT"],
-                ],
+                contract_address=contract_address,
+                input_data=program,
                 value=Decimal("0"),
                 fee=Decimal("0.5"),
                 gas_limit=10_000,
                 authorizations=[
-                    create_uvm_authorization(authorizer, "casino-play-1").to_dict()
+                    create_uvm_authorization(
+                        authorizer,
+                        "casino-play-1",
+                        contract_address=contract_address,
+                        code_hash=compute_contract_code_hash(program, {}),
+                    ).to_dict()
                 ],
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(wallet.address),
@@ -232,17 +240,21 @@ class CommitTransactionTests(unittest.TestCase):
             miner_address=wallet.address,
             description="fund caller",
         )
+        program = "00"
+        contract_address = "contract-address"
         invalid_authorization = create_uvm_authorization(
             authorizer,
             "casino-play-1",
+            contract_address=contract_address,
+            code_hash=compute_contract_code_hash(program, {}),
         ).to_dict()
         invalid_authorization["request_id"] = "casino-play-2"
         transaction = sign_transaction(
             wallet,
             Transaction.execute(
                 sender=wallet.address,
-                contract_address="contract-address",
-                input_data="00",
+                contract_address=contract_address,
+                input_data=program,
                 value=Decimal("0"),
                 fee=Decimal("0"),
                 gas_limit=10_000,

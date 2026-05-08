@@ -9,6 +9,29 @@ from core.uvm_authorization import create_uvm_authorization
 from wallet import create_wallet
 
 
+CONTRACT_ADDRESS = "contract"
+CODE_HASH = "a" * 64
+
+
+def create_authorization(wallet, request_id: str, **kwargs):
+    return create_uvm_authorization(
+        wallet,
+        request_id,
+        contract_address=CONTRACT_ADDRESS,
+        code_hash=CODE_HASH,
+        **kwargs,
+    )
+
+
+def build_index(authorizations, **kwargs):
+    return build_authorization_index(
+        authorizations,
+        contract_address=CONTRACT_ADDRESS,
+        code_hash=CODE_HASH,
+        **kwargs,
+    )
+
+
 class UvmExecutionTests(unittest.TestCase):
     def test_arithmetic_and_storage(self) -> None:
         result = execute_uvm_program(
@@ -158,8 +181,8 @@ class UvmExecutionTests(unittest.TestCase):
 
     def test_read_commit_pushes_authorized_commitment_hash_as_integer(self) -> None:
         wallet = create_wallet(name="authorizer")
-        authorization_index = build_authorization_index(
-            [create_uvm_authorization(wallet, "casino-play-1")]
+        authorization_index = build_index(
+            [create_authorization(wallet, "casino-play-1")]
         )
 
         result = execute_uvm_program(
@@ -306,8 +329,8 @@ class UvmExecutionTests(unittest.TestCase):
     def test_transfer_from_debits_authorized_source_and_credits_receiver(self) -> None:
         source = create_wallet(name="source")
         receiver = create_wallet(name="receiver")
-        authorization_index = build_authorization_index(
-            [create_uvm_authorization(source, "casino-payout-1")]
+        authorization_index = build_index(
+            [create_authorization(source, "casino-payout-1")]
         )
 
         result = execute_uvm_program(
@@ -394,7 +417,7 @@ class UvmExecutionTests(unittest.TestCase):
         result = execute_uvm_program(
             [
                 ["PUSH", 4],
-                ["TRANSFER_FROM", "contract", receiver.address, "contract-pay"],
+                ["TRANSFER_FROM", "$CONTRACT", receiver.address, "contract-pay"],
                 ["HALT"],
             ],
             UvmExecutionContext(
@@ -409,43 +432,10 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertEqual(result.balance_changes["contract"], Decimal("-4"))
         self.assertEqual(result.balance_changes[receiver.address], Decimal("4"))
 
-    def test_transfer_from_enforces_authorization_amount_limit_cumulatively(self) -> None:
-        source = create_wallet(name="source")
-        receiver = create_wallet(name="receiver")
-        authorization_index = build_authorization_index(
-            [
-                create_uvm_authorization(
-                    source,
-                    "limited-payout",
-                    max_amount=Decimal("5"),
-                ).to_dict()
-            ]
-        )
-
-        result = execute_uvm_program(
-            [
-                ["PUSH", 3],
-                ["TRANSFER_FROM", source.address, receiver.address, "limited-payout"],
-                ["PUSH", 3],
-                ["TRANSFER_FROM", source.address, receiver.address, "limited-payout"],
-                ["HALT"],
-            ],
-            UvmExecutionContext(
-                tx_sender="caller",
-                contract_address="contract",
-                gas_limit=200,
-                balances={source.address: Decimal("10")},
-                authorization_index=authorization_index,
-            ),
-        )
-
-        self.assertFalse(result.success)
-        self.assertIn("exceeds amount limit 5", result.error or "")
-
     def test_require_auth_fails_without_matching_request_id(self) -> None:
         wallet = create_wallet(name="authorizer")
-        authorization_index = build_authorization_index(
-            [create_uvm_authorization(wallet, "casino-play-1")]
+        authorization_index = build_index(
+            [create_authorization(wallet, "casino-play-1")]
         )
 
         result = execute_uvm_program(
