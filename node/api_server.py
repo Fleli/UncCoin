@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TYPE_CHECKING
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from core.block import Block
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
+from core.utils.constants import MINING_REWARD_SENDER
 
 if TYPE_CHECKING:
     from core.blockchain import Blockchain, ChainState
@@ -153,6 +155,14 @@ def create_api_app(node: "Node") -> FastAPI:
     @app.get(f"{API_PREFIX}/sync/status")
     def sync_status() -> dict[str, Any]:
         return _sync_status_payload(node)
+
+    @app.get(f"{API_PREFIX}/mining/status")
+    def mining_status() -> dict[str, Any]:
+        blockchain = _require_blockchain(node)
+        return {
+            **node.mining_status(),
+            "recent_miners": _recent_miners_payload(node, blockchain),
+        }
 
     @app.get(f"{API_PREFIX}/chain/head")
     def chain_head() -> dict[str, Any]:
@@ -393,7 +403,7 @@ def create_api_app(node: "Node") -> FastAPI:
     async def mine(request: MineRequest) -> dict[str, Any]:
         description = request.description or node.default_block_description("Mined block")
         try:
-            block = await node.mine_pending_transactions(description)
+            block = await node.mine_pending_transactions_with_progress(description)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"block": _block_payload(block)}
@@ -628,6 +638,28 @@ def _sync_status_payload(node: "Node") -> dict[str, Any]:
             "peers": active_fast_syncs,
         },
     }
+
+
+def _recent_miners_payload(
+    node: "Node",
+    blockchain: "Blockchain",
+    block_limit: int = 25,
+) -> list[dict[str, Any]]:
+    miner_counts: Counter[str] = Counter()
+    for block in blockchain.get_chain(_state_tip_hash(node))[-block_limit:]:
+        for transaction in block.transactions:
+            if transaction.sender == MINING_REWARD_SENDER:
+                miner_counts[transaction.receiver] += 1
+                break
+
+    return [
+        {
+            "address": address,
+            "alias": node.alias_for_wallet(address),
+            "blocks": blocks,
+        }
+        for address, blocks in miner_counts.most_common(5)
+    ]
 
 
 def _find_current_chain_block(node: "Node", block_reference: str) -> Block:

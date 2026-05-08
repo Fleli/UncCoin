@@ -123,6 +123,37 @@ class NodeApiServerTests(unittest.TestCase):
             ],
         )
 
+    def test_mining_status_reports_progress_and_recent_miners(self) -> None:
+        self.node._start_mining_progress(
+            mode="automine",
+            description="Status test",
+            difficulty_bits=7,
+            tip_hash=self.node.blockchain.main_tip_hash,
+        )
+        self.node._report_mining_progress(12345)
+
+        response = self.client.get("/api/v1/mining/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["active"])
+        self.assertEqual(body["mode"], "automine")
+        self.assertEqual(body["description"], "Status test")
+        self.assertEqual(body["nonce"], 12345)
+        self.assertEqual(body["difficulty_bits"], 7)
+        self.assertEqual(
+            body["recent_miners"],
+            [
+                {
+                    "address": self.miner_wallet.address,
+                    "alias": None,
+                    "blocks": 1,
+                }
+            ],
+        )
+
+        self.node._clear_mining_progress()
+
     def test_missing_contract_returns_not_found(self) -> None:
         response = self.client.get("/api/v1/contracts/missing-contract")
         self.assertEqual(response.status_code, 404)

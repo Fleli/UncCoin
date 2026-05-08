@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from config import DEFAULT_DIFFICULTY_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
@@ -47,6 +47,16 @@ class Node:
     p2p_server: P2PServer = field(init=False)
     automine_task: asyncio.Task | None = field(default=None, init=False)
     automine_description: str = field(default="", init=False)
+    mining_active: bool = field(default=False, init=False)
+    mining_mode: str | None = field(default=None, init=False)
+    mining_description: str = field(default="", init=False)
+    mining_started_at: datetime | None = field(default=None, init=False)
+    mining_last_update_at: datetime | None = field(default=None, init=False)
+    mining_last_nonce: int = field(default=0, init=False)
+    mining_difficulty_bits: int | None = field(default=None, init=False)
+    mining_tip_hash: str | None = field(default=None, init=False)
+    mining_last_block_hash: str | None = field(default=None, init=False)
+    mining_last_block_height: int | None = field(default=None, init=False)
     _automine_stop_requested: bool = field(default=False, init=False)
     _current_automine_tip_hash: str | None = field(default=None, init=False)
     _private_automine_tip_hash: str | None = field(default=None, init=False)
@@ -543,16 +553,28 @@ class Node:
         if self.blockchain is None:
             raise ValueError("A blockchain is required to mine.")
 
+        tip_hash = self._mining_tip_hash()
+        difficulty_bits = self.blockchain.get_next_block_difficulty_bits(tip_hash)
+        self._start_mining_progress(
+            mode="manual",
+            description=description,
+            difficulty_bits=difficulty_bits,
+            tip_hash=tip_hash,
+        )
         print(f"Mining... ({self._mining_status_text()})", flush=True)
         previous_state_tip_hash = self._state_tip_hash()
-        block = self.blockchain.mine_pending_transactions(
-            miner_address=self.wallet.address,
-            description=description,
-            progress_callback=self._report_mining_progress,
-            tip_hash=self._mining_tip_hash(),
-            reconcile_pending_transactions=not self.private_automine,
+        block = await asyncio.to_thread(
+            functools.partial(
+                self.blockchain.mine_pending_transactions,
+                miner_address=self.wallet.address,
+                description=description,
+                progress_callback=self._report_mining_progress,
+                tip_hash=tip_hash,
+                reconcile_pending_transactions=not self.private_automine,
+            )
         )
         self._clear_mining_progress()
+        self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
         await self.broadcast_block(block)
@@ -588,6 +610,15 @@ class Node:
         try:
             while not self._automine_stop_requested:
                 self._current_automine_tip_hash = self._mining_tip_hash()
+                difficulty_bits = self.blockchain.get_next_block_difficulty_bits(
+                    self._current_automine_tip_hash,
+                )
+                self._start_mining_progress(
+                    mode="automine",
+                    description=self.automine_description,
+                    difficulty_bits=difficulty_bits,
+                    tip_hash=self._current_automine_tip_hash,
+                )
                 previous_state_tip_hash = self._state_tip_hash()
                 print(
                     f"Automining... ({self._mining_status_text()})",
@@ -604,6 +635,7 @@ class Node:
                     )
                 )
                 self._clear_mining_progress()
+                self._record_mined_block_progress(block)
                 self._record_local_mining_tip(block.block_hash)
                 self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
                 await self.broadcast_block(block)
@@ -627,12 +659,83 @@ class Node:
                 self.automine_task = None
             self._automine_stop_requested = False
 
-    @staticmethod
-    def _report_mining_progress(nonce: int) -> None:
+    def mining_status(self) -> dict[str, Any]:
+        next_difficulty_bits = None
+        state_tip_hash = None
+        if self.blockchain is not None:
+            try:
+                state_tip_hash = self._state_tip_hash()
+                next_difficulty_bits = self.blockchain.get_next_block_difficulty_bits(
+                    state_tip_hash,
+                )
+            except ValueError:
+                pass
+
+        return {
+            "active": self.mining_active,
+            "mode": self.mining_mode,
+            "description": self.mining_description,
+            "started_at": (
+                self.mining_started_at.isoformat()
+                if self.mining_started_at is not None
+                else None
+            ),
+            "last_update_at": (
+                self.mining_last_update_at.isoformat()
+                if self.mining_last_update_at is not None
+                else None
+            ),
+            "nonce": self.mining_last_nonce,
+            "difficulty_bits": (
+                self.mining_difficulty_bits
+                if self.mining_difficulty_bits is not None
+                else next_difficulty_bits
+            ),
+            "next_difficulty_bits": next_difficulty_bits,
+            "tip_hash": self.mining_tip_hash or state_tip_hash,
+            "automine": {
+                "running": (
+                    self.automine_task is not None
+                    and not self.automine_task.done()
+                ),
+                "description": self.automine_description,
+            },
+            "last_block": {
+                "height": self.mining_last_block_height,
+                "block_hash": self.mining_last_block_hash,
+            },
+        }
+
+    def _start_mining_progress(
+        self,
+        mode: str,
+        description: str,
+        difficulty_bits: int,
+        tip_hash: str | None,
+    ) -> None:
+        now = datetime.now()
+        self.mining_active = True
+        self.mining_mode = mode
+        self.mining_description = description
+        self.mining_started_at = now
+        self.mining_last_update_at = now
+        self.mining_last_nonce = 0
+        self.mining_difficulty_bits = difficulty_bits
+        self.mining_tip_hash = tip_hash
+
+    def _record_mined_block_progress(self, block: Block) -> None:
+        self.mining_last_nonce = block.nonce
+        self.mining_last_update_at = datetime.now()
+        self.mining_last_block_height = block.block_id
+        self.mining_last_block_hash = block.block_hash
+
+    def _report_mining_progress(self, nonce: int) -> None:
+        self.mining_last_nonce = int(nonce)
+        self.mining_last_update_at = datetime.now()
         print(f"\rTried {nonce:,} nonces...", end="", flush=True)
 
-    @staticmethod
-    def _clear_mining_progress() -> None:
+    def _clear_mining_progress(self) -> None:
+        self.mining_active = False
         print("\r" + (" " * 40) + "\r", end="", flush=True)
 
     @staticmethod
