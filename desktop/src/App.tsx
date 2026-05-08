@@ -114,7 +114,7 @@ function shortHash(value: string | null | undefined, length = 12): string {
   if (!value) {
     return "-";
   }
-  return value.length > length ? value.slice(0, length) : value;
+  return value.length > length ? `${value.slice(0, length)}...` : value;
 }
 
 function formatAmount(value: string | null | undefined): string {
