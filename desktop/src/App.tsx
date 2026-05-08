@@ -14,6 +14,7 @@ import {
   readContracts,
   readMiningStatus,
   readMessages,
+  readNetworkStats,
   readNodeInfo,
   readPeers,
   readPendingTransactions,
@@ -35,6 +36,7 @@ import {
   type ContractEntry,
   type MessageEntry,
   type MiningStatus,
+  type NetworkStatsResponse,
   type NodeInfo,
   type PeersResponse,
   type ReceiptEntry,
@@ -67,6 +69,7 @@ type Snapshot = {
   chainHead: ChainHead | null;
   balances: BalanceRow[];
   peers: PeersResponse;
+  networkStats: NetworkStatsResponse;
   pendingTransactions: TransactionPayload[];
   blocks: BlockPayload[];
   messages: MessageEntry[];
@@ -106,6 +109,11 @@ function emptySnapshot(): Snapshot {
     chainHead: null,
     balances: [],
     peers: { connected: [], known: [] },
+    networkStats: {
+      ingress: { bytes: 0, messages: 0 },
+      egress: { bytes: 0, messages: 0 },
+      peers: [],
+    },
     pendingTransactions: [],
     blocks: [],
     messages: [],
@@ -139,6 +147,23 @@ function formatWalletKey(key: WalletKeyDetails["publicKey"]): string {
 
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString() : "-";
+}
+
+function formatBytes(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let unitIndex = 0;
+  let scaledValue = value;
+  while (scaledValue >= 1024 && unitIndex < units.length - 1) {
+    scaledValue /= 1024;
+    unitIndex += 1;
+  }
+  if (unitIndex === 0) {
+    return `${scaledValue.toLocaleString()} ${units[unitIndex]}`;
+  }
+  return `${scaledValue.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${units[unitIndex]}`;
 }
 
 function formatElapsed(startedAt: string | null | undefined): string {
@@ -520,6 +545,7 @@ function App() {
       nodeInfo,
       balances,
       peers,
+      networkStats,
       pendingTransactions,
       blocks,
       messages,
@@ -531,6 +557,7 @@ function App() {
       readNodeInfo(apiPortToUse),
       readBalances(apiPortToUse),
       readPeers(apiPortToUse),
+      readNetworkStats(apiPortToUse),
       readPendingTransactions(apiPortToUse),
       readBlocks(apiPortToUse, RECENT_BLOCK_LIMIT, recentBlockStartHeight),
       readMessages(apiPortToUse),
@@ -545,6 +572,7 @@ function App() {
       chainHead,
       balances: balances.balances,
       peers,
+      networkStats,
       pendingTransactions: pendingTransactions.transactions,
       blocks: blocks.blocks,
       messages: messages.messages,
@@ -2395,6 +2423,49 @@ function App() {
                 </dl>
               </section>
             </div>
+
+            <section className="panel network-stats-panel">
+              <div className="panel-title">
+                <h3>Network Traffic</h3>
+                <span>{snapshot.networkStats.peers.length} tracked</span>
+              </div>
+              <div className="traffic-summary">
+                <article>
+                  <span>Ingress</span>
+                  <strong>{formatBytes(snapshot.networkStats.ingress.bytes)}</strong>
+                  <small>{formatNumber(snapshot.networkStats.ingress.messages)} messages</small>
+                </article>
+                <article>
+                  <span>Egress</span>
+                  <strong>{formatBytes(snapshot.networkStats.egress.bytes)}</strong>
+                  <small>{formatNumber(snapshot.networkStats.egress.messages)} messages</small>
+                </article>
+              </div>
+              <div className="traffic-peer-list">
+                {snapshot.networkStats.peers.length === 0 ? (
+                  <p className="empty">No P2P traffic recorded yet.</p>
+                ) : (
+                  snapshot.networkStats.peers.map((peer) => (
+                    <div className="traffic-peer-row" key={peer.peer}>
+                      <div>
+                        <code>{peer.peer}</code>
+                        <span>{peer.connected ? "connected" : "disconnected"}</span>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>In</dt>
+                          <dd>{formatBytes(peer.ingress.bytes)} / {formatNumber(peer.ingress.messages)} msg</dd>
+                        </div>
+                        <div>
+                          <dt>Out</dt>
+                          <dd>{formatBytes(peer.egress.bytes)} / {formatNumber(peer.egress.messages)} msg</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
 
             <div className="panel-grid two">
               <PeerList title="Connected Peers" peers={connectedPeers} />

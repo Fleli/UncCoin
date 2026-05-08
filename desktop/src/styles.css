@@ -1089,6 +1089,74 @@ dd {
   font-size: 13px;
 }
 
+.network-stats-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.traffic-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.traffic-summary article {
+  border: 1px solid #2b353c;
+  border-radius: 8px;
+  padding: 14px;
+  background: #111619;
+}
+
+.traffic-summary span,
+.traffic-summary small,
+.traffic-peer-row span {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.traffic-summary strong {
+  display: block;
+  margin: 8px 0 4px;
+  color: #f2f5f7;
+  font-size: 22px;
+}
+
+.traffic-peer-list {
+  display: grid;
+  gap: 8px;
+}
+
+.traffic-peer-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
+  gap: 14px;
+  border-top: 1px solid #242c31;
+  padding-top: 10px;
+}
+
+.traffic-peer-row > div,
+.traffic-peer-row dl,
+.traffic-peer-row dl div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.traffic-peer-row dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.traffic-peer-row code {
+  color: #9fc3d3;
+  overflow-wrap: anywhere;
+}
+
+.traffic-peer-row dd {
+  font-size: 12px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

@@ -44,6 +44,24 @@ export type PeersResponse = {
   known: string[];
 };
 
+export type TrafficStats = {
+  bytes: number;
+  messages: number;
+};
+
+export type NetworkPeerStats = {
+  peer: string;
+  connected: boolean;
+  ingress: TrafficStats;
+  egress: TrafficStats;
+};
+
+export type NetworkStatsResponse = {
+  ingress: TrafficStats;
+  egress: TrafficStats;
+  peers: NetworkPeerStats[];
+};
+
 export type SyncStatus = {
   phase: "ready" | "fastsync" | string;
   fastsync: {
@@ -211,6 +229,10 @@ export function readBalances(apiPort: number): Promise<BalancesResponse> {
 
 export function readPeers(apiPort: number): Promise<PeersResponse> {
   return requestApi<PeersResponse>(apiPort, "/peers");
+}
+
+export function readNetworkStats(apiPort: number): Promise<NetworkStatsResponse> {
+  return requestApi<NetworkStatsResponse>(apiPort, "/network/stats");
 }
 
 export function readPendingTransactions(apiPort: number): Promise<PendingTransactionsResponse> {
