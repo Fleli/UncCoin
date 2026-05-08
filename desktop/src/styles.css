@@ -449,6 +449,10 @@ pre {
   opacity: 0.9;
 }
 
+.network-bootstrap-panel {
+  margin: 14px 0 0;
+}
+
 .secondary-title {
   display: flex;
   align-items: baseline;
@@ -456,7 +460,8 @@ pre {
   gap: 14px;
 }
 
-.secondary-title p {
+.secondary-title p,
+.secondary-title span {
   color: #8f9aa1;
   font-size: 12px;
 }

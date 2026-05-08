@@ -271,6 +271,7 @@ function App() {
   const [startupPhase, setStartupPhase] = useState<StartupPhase>("idle");
   const [startupComplete, setStartupComplete] = useState(false);
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
+  const [networkBootstrapAttempts, setNetworkBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
@@ -892,6 +893,60 @@ function App() {
       const response = await connectPeer(activeApiPort, peerAddress);
       return { label: "Connected peers", detail: String(response.connected.length) };
     });
+  }
+
+  async function handleConnectBootstrapPeers() {
+    if (!isApiAvailable) {
+      setError("Start the node before connecting bootstrap peers.");
+      return;
+    }
+
+    setBusyAction("connect-bootstrap-peers");
+    setError(null);
+    setNotice(null);
+    const initialAttempts = BOOTSTRAP_PEERS.map((peer): BootstrapAttempt => (
+      isLocalBootstrapPeer(peer, nodeState.config, localAddresses)
+        ? { peer, status: "skipped", detail: "local node" }
+        : { peer, status: "pending" }
+    ));
+    setNetworkBootstrapAttempts(initialAttempts);
+
+    try {
+      const attempts = await Promise.all(
+        initialAttempts.map(async (attempt): Promise<BootstrapAttempt> => {
+          if (attempt.status === "skipped") {
+            return attempt;
+          }
+          try {
+            await connectPeer(activeApiPort, attempt.peer);
+            return { peer: attempt.peer, status: "connected" };
+          } catch (connectError) {
+            return {
+              peer: attempt.peer,
+              status: "failed",
+              detail: connectError instanceof Error ? connectError.message : String(connectError),
+            };
+          }
+        }),
+      );
+      setNetworkBootstrapAttempts(attempts);
+
+      const connectedCount = attempts.filter((attempt) => attempt.status === "connected").length;
+      const failedCount = attempts.filter((attempt) => attempt.status === "failed").length;
+      const skippedCount = attempts.filter((attempt) => attempt.status === "skipped").length;
+      setNotice(
+        connectedCount > 0
+          ? `Connected ${connectedCount} bootstrap peer(s).`
+          : failedCount > 0
+          ? "No bootstrap peers were reachable."
+          : `Skipped ${skippedCount} local bootstrap peer(s).`,
+      );
+      await refreshSnapshot();
+    } catch (actionError) {
+      setError(String(actionError));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function handleMessage(event: FormEvent<HTMLFormElement>) {
@@ -1781,7 +1836,30 @@ function App() {
                   >
                     Sync
                   </button>
+                  <button
+                    type="button"
+                    disabled={disableNodeAction || busyAction === "connect-bootstrap-peers"}
+                    onClick={() => void handleConnectBootstrapPeers()}
+                  >
+                    Bootstrap
+                  </button>
                 </form>
+                {networkBootstrapAttempts.length > 0 ? (
+                  <div className="bootstrap-panel network-bootstrap-panel">
+                    <div className="secondary-title">
+                      <strong>Bootstrap Peers</strong>
+                      <span>{busyAction === "connect-bootstrap-peers" ? "connecting" : "latest attempt"}</span>
+                    </div>
+                    <div className="bootstrap-list">
+                      {networkBootstrapAttempts.map((attempt) => (
+                        <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
+                          <code>{attempt.peer}</code>
+                          <span title={attempt.detail}>{attempt.detail ?? attempt.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </section>
 
               <section className="panel">
