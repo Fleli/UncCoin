@@ -1176,10 +1176,15 @@ dd {
 .block-card header,
 .transaction-heading,
 .block-subtitle {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.block-subtitle {
+  display: flex;
 }
 
 .block-card header span,
@@ -1193,7 +1198,13 @@ dd {
 .block-card header strong {
   min-width: 0;
   color: #f2f5f7;
-  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: clamp(9px, 0.72vw, 12px);
+  line-height: 1.2;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .block-meta,

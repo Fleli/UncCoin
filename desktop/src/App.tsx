@@ -2987,7 +2987,7 @@ function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload |
     <section className={`block-card ${focused ? "focused-block" : ""}`}>
       <header>
         <span>Block #{block.height}</span>
-        <strong>{shortHash(block.block_hash, 14)}</strong>
+        <strong title={block.block_hash}>{block.block_hash}</strong>
       </header>
 
       <dl className="block-meta">
