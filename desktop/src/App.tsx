@@ -1906,7 +1906,7 @@ function App() {
         <header className="topbar">
           <div className="wallet-info">
             <div className="wallet-heading">
-              <span className="section-label">{activeTabLabel}</span>
+              <span className="section-label">Current Wallet</span>
               <h2>{walletDisplayName}</h2>
             </div>
             <dl className="wallet-facts">
@@ -1942,6 +1942,12 @@ function App() {
             </button>
           </div>
         </header>
+
+        <div className="workspace-scroll" aria-label={`${activeTabLabel} content`}>
+          <header className="page-heading">
+            <span>Current Tab</span>
+            <h2>{activeTabLabel}</h2>
+          </header>
 
         {activeTab === "overview" ? (
           <section className="view">
@@ -2785,6 +2791,7 @@ function App() {
             </section>
           </section>
         ) : null}
+        </div>
       </section>
     </main>
   );

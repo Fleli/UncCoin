@@ -139,7 +139,9 @@ pre {
 .app-shell {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   background: #101214;
 }
 
@@ -587,6 +589,9 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid #283138;
   padding: 18px;
   background: #15191c;
@@ -762,6 +767,9 @@ pre {
 .tabs {
   display: grid;
   gap: 6px;
+  position: sticky;
+  top: 18px;
+  z-index: 5;
 }
 
 .tabs button {
@@ -846,7 +854,12 @@ dd {
 }
 
 .workspace {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
   padding: 18px 22px 28px;
 }
 
@@ -913,12 +926,44 @@ dd {
   display: flex;
   align-items: stretch;
   justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  flex: 0 0 auto;
   gap: 18px;
   border: 1px solid #283138;
   border-radius: 8px;
   padding: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   background: #151a1d;
+}
+
+.workspace-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.page-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  gap: 14px;
+  border-bottom: 1px solid #283138;
+  padding: 0 0 12px;
+  margin-bottom: 16px;
+  background: #101214;
+}
+
+.page-heading span {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 720;
+  text-transform: uppercase;
 }
 
 .wallet-info {
