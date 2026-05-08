@@ -212,6 +212,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [wallets, setWallets] = useState<WalletSummary[]>([]);
   const [walletName, setWalletName] = useState("");
+  const [walletSearch, setWalletSearch] = useState("");
   const [newWalletName, setNewWalletName] = useState("");
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(String(DEFAULT_PORT));
@@ -272,6 +273,17 @@ function App() {
     () => launchPeers.split(",").map((peer) => peer.trim()).filter(Boolean),
     [launchPeers],
   );
+  const filteredWallets = useMemo(() => {
+    const query = walletSearch.trim().toLowerCase();
+    if (!query) {
+      return wallets;
+    }
+    return wallets.filter((wallet) => (
+      wallet.name.toLowerCase().includes(query)
+      || wallet.address.toLowerCase().includes(query)
+      || String(wallet.preferredPort).includes(query)
+    ));
+  }, [walletSearch, wallets]);
 
   const refreshWallets = useCallback(async () => {
     const nextWallets = await window.unccoinDesktop.listWallets();
@@ -533,6 +545,7 @@ function App() {
       const nextWallets = await window.unccoinDesktop.listWallets();
       setWallets(nextWallets);
       applyWalletSelection(wallet.name, nextWallets);
+      setWalletSearch("");
       setNewWalletName("");
       setNotice(`Created wallet ${wallet.name}`);
     } catch (walletError) {
@@ -870,26 +883,22 @@ function App() {
 
               <form className="launch-form" onSubmit={handleStart}>
                 <label>
-                  Stored Wallets
-                  <select
-                    value={walletName}
-                    onChange={(event) => applyWalletSelection(event.target.value)}
+                  Search Wallets
+                  <input
+                    value={walletSearch}
+                    placeholder="Filter by wallet name, address, or port"
+                    onChange={(event) => setWalletSearch(event.target.value)}
                     disabled={busyAction !== null}
-                  >
-                    <option value="">Choose wallet</option>
-                    {wallets.map((wallet) => (
-                      <option key={wallet.name} value={wallet.name}>
-                        {wallet.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
 
                 <div className="wallet-picker">
                   {wallets.length === 0 ? (
                     <p className="empty">No stored wallets found.</p>
+                  ) : filteredWallets.length === 0 ? (
+                    <p className="empty">No wallets match this filter.</p>
                   ) : (
-                    wallets.map((wallet) => (
+                    filteredWallets.map((wallet) => (
                       <button
                         type="button"
                         className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
@@ -899,6 +908,7 @@ function App() {
                       >
                         <span>{wallet.name}</span>
                         <code>{shortHash(wallet.address, 18)}</code>
+                        <small>port {wallet.preferredPort}</small>
                       </button>
                     ))
                   )}

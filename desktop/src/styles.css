@@ -200,7 +200,7 @@ pre {
   display: grid;
   gap: 4px;
   justify-items: start;
-  min-height: 62px;
+  min-height: 76px;
   padding: 10px 12px;
   background: #111619;
   text-align: left;
@@ -212,10 +212,17 @@ pre {
 }
 
 .wallet-choice span,
-.wallet-choice code {
+.wallet-choice code,
+.wallet-choice small {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.wallet-choice small {
+  color: #9aa5ac;
+  font-size: 12px;
+  font-weight: 720;
 }
 
 .launch-details {
