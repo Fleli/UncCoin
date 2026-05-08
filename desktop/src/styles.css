@@ -654,6 +654,71 @@ pre {
   padding: 14px;
 }
 
+.node-info-panel {
+  display: grid;
+  gap: 12px;
+  background: #161b1e;
+}
+
+.node-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #f1f5f7;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.node-state-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #4b555c;
+  border-radius: 50%;
+  background: #2b3237;
+}
+
+.node-state-dot.online {
+  border-color: #4fa77a;
+  background: #51c286;
+  box-shadow: 0 0 0 3px rgba(81, 194, 134, 0.12);
+}
+
+.node-info-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.node-info-list div {
+  display: grid;
+  grid-template-columns: minmax(64px, 0.7fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  border-top: 1px solid #242d33;
+  padding-top: 8px;
+}
+
+.node-info-list dt {
+  color: #87939b;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.node-info-list dd {
+  min-width: 0;
+  color: #e8eef1;
+  font-size: 13px;
+  font-weight: 690;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.node-info-list code {
+  color: inherit;
+  font: inherit;
+}
+
 .side-section form,
 .form-grid {
   display: grid;

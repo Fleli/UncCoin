@@ -1778,6 +1778,12 @@ function App() {
   const walletBalance = loadedWallet ? formatAmount(ownBalance?.balance) : "-";
   const keyWalletName = selectedWallet?.name || loadedWallet?.name || walletName;
   const keyWalletAddress = selectedWallet?.address || loadedWallet?.address || "";
+  const runningNodeConfig = nodeState.config;
+  const runningNodeHost = runningNodeConfig?.host ?? host;
+  const runningNodePort = runningNodeConfig?.port ?? Number(port);
+  const runningNodeApiPort = runningNodeConfig?.apiPort ?? Number(apiPort);
+  const runningNodeWallet = runningNodeConfig?.walletName ?? walletName;
+  const runningNodePeers = runningNodeConfig?.peers ?? launchPeerList;
 
   async function copyToClipboard(value: string, label: string) {
     if (!value) {
@@ -1829,79 +1835,36 @@ function App() {
           </span>
         </header>
 
-        <section className="side-section">
-          <form onSubmit={handleStart}>
-            <label>
-              Wallet
-              <select
-                value={walletName}
-                onChange={(event) => applyWalletSelection(event.target.value)}
-                disabled={nodeState.running}
-              >
-                <option value="">Select wallet</option>
-                {wallets.map((wallet) => (
-                  <option key={wallet.name} value={wallet.name}>
-                    {wallet.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="field-row">
-              <label>
-                P2P
-                <input
-                  value={port}
-                  inputMode="numeric"
-                  onChange={(event) => {
-                    setPort(event.target.value);
-                    if (!nodeState.running) {
-                      const nextPort = Number(event.target.value || DEFAULT_PORT);
-                      setApiPort(String(nextPort + 10000));
-                    }
-                  }}
-                  disabled={nodeState.running}
-                />
-              </label>
-              <label>
-                API
-                <input
-                  value={apiPort}
-                  inputMode="numeric"
-                  onChange={(event) => setApiPort(event.target.value)}
-                  disabled={nodeState.running}
-                />
-              </label>
+        <section className="side-section node-info-panel" aria-label="Node information">
+          <div className="node-info-header">
+            <span>Node Info</span>
+            <span className="node-state-dot online" aria-label="Node online" />
+          </div>
+          <dl className="node-info-list">
+            <div>
+              <dt>Wallet</dt>
+              <dd>{runningNodeWallet || "-"}</dd>
             </div>
-            <label>
-              Host
-              <input
-                value={host}
-                onChange={(event) => setHost(event.target.value)}
-                disabled={nodeState.running}
-              />
-            </label>
-            <label>
-              Peers
-              <input
-                value={launchPeers}
-                placeholder="127.0.0.1:9001, 127.0.0.1:9002"
-                onChange={(event) => setLaunchPeers(event.target.value)}
-                disabled={nodeState.running}
-              />
-            </label>
-            <div className="button-row">
-              <button
-                type="submit"
-                className="primary-action"
-                disabled={nodeState.running || busyAction === "start-node"}
-              >
-                Start
-              </button>
-              <button type="button" onClick={handleStop} disabled={!nodeState.running || busyAction === "stop-node"}>
-                Stop
-              </button>
+            <div>
+              <dt>P2P</dt>
+              <dd>
+                <code>{Number.isInteger(runningNodePort) ? `${runningNodeHost}:${runningNodePort}` : "-"}</code>
+              </dd>
             </div>
-          </form>
+            <div>
+              <dt>API</dt>
+              <dd>
+                <code>{Number.isInteger(runningNodeApiPort) ? runningNodeApiPort : "-"}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>Launch Peers</dt>
+              <dd>{runningNodePeers.length > 0 ? runningNodePeers.length : "none"}</dd>
+            </div>
+          </dl>
+          <button type="button" onClick={handleStop} disabled={!nodeState.running || busyAction === "stop-node"}>
+            Stop Node
+          </button>
         </section>
 
         <nav className="tabs" aria-label="Primary">
