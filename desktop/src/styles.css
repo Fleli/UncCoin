@@ -818,15 +818,79 @@ dd {
 
 .topbar {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: space-between;
   gap: 18px;
+  border: 1px solid #283138;
+  border-radius: 8px;
+  padding: 14px;
   margin-bottom: 18px;
+  background: #151a1d;
+}
+
+.wallet-info {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 12px;
+}
+
+.wallet-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.section-label {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.wallet-facts {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.18fr) minmax(0, 1fr);
+  gap: 10px;
+  margin: 0;
+}
+
+.wallet-facts div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wallet-facts dt {
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.wallet-facts dd {
+  min-width: 0;
+}
+
+.address-copy {
+  display: block;
+  width: 100%;
+  border-color: #2d414c;
+  padding: 7px 9px;
+  background: #0e1214;
+  text-align: left;
+  white-space: normal;
+}
+
+.address-copy code {
+  color: #9fc3d3;
+  overflow-wrap: anywhere;
 }
 
 .topbar-actions {
+  align-content: flex-start;
   justify-content: flex-end;
   flex-wrap: wrap;
+  max-width: 540px;
 }
 
 .view {

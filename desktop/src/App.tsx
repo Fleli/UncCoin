@@ -1531,6 +1531,22 @@ function App() {
   const miningDifficulty = miningStatus?.difficulty_bits ?? snapshot.chainHead?.next_difficulty_bits ?? null;
   const miningStartDisabled = !isApiAvailable || busyAction !== null || miningActive || automineRunning;
   const miningStopDisabled = !isApiAvailable || busyAction === "stop-automine" || !automineRunning;
+  const activeTabLabel = tabs.find((tab) => tab.id === activeTab)?.label ?? "";
+  const walletDisplayName = loadedWallet?.name || walletName || "No wallet loaded";
+  const walletBalance = loadedWallet ? formatAmount(ownBalance?.balance) : "-";
+
+  async function handleCopyWalletAddress() {
+    if (!loadedWallet) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(loadedWallet.address);
+      setError(null);
+      setNotice("Wallet address copied");
+    } catch (copyError) {
+      setError(`Could not copy wallet address: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -1652,9 +1668,35 @@ function App() {
 
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <h2>{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
-            <p>{loadedWallet ? shortHash(loadedWallet.address, 18) : "No wallet loaded"}</p>
+          <div className="wallet-info">
+            <div className="wallet-heading">
+              <span className="section-label">{activeTabLabel}</span>
+              <h2>{walletDisplayName}</h2>
+            </div>
+            <dl className="wallet-facts">
+              <div>
+                <dt>Balance</dt>
+                <dd>{walletBalance}</dd>
+              </div>
+              <div className="wallet-address-fact">
+                <dt>Address</dt>
+                <dd>
+                  {loadedWallet ? (
+                    <button
+                      type="button"
+                      className="address-copy"
+                      onClick={() => void handleCopyWalletAddress()}
+                      title="Copy wallet address"
+                      aria-label="Copy wallet address"
+                    >
+                      <code>{loadedWallet.address}</code>
+                    </button>
+                  ) : (
+                    "-"
+                  )}
+                </dd>
+              </div>
+            </dl>
           </div>
           <div className="topbar-actions">
             {notice ? <span className="notice">{notice}</span> : null}
