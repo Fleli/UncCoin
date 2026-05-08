@@ -17,6 +17,7 @@ from core.block import Block, ProofOfWorkCancelled
 from core.genesis import create_genesis_block
 from core.blockchain import Blockchain
 from core.hashing import sha256_block_hash
+from core.hashing import sha256_transaction_hash
 from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
 from core.randomness import create_reveal_commitment_hash
@@ -260,6 +261,46 @@ class Node:
             program=program,
             metadata=metadata or {},
             fee=parsed_fee,
+            timestamp=datetime.now(),
+            nonce=self.get_next_nonce(self.wallet.address),
+            sender_public_key=self.wallet.public_key,
+        )
+        transaction.signature = self.wallet.sign_message(transaction.signing_payload())
+        return transaction
+
+    def create_signed_execute(
+        self,
+        contract_address: str,
+        input_data,
+        gas_limit: str,
+        gas_price: str,
+        value: str,
+        fee: str,
+        authorizations: list[dict] | None = None,
+    ) -> Transaction:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to execute contracts.")
+
+        try:
+            parsed_gas_limit = int(gas_limit)
+            parsed_gas_price = Decimal(str(gas_price))
+            parsed_value = Decimal(str(value))
+            parsed_fee = Decimal(str(fee))
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError(
+                "Gas limit must be an integer; gas price, value, and fee "
+                "must be valid decimal numbers."
+            ) from error
+
+        transaction = Transaction.execute(
+            sender=self.wallet.address,
+            contract_address=contract_address,
+            input_data=input_data,
+            value=parsed_value,
+            fee=parsed_fee,
+            gas_limit=parsed_gas_limit,
+            gas_price=parsed_gas_price,
+            authorizations=authorizations or [],
             timestamp=datetime.now(),
             nonce=self.get_next_nonce(self.wallet.address),
             sender_public_key=self.wallet.public_key,
@@ -524,6 +565,9 @@ Commands:
                                   Reveal a seed for a prior commitment
     deploy <contract> <fee> <json>
                                   Deploy UVM code with optional metadata
+    execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
+                                  Execute UVM code with optional authorizations
+    receipt <txid-prefix>          Show a UVM execution receipt
     balance [address]             Print one balance
     balances [>amount|<amount]    Print balances, optionally filtered
     autosend <wallet-id>          Forward future balance increases
@@ -665,6 +709,13 @@ Wallet commands accept either a wallet address or a local alias."""
                 print(self.format_canonical_blockchain())
                 continue
 
+            if line.startswith("receipt "):
+                try:
+                    print(self.format_uvm_receipt(line[len("receipt "):].strip()))
+                except ValueError as error:
+                    print(f"Invalid receipt command: {error}")
+                continue
+
             if line == "messages":
                 print(self.format_message_history())
                 continue
@@ -789,6 +840,51 @@ Wallet commands accept either a wallet address or a local alias."""
                     await self.broadcast_transaction(transaction)
                 except (ValueError, json.JSONDecodeError) as error:
                     print(f"Invalid deploy command: {error}")
+                continue
+
+            if line.startswith("execute "):
+                try:
+                    execute_args = line[len("execute "):].split(" ", maxsplit=5)
+                    if len(execute_args) != 6:
+                        raise ValueError(
+                            "Use execute <contract> <gas-limit> <gas-price> "
+                            "<value> <max-fee> <json>."
+                        )
+                    (
+                        contract_address,
+                        gas_limit,
+                        gas_price,
+                        value,
+                        fee,
+                        execute_json,
+                    ) = execute_args
+                    execute_payload = json.loads(execute_json)
+                    if isinstance(execute_payload, dict):
+                        input_data = execute_payload.get("input")
+                        authorizations = execute_payload.get("authorizations", [])
+                    else:
+                        input_data = execute_payload
+                        authorizations = []
+                    if authorizations is None:
+                        authorizations = []
+                    if not isinstance(authorizations, list):
+                        raise ValueError("Execute authorizations must be a JSON list.")
+                    transaction = self.create_signed_execute(
+                        contract_address=contract_address,
+                        input_data=input_data,
+                        gas_limit=gas_limit,
+                        gas_price=gas_price,
+                        value=value,
+                        fee=fee,
+                        authorizations=authorizations,
+                    )
+                    await self.broadcast_transaction(transaction)
+                    print(
+                        "Execute transaction broadcast: "
+                        f"{sha256_transaction_hash(transaction)}"
+                    )
+                except (ValueError, json.JSONDecodeError) as error:
+                    print(f"Invalid execute command: {error}")
                 continue
 
             if line.startswith("msg "):
@@ -1053,6 +1149,72 @@ Wallet commands accept either a wallet address or a local alias."""
                 f"prev={block.previous_hash[:12]} txs={len(block.transactions)} "
                 f'"{block.description}"'
             )
+        return "\n".join(lines)
+
+    def format_uvm_receipt(self, transaction_reference: str) -> str:
+        if self.blockchain is None:
+            return "No blockchain is loaded."
+
+        transaction_reference = transaction_reference.strip()
+        if not transaction_reference:
+            raise ValueError("Receipt command requires a transaction id or prefix.")
+
+        state = self.blockchain._get_state_for_tip(self._state_tip_hash())
+        matches = [
+            (transaction_id, receipt)
+            for transaction_id, receipt in state.uvm_receipts.items()
+            if transaction_id.startswith(transaction_reference)
+        ]
+        if not matches:
+            return f"No UVM receipt found for {transaction_reference}."
+        if len(matches) > 1:
+            return (
+                f"Receipt prefix {transaction_reference} is ambiguous: "
+                + ", ".join(transaction_id[:12] for transaction_id, _ in matches)
+            )
+
+        transaction_id, receipt = matches[0]
+        status = "success" if receipt.get("success") else "failed"
+        lines = [
+            f"UVM receipt {transaction_id}:",
+            f"  status: {status}",
+            f"  gas_used: {receipt.get('gas_used')}",
+            f"  gas_remaining: {receipt.get('gas_remaining')}",
+            f"  gas_exhausted: {receipt.get('gas_exhausted')}",
+        ]
+        if "fee_paid" in receipt:
+            lines.extend(
+                [
+                    f"  fee_escrowed: {receipt.get('fee_escrowed')}",
+                    f"  fee_paid: {receipt.get('fee_paid')}",
+                    f"  fee_refunded: {receipt.get('fee_refunded')}",
+                ]
+            )
+        if receipt.get("error"):
+            lines.append(f"  error: {receipt['error']}")
+
+        lines.append(f"  stack: {json.dumps(receipt.get('stack', []))}")
+        lines.append(f"  memory: {json.dumps(receipt.get('memory', {}), sort_keys=True)}")
+        lines.append(f"  storage: {json.dumps(receipt.get('storage', {}), sort_keys=True)}")
+
+        balance_changes = receipt.get("balance_changes", {})
+        if balance_changes:
+            lines.append("  balance_changes:")
+            for address, change in sorted(balance_changes.items()):
+                lines.append(f"    {self.format_wallet_reference(address)}: {change}")
+
+        transfers = receipt.get("transfers", [])
+        if transfers:
+            lines.append("  transfers:")
+            for transfer in transfers:
+                lines.append(
+                    "    "
+                    f"{self.format_wallet_reference(transfer.get('source', ''))} -> "
+                    f"{self.format_wallet_reference(transfer.get('receiver', ''))}: "
+                    f"{transfer.get('amount')} "
+                    f"(request_id={transfer.get('request_id')})"
+                )
+
         return "\n".join(lines)
 
     def get_balance(self, address: str) -> str:

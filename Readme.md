@@ -50,6 +50,8 @@ tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
 deploy <contract> <fee> <json>
+execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
+receipt <txid-prefix>
 msg <wallet> <content>
 messages
 mine [description]
@@ -91,11 +93,16 @@ are accepted. Salt is optional.
 a program directly or an object with `program` and `metadata` fields. Metadata is an object;
 `metadata.request_ids` is reserved for request ids relevant to the contract.
 
+`execute` runs deployed UVM code, or inline code when no deployed contract exists. The execute
+JSON can be a program directly or an object with `input` and `authorizations` fields.
+
+`receipt` prints a UVM execution receipt by transaction id or unique transaction-id prefix.
+
 The `execute` transaction kind runs a first-pass UncCoin Virtual Machine program. It carries
-the contract address, gas limit, optional value, gas price, and signed request authorizations
-of the form `wallet -> request_id` plus optional scope limits. If the contract address has
-deployed code, that deployed program runs; otherwise `execute` can still carry an inline
-program for compatibility.
+the contract address, gas limit, optional value, max fee escrow, gas price, and signed request
+authorizations of the form `wallet -> request_id` plus optional scope limits. If the contract
+address has deployed code, that deployed program runs; otherwise `execute` can still carry an
+inline program for compatibility.
 
 UVM authorizations may be scoped with `valid_from_height`, `valid_until_height`, and
 `max_amount`. Height limits make the authorization valid only for specific block heights;
@@ -196,12 +203,12 @@ Execute transactions may transfer value to the contract address before execution
 balance mutations are scoped through `TRANSFER_FROM`; blocks only accept those mutations when
 the VM finishes successfully and all source authorization checks pass.
 
-Fuel economics are represented by the execute transaction fee. If `gas_price` is zero, the fee
-is a flat fee as in earlier transactions. If `gas_price` is positive, the chain requires the
-declared fee to equal `gas_used * gas_price`; that fee is then included in the miner reward.
-Failed UVM runs still consume the execute transaction sender's fee, advance the sender nonce,
-and store a failed receipt. Contract storage, call value, and UVM balance transfers are applied
-only after successful execution.
+Fuel economics are represented by the execute transaction fee as a max fuel escrow. If
+`gas_price` is zero, the fee is a flat fee as in earlier transactions. If `gas_price` is
+positive, the fee must cover `gas_limit * gas_price`, but only `gas_used * gas_price` is paid
+to the miner and the unused escrow is refunded. Failed UVM runs still consume fuel, advance the
+sender nonce, and store a failed receipt. Contract storage, call value, and UVM balance
+transfers are applied only after successful execution.
 
 For simple shared randomness, contracts can read multiple revealed seeds, combine them with
 bitwise `XOR`, then hash the result with `SHA256`.

@@ -5,6 +5,7 @@ from decimal import Decimal
 from core.blockchain import Blockchain
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
+from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 from node.node import Node
 from wallet import create_wallet
@@ -213,6 +214,44 @@ class NodeDeployTransactionTests(unittest.TestCase):
 
         accepted, reason = node._handle_incoming_transaction(deploy_transaction)
         self.assertTrue(accepted, reason)
+
+    def test_node_creates_signed_execute_transaction_and_formats_receipt(self) -> None:
+        blockchain = create_blockchain()
+        caller = create_wallet(name="caller")
+        node = Node(
+            host="127.0.0.1",
+            port=9501,
+            wallet=caller,
+            blockchain=blockchain,
+        )
+
+        execute_transaction = node.create_signed_execute(
+            contract_address="contract-number-store",
+            input_data=[
+                ["PUSH", 7],
+                ["STORE", "number"],
+                ["HALT"],
+            ],
+            gas_limit="200",
+            gas_price="0",
+            value="0",
+            fee="0",
+            authorizations=[],
+        )
+
+        accepted, reason = node._handle_incoming_transaction(execute_transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute contract",
+        )
+
+        transaction_id = sha256_transaction_hash(execute_transaction)
+        formatted_receipt = node.format_uvm_receipt(transaction_id[:12])
+        self.assertIn(f"UVM receipt {transaction_id}", formatted_receipt)
+        self.assertIn("status: success", formatted_receipt)
+        self.assertIn("gas_used: 101", formatted_receipt)
+        self.assertIn('storage: {"number": 7}', formatted_receipt)
 
 
 if __name__ == "__main__":
