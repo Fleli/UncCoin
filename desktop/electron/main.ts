@@ -311,6 +311,7 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
 }
 
 function createWindow(): void {
+  const preloadPath = path.join(app.getAppPath(), "dist-electron", "preload.cjs");
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -318,10 +319,15 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: "#101417",
     webPreferences: {
-      preload: path.join(app.getAppPath(), "dist-electron", "preload.js"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  mainWindow.webContents.on("preload-error", (_event, preload, error) => {
+    console.error(`Preload failed: ${preload}`);
+    console.error(error);
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {

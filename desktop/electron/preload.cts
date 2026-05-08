@@ -1,7 +1,4 @@
-import electron from "electron/renderer";
-import type { IpcRendererEvent } from "electron";
-
-const { contextBridge, ipcRenderer } = electron;
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 type StartNodeConfig = {
   walletName: string;
