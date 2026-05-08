@@ -43,6 +43,14 @@ python3 -m wallet.cli create --name alice
 `127.0.0.1:<p2p-port + 10000>` by default, so a node on `9000` has API docs at
 `http://127.0.0.1:19000/docs`.
 
+To verify a checkout before sharing or running it:
+
+```bash
+./scripts/check.sh
+```
+
+This runs the Python test suite and the desktop build.
+
 ## PoW Evolution
 
 The proof-of-work rule stayed simple: find a block hash with enough leading zero bits. The implementation evolved like this:
