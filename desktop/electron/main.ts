@@ -1,7 +1,10 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import electron from "electron/main";
+import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+
+const { app, BrowserWindow, ipcMain } = electron;
 
 type StartNodeConfig = {
   walletName: string;
@@ -35,7 +38,7 @@ type NodeApiRequest = {
   body?: unknown;
 };
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindowType | null = null;
 let nodeProcess: ChildProcessWithoutNullStreams | null = null;
 let nodeConfig: NodeRuntimeState["config"] = null;
 

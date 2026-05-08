@@ -143,6 +143,17 @@ function newestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
 }
 
 function App() {
+  if (!window.unccoinDesktop) {
+    return (
+      <main className="bridge-fallback">
+        <section>
+          <h1>UncCoin Desktop</h1>
+          <p>Desktop bridge unavailable. Launch the app with ./scripts/desktop.sh.</p>
+        </section>
+      </main>
+    );
+  }
+
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [wallets, setWallets] = useState<WalletSummary[]>([]);
   const [walletName, setWalletName] = useState("");

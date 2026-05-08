@@ -1,4 +1,7 @@
-import { contextBridge, ipcRenderer } from "electron";
+import electron from "electron/renderer";
+import type { IpcRendererEvent } from "electron";
+
+const { contextBridge, ipcRenderer } = electron;
 
 type StartNodeConfig = {
   walletName: string;
@@ -51,14 +54,14 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
     ipcRenderer.invoke("node-api:fetch", { apiPort, path, ...options })
   ),
   onNodeLog: (callback: (entry: NodeLogEntry) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, entry: NodeLogEntry) => {
+    const listener = (_event: IpcRendererEvent, entry: NodeLogEntry) => {
       callback(entry);
     };
     ipcRenderer.on("node-log", listener);
     return () => ipcRenderer.removeListener("node-log", listener);
   },
   onNodeState: (callback: (state: NodeRuntimeState) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, state: NodeRuntimeState) => {
+    const listener = (_event: IpcRendererEvent, state: NodeRuntimeState) => {
       callback(state);
     };
     ipcRenderer.on("node-state", listener);

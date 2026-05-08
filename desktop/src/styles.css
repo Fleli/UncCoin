@@ -121,6 +121,26 @@ pre {
   background: #101214;
 }
 
+.bridge-fallback {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background: #101214;
+}
+
+.bridge-fallback section {
+  width: min(520px, calc(100vw - 48px));
+  border: 1px solid #374149;
+  border-radius: 8px;
+  padding: 24px;
+  background: #181d20;
+}
+
+.bridge-fallback p {
+  margin-top: 10px;
+  color: #aab4bb;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
