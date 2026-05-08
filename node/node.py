@@ -13,12 +13,16 @@ from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
 from config import DEFAULT_DIFFICULTY_GROWTH_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
-from core.block import Block, ProofOfWorkCancelled
+from core.block import Block, ProofOfWorkCancelled, proof_of_work
 from core.blockchain import Blockchain
 from core.contracts import compute_contract_code_hash
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
+from core.mining_backend import build_mining_backend as build_pow_backend
+from core.mining_backend import mining_backend_capabilities
+from core.mining_backend import normalize_mining_backend
+from core.mining_backend import selected_mining_backend
 from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
 from core.randomness import create_reveal_commitment_hash
@@ -58,6 +62,9 @@ class Node:
     mining_last_block_hash: str | None = field(default=None, init=False)
     mining_last_block_height: int | None = field(default=None, init=False)
     mining_last_block_nonces_checked: int | None = field(default=None, init=False)
+    mining_backend: str = field(default_factory=selected_mining_backend, init=False)
+    miner_warmup_task: asyncio.Task | None = field(default=None, init=False)
+    miner_warmup_status: dict[str, Any] = field(default_factory=dict, init=False)
     _automine_stop_requested: bool = field(default=False, init=False)
     _current_automine_tip_hash: str | None = field(default=None, init=False)
     _private_automine_tip_hash: str | None = field(default=None, init=False)
@@ -95,6 +102,7 @@ class Node:
             on_chain_response=self._handle_chain_response,
             on_notification=self._print_network_notification,
         )
+        self.miner_warmup_status = self._default_miner_warmup_status()
 
     async def start(self) -> None:
         self._load_persisted_aliases()
@@ -544,6 +552,7 @@ class Node:
             description=description,
             tip_hash=self._mining_tip_hash(),
             reconcile_pending_transactions=not self.private_automine,
+            mining_backend=self.mining_backend,
         )
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
@@ -576,6 +585,7 @@ class Node:
                 progress_callback=self._report_mining_progress,
                 tip_hash=tip_hash,
                 reconcile_pending_transactions=not self.private_automine,
+                mining_backend=self.mining_backend,
             )
         )
         self._clear_mining_progress()
@@ -637,6 +647,7 @@ class Node:
                         progress_callback=self._report_mining_progress,
                         tip_hash=self._current_automine_tip_hash,
                         reconcile_pending_transactions=not self.private_automine,
+                        mining_backend=self.mining_backend,
                     )
                 )
                 self._clear_mining_progress()
@@ -706,11 +717,107 @@ class Node:
                 ),
                 "description": self.automine_description,
             },
+            "backend": self.mining_backend,
+            "warmup": self.miner_warmup_status.copy(),
             "last_block": {
                 "height": self.mining_last_block_height,
                 "block_hash": self.mining_last_block_hash,
                 "nonces_checked": self.mining_last_block_nonces_checked,
             },
+        }
+
+    def mining_backend_status(self) -> dict[str, Any]:
+        return {
+            **mining_backend_capabilities(self.mining_backend),
+            "warmup": self.miner_warmup_status.copy(),
+        }
+
+    def set_mining_backend(self, backend: str) -> dict[str, Any]:
+        if self.mining_active or (
+            self.automine_task is not None
+            and not self.automine_task.done()
+        ):
+            raise ValueError("Stop mining before changing the mining backend.")
+        self.mining_backend = normalize_mining_backend(backend)
+        if not self.miner_warmup_status.get("active", False):
+            self.miner_warmup_status = self._default_miner_warmup_status()
+        return self.mining_backend_status()
+
+    def build_mining_backend(self, backend: str) -> dict[str, Any]:
+        return build_pow_backend(backend)
+
+    async def start_miner_warmup(self) -> dict[str, Any]:
+        if (
+            self.miner_warmup_task is not None
+            and not self.miner_warmup_task.done()
+        ):
+            return self.miner_warmup_status.copy()
+
+        now = datetime.now().isoformat()
+        self.miner_warmup_status = {
+            "active": True,
+            "status": "running",
+            "backend": self.mining_backend,
+            "started_at": now,
+            "finished_at": None,
+            "error": None,
+            "detail": "Warming selected miner backend.",
+        }
+        self.miner_warmup_task = asyncio.create_task(self._run_miner_warmup())
+        return self.miner_warmup_status.copy()
+
+    async def _run_miner_warmup(self) -> None:
+        backend = self.mining_backend
+        try:
+            warmup_result = await asyncio.to_thread(self._warm_miner_backend, backend)
+        except Exception as error:
+            self.miner_warmup_status = {
+                **self.miner_warmup_status,
+                "active": False,
+                "status": "failed",
+                "finished_at": datetime.now().isoformat(),
+                "error": str(error),
+                "detail": "Miner warmup failed.",
+            }
+        else:
+            self.miner_warmup_status = {
+                **self.miner_warmup_status,
+                "active": False,
+                "status": "ready",
+                "finished_at": datetime.now().isoformat(),
+                "error": None,
+                "detail": warmup_result,
+            }
+
+    def _warm_miner_backend(self, backend: str) -> dict[str, Any]:
+        warmup_block = Block(
+            block_id=0,
+            transactions=[],
+            hash_function=sha256_block_hash,
+            description="miner warmup",
+            previous_hash="0",
+        )
+        proof_of_work(
+            warmup_block,
+            difficulty_bits=0,
+            mining_backend=backend,
+        )
+        return {
+            "backend": backend,
+            "nonce": warmup_block.nonce,
+            "block_hash": warmup_block.block_hash,
+            "nonces_checked": warmup_block.nonces_checked,
+        }
+
+    def _default_miner_warmup_status(self) -> dict[str, Any]:
+        return {
+            "active": False,
+            "status": "idle",
+            "backend": self.mining_backend,
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "detail": None,
         }
 
     def _start_mining_progress(

@@ -166,6 +166,8 @@ class NodeApiServerTests(unittest.TestCase):
         self.assertEqual(body["description"], "Status test")
         self.assertEqual(body["nonce"], 12345)
         self.assertEqual(body["difficulty_bits"], 7)
+        self.assertEqual(body["backend"], self.node.mining_backend)
+        self.assertFalse(body["warmup"]["active"])
         self.assertIsNone(body["last_block"]["nonces_checked"])
         self.assertEqual(
             body["recent_miners"],
@@ -179,6 +181,20 @@ class NodeApiServerTests(unittest.TestCase):
         )
 
         self.node._clear_mining_progress()
+
+    def test_mining_backend_endpoints_switch_backend(self) -> None:
+        response = self.client.get("/api/v1/mining/backends")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["selected"], self.node.mining_backend)
+
+        update_response = self.client.post(
+            "/api/v1/control/mining/backend",
+            json={"backend": "python"},
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(update_response.json()["selected"], "python")
+        self.assertEqual(self.node.mining_backend, "python")
 
     def test_missing_contract_returns_not_found(self) -> None:
         response = self.client.get("/api/v1/contracts/missing-contract")

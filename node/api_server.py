@@ -41,6 +41,10 @@ class MineRequest(BaseModel):
     description: str | None = None
 
 
+class MiningBackendRequest(BaseModel):
+    backend: str
+
+
 class MessageRequest(BaseModel):
     receiver: str
     content: str
@@ -167,6 +171,14 @@ def create_api_app(node: "Node") -> FastAPI:
             **node.mining_status(),
             "recent_miners": _recent_miners_payload(node, blockchain),
         }
+
+    @app.get(f"{API_PREFIX}/mining/backends")
+    def mining_backends() -> dict[str, Any]:
+        return node.mining_backend_status()
+
+    @app.get(f"{API_PREFIX}/mining/warmup")
+    def mining_warmup() -> dict[str, Any]:
+        return node.miner_warmup_status.copy()
 
     @app.get(f"{API_PREFIX}/chain/head")
     def chain_head() -> dict[str, Any]:
@@ -411,6 +423,24 @@ def create_api_app(node: "Node") -> FastAPI:
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"block": _block_payload(block)}
+
+    @app.post(f"{API_PREFIX}/control/mining/backend")
+    def set_mining_backend(request: MiningBackendRequest) -> dict[str, Any]:
+        try:
+            return node.set_mining_backend(request.backend)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post(f"{API_PREFIX}/control/mining/backend/build")
+    def build_mining_backend(request: MiningBackendRequest) -> dict[str, Any]:
+        try:
+            return node.build_mining_backend(request.backend)
+        except (RuntimeError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post(f"{API_PREFIX}/control/mining/warmup")
+    async def start_mining_warmup() -> dict[str, Any]:
+        return await node.start_miner_warmup()
 
     @app.post(f"{API_PREFIX}/control/automine/start")
     async def automine_start(request: MineRequest) -> dict[str, Any]:
