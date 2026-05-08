@@ -8,6 +8,8 @@ from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
 from core.utils.mining import create_mining_reward_transaction
+from network.p2p_server import FastSyncState
+from network.p2p_server import PeerAddress
 from node.api_server import create_api_app
 from node.node import Node
 from wallet import create_wallet
@@ -92,6 +94,34 @@ class NodeApiServerTests(unittest.TestCase):
         self.assertEqual(reveals_response.status_code, 200)
         self.assertEqual(commitments_response.json()["commitments"], {})
         self.assertEqual(reveals_response.json()["reveals"], {})
+
+    def test_sync_status_reports_active_fast_sync_peers(self) -> None:
+        self.node.p2p_server.fast_sync_states[
+            PeerAddress(host="100.98.249.35", port=9000)
+        ] = FastSyncState(
+            expected_start_height=2,
+            batch_end_start_height=42,
+            batch_chunk_count=2,
+            pending_chunks={2: {"blocks": []}},
+            active=True,
+        )
+
+        response = self.client.get("/api/v1/sync/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["phase"], "fastsync")
+        self.assertTrue(body["fastsync"]["active"])
+        self.assertEqual(
+            body["fastsync"]["peers"],
+            [
+                {
+                    "peer": "100.98.249.35:9000",
+                    "expected_start_height": 2,
+                    "pending_chunks": 1,
+                }
+            ],
+        )
 
     def test_missing_contract_returns_not_found(self) -> None:
         response = self.client.get("/api/v1/contracts/missing-contract")

@@ -121,6 +121,7 @@ def create_api_app(node: "Node") -> FastAPI:
                 "connected": len(node.list_peers()),
                 "known": len(node.list_known_peers()),
             },
+            "sync": _sync_status_payload(node),
         }
 
     @app.get(f"{API_PREFIX}/node")
@@ -138,6 +139,7 @@ def create_api_app(node: "Node") -> FastAPI:
                 "target": node.autosend_target,
                 "enabled": node.autosend_target is not None,
             },
+            "sync": _sync_status_payload(node),
         }
 
     @app.get(f"{API_PREFIX}/peers")
@@ -146,6 +148,10 @@ def create_api_app(node: "Node") -> FastAPI:
             "connected": node.list_peers(),
             "known": node.list_known_peers(),
         }
+
+    @app.get(f"{API_PREFIX}/sync/status")
+    def sync_status() -> dict[str, Any]:
+        return _sync_status_payload(node)
 
     @app.get(f"{API_PREFIX}/chain/head")
     def chain_head() -> dict[str, Any]:
@@ -586,6 +592,32 @@ def _chain_head_payload(node: "Node", blockchain: "Blockchain") -> dict[str, Any
         "difficulty_bits": blockchain.difficulty_bits,
         "next_difficulty_bits": next_difficulty_bits,
         "pending_transaction_count": len(blockchain.pending_transactions),
+    }
+
+
+def _sync_status_payload(node: "Node") -> dict[str, Any]:
+    active_fast_syncs = []
+    fast_sync_states = getattr(node.p2p_server, "fast_sync_states", {})
+    for peer, state in sorted(
+        fast_sync_states.items(),
+        key=lambda item: f"{item[0].host}:{item[0].port}",
+    ):
+        if not getattr(state, "active", False):
+            continue
+        active_fast_syncs.append(
+            {
+                "peer": f"{peer.host}:{peer.port}",
+                "expected_start_height": getattr(state, "expected_start_height", 0),
+                "pending_chunks": len(getattr(state, "pending_chunks", {})),
+            }
+        )
+
+    return {
+        "phase": "fastsync" if active_fast_syncs else "ready",
+        "fastsync": {
+            "active": bool(active_fast_syncs),
+            "peers": active_fast_syncs,
+        },
     }
 
 
