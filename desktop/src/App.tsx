@@ -452,6 +452,10 @@ function App() {
       setMiningStatus(null);
       return undefined;
     }
+    if (!startupComplete) {
+      setApiStatus("starting");
+      return undefined;
+    }
 
     let cancelled = false;
     const poll = async () => {
@@ -477,7 +481,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [isApiAvailable, refreshSnapshot]);
+  }, [isApiAvailable, refreshSnapshot, startupComplete]);
 
   useEffect(() => {
     const shouldPollMiningFast = (
@@ -945,6 +949,30 @@ function App() {
   const launchLogs = logs.slice(-5);
   const activeSyncPeers = syncStatus?.fastsync.peers ?? [];
   const startupStatusLabel = startupPhase.replace("-", " ");
+  const startupPhases: StartupPhase[] = [
+    "starting-node",
+    "waiting-api",
+    "connecting-bootstrap",
+    "fastsync",
+    "ready",
+  ];
+  const startupPhaseLabels: Record<StartupPhase, string> = {
+    idle: "Preparing",
+    "starting-node": "Starting Node",
+    "waiting-api": "Opening API",
+    "connecting-bootstrap": "Connecting Peers",
+    fastsync: "Syncing Chain",
+    ready: "Ready",
+  };
+  const startupPhaseText: Record<StartupPhase, string> = {
+    idle: "Preparing the node process.",
+    "starting-node": "Launching the local Python node process.",
+    "waiting-api": "The node is running and the local API is warming up.",
+    "connecting-bootstrap": "Trying the selected bootstrap peers.",
+    fastsync: "A bootstrap peer answered; downloading current chain state.",
+    ready: "Node is ready.",
+  };
+  const startupPhaseIndex = Math.max(0, startupPhases.indexOf(startupPhase));
   const previewNodeConfig = {
     walletName,
     host,
@@ -959,13 +987,29 @@ function App() {
         <section className="launch-card">
           {isStartingNode ? (
             <>
-              <div className="launch-header">
+              <div className="launch-header startup-hero">
                 <div>
-                  <h1>Starting Node</h1>
+                  <h1>{startupPhaseLabels[startupPhase]}</h1>
                   <p>{nodeState.config?.walletName || walletName || "Selected wallet"}</p>
                 </div>
                 <span className="spinner" aria-label="Starting" />
               </div>
+              <div className="startup-progress">
+                {startupPhases.map((phase, index) => (
+                  <div
+                    className={[
+                      "startup-step",
+                      index < startupPhaseIndex ? "done" : "",
+                      index === startupPhaseIndex ? "active" : "",
+                    ].filter(Boolean).join(" ")}
+                    key={phase}
+                  >
+                    <span>{index + 1}</span>
+                    <strong>{startupPhaseLabels[phase]}</strong>
+                  </div>
+                ))}
+              </div>
+              <p className="startup-note">{startupPhaseText[startupPhase]}</p>
               <dl className="launch-details">
                 <div>
                   <dt>P2P</dt>
@@ -1013,9 +1057,12 @@ function App() {
               ) : null}
               {error ? <p className="launch-error">{error}</p> : null}
               {launchLogs.length > 0 ? (
-                <pre className="launch-log">
-                  {launchLogs.map((entry) => `[${entry.stream}] ${entry.message}`).join("")}
-                </pre>
+                <details className="launch-log-details">
+                  <summary>Node output</summary>
+                  <pre className="launch-log">
+                    {launchLogs.map((entry) => `[${entry.stream}] ${entry.message}`).join("")}
+                  </pre>
+                </details>
               ) : null}
               <div className="button-row">
                 <button type="button" onClick={handleStop} disabled={busyAction === "stop-node"}>

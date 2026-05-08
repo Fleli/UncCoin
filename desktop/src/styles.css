@@ -172,6 +172,69 @@ pre {
   color: #98a4ab;
 }
 
+.startup-hero {
+  margin-bottom: 16px;
+}
+
+.startup-progress {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.startup-step {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #29333a;
+  border-radius: 8px;
+  padding: 10px;
+  background: #101416;
+}
+
+.startup-step span {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid #3d4a52;
+  border-radius: 50%;
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.startup-step strong {
+  color: #9aa5ac;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.startup-step.done,
+.startup-step.active {
+  border-color: #3b6574;
+  background: #111b20;
+}
+
+.startup-step.done span,
+.startup-step.active span {
+  border-color: #6aa0b8;
+  color: #d7eef7;
+}
+
+.startup-step.active strong {
+  color: #f2f5f7;
+}
+
+.startup-note {
+  margin: 0 0 16px;
+  border: 1px solid #2d3d45;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #c2ccd1;
+  background: #11171a;
+}
+
 .launch-form,
 .launch-create {
   display: grid;
@@ -301,8 +364,8 @@ pre {
 }
 
 .launch-log {
-  max-height: 160px;
-  margin: 14px 0;
+  max-height: 150px;
+  margin: 10px 0 0;
   overflow: auto;
   border: 1px solid #29333a;
   border-radius: 6px;
@@ -310,6 +373,21 @@ pre {
   color: #c3ccd1;
   background: #0b0e10;
   white-space: pre-wrap;
+}
+
+.launch-log-details {
+  margin: 14px 0;
+  border: 1px solid #29333a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #111619;
+}
+
+.launch-log-details summary {
+  cursor: pointer;
+  color: #9fc3d3;
+  font-size: 13px;
+  font-weight: 720;
 }
 
 .bootstrap-panel {
