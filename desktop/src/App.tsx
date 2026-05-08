@@ -225,6 +225,14 @@ function requireUiPort(value: string, label: string): number {
   throw new Error(`${label} must be between 1 and 65535.`);
 }
 
+function apiPortForNodePort(port: number): number {
+  const apiPort = port + 10000;
+  if (apiPort > 65535) {
+    throw new Error("P2P port must be at most 55535 when the API port is derived as P2P + 10000.");
+  }
+  return apiPort;
+}
+
 function App() {
   if (!window.unccoinDesktop) {
     return (
@@ -242,6 +250,7 @@ function App() {
   const [walletName, setWalletName] = useState("");
   const [walletSearch, setWalletSearch] = useState("");
   const [newWalletName, setNewWalletName] = useState("");
+  const [newWalletPreferredPort, setNewWalletPreferredPort] = useState(String(DEFAULT_PORT));
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(String(DEFAULT_PORT));
   const [apiPort, setApiPort] = useState(String(DEFAULT_PORT + 10000));
@@ -322,6 +331,13 @@ function App() {
     selectedWallet !== undefined
     && Number(port) !== selectedWallet.preferredPort
   );
+  const newWalletApiPort = useMemo(() => {
+    const preferredPort = Number(newWalletPreferredPort);
+    if (!Number.isInteger(preferredPort) || preferredPort <= 0 || preferredPort > 55535) {
+      return "-";
+    }
+    return String(apiPortForNodePort(preferredPort));
+  }, [newWalletPreferredPort]);
   const enabledBootstrapPeers = useMemo(
     () => BOOTSTRAP_PEERS.filter((peer) => !disabledBootstrapPeers.includes(peer)),
     [disabledBootstrapPeers],
@@ -644,14 +660,22 @@ function App() {
     setError(null);
     setNotice(null);
     try {
-      const preferredPort = requireUiPort(port, "P2P port");
+      const preferredPort = requireUiPort(newWalletPreferredPort, "Preferred port");
+      const preferredApiPort = apiPortForNodePort(preferredPort);
       const wallet = await window.unccoinDesktop.createWallet(name, undefined, preferredPort);
       const nextWallets = await window.unccoinDesktop.listWallets();
       setWallets(nextWallets);
       applyWalletSelection(wallet.name, nextWallets);
+      setPort(String(preferredPort));
+      setApiPort(String(preferredApiPort));
       setWalletSearch("");
       setNewWalletName("");
-      await launchWalletNode(wallet.name, "create-wallet");
+      await launchWalletNode(
+        wallet.name,
+        "create-wallet",
+        String(preferredPort),
+        String(preferredApiPort),
+      );
     } catch (walletError) {
       setError(String(walletError));
     } finally {
@@ -681,9 +705,14 @@ function App() {
     }
   }
 
-  async function launchWalletNode(walletNameToLaunch: string, busyLabel: string) {
-    const nodePort = requireUiPort(port, "P2P port");
-    const nodeApiPort = requireUiPort(apiPort, "API port");
+  async function launchWalletNode(
+    walletNameToLaunch: string,
+    busyLabel: string,
+    nodePortValue = port,
+    nodeApiPortValue = apiPort,
+  ) {
+    const nodePort = requireUiPort(nodePortValue, "P2P port");
+    const nodeApiPort = requireUiPort(nodeApiPortValue, "API port");
 
     setWalletName(walletNameToLaunch);
     setBusyAction(busyLabel);
@@ -1091,7 +1120,7 @@ function App() {
                 <section className="launch-pane create-pane">
                   <div className="pane-title">
                     <h2>Create New Wallet</h2>
-                    <p>Uses the selected P2P port as the wallet default.</p>
+                    <p>Saves this port on the wallet and launches the node immediately.</p>
                   </div>
                   <form className="launch-create" onSubmit={handleCreateWallet}>
                     <label>
@@ -1103,17 +1132,22 @@ function App() {
                         disabled={busyAction !== null}
                       />
                     </label>
+                    <label>
+                      Preferred Port
+                      <input
+                        value={newWalletPreferredPort}
+                        inputMode="numeric"
+                        onChange={(event) => setNewWalletPreferredPort(event.target.value)}
+                        disabled={busyAction !== null}
+                      />
+                    </label>
                     <dl className="create-summary">
                       <div>
-                        <dt>Preferred Port</dt>
-                        <dd>{port}</dd>
-                      </div>
-                      <div>
                         <dt>API Port</dt>
-                        <dd>{apiPort}</dd>
+                        <dd>{newWalletApiPort}</dd>
                       </div>
                     </dl>
-                    <button type="submit" disabled={!newWalletName.trim() || busyAction !== null}>
+                    <button type="submit" disabled={!newWalletName.trim() || busyAction !== null || newWalletApiPort === "-"}>
                       Create and Start
                     </button>
                   </form>
@@ -1436,7 +1470,7 @@ function App() {
                     onChange={(event) => setNewWalletName(event.target.value)}
                     disabled={busyAction === "create-wallet"}
                   />
-                  <button type="submit" disabled={busyAction === "create-wallet"}>
+                  <button type="submit" disabled={busyAction === "create-wallet" || newWalletApiPort === "-"}>
                     Create
                   </button>
                 </form>
