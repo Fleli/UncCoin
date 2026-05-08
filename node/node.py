@@ -664,7 +664,7 @@ Commands:
     mute                          Hide incoming network notifications
     unmute                        Show incoming network notifications
     help                          Show this help text
-    clear                         Add spacing before the next prompt
+    clear                         Clear the screen
     quit                          Exit
 
 Wallet commands accept either a wallet address or a local alias."""
@@ -691,7 +691,7 @@ Wallet commands accept either a wallet address or a local alias."""
                 continue
 
             if line == "clear":
-                print("\n" * 6, end="")
+                print("\033[H\033[2J\033[3J", end="", flush=True)
                 continue
 
             if line == "peers":
