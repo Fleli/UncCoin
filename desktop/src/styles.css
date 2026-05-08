@@ -995,6 +995,7 @@ dd {
 }
 
 .list-row strong,
+.select-row strong,
 .table-row strong {
   color: #f0d48a;
 }

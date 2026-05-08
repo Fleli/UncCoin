@@ -57,7 +57,7 @@ const DEFAULT_DEPLOY_JSON = `{
 const DEFAULT_EXECUTE_JSON = "null";
 const DEFAULT_AUTH_JSON = "[]";
 
-type TabId = "overview" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabId = "overview" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -87,6 +87,7 @@ type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-boots
 
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "transfer", label: "Transfer" },
   { id: "mining", label: "Mining" },
   { id: "wallet", label: "Wallet" },
   { id: "network", label: "Network" },
@@ -1785,6 +1786,93 @@ function App() {
                     <div className="list-row" key={block.block_hash}>
                       <span>#{block.height} {shortHash(block.block_hash, 14)}</span>
                       <strong>{block.transaction_count} tx</strong>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </section>
+        ) : null}
+
+        {activeTab === "transfer" ? (
+          <section className="view">
+            <div className="panel-grid two">
+              <section className="panel transfer-panel">
+                <div className="panel-title">
+                  <h3>Send Transfer</h3>
+                  <span>{loadedWallet ? `${formatAmount(ownBalance?.balance)} available` : "wallet required"}</span>
+                </div>
+                <form className="form-grid" onSubmit={handleTransaction}>
+                  <label>
+                    Recipient
+                    <input
+                      value={txReceiver}
+                      placeholder="Wallet address or alias"
+                      onChange={(event) => setTxReceiver(event.target.value)}
+                    />
+                  </label>
+                  <div className="field-row">
+                    <label>
+                      Amount
+                      <input
+                        value={txAmount}
+                        inputMode="decimal"
+                        onChange={(event) => setTxAmount(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Fee
+                      <input
+                        value={txFee}
+                        inputMode="decimal"
+                        onChange={(event) => setTxFee(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <button type="submit" disabled={disableNodeAction}>
+                    Send Transfer
+                  </button>
+                </form>
+              </section>
+
+              <section className="panel">
+                <div className="panel-title">
+                  <h3>Recipients</h3>
+                  <span>{snapshot.balances.length}</span>
+                </div>
+                <div className="list">
+                  {snapshot.balances.length === 0 ? (
+                    <p className="empty">No known wallet balances.</p>
+                  ) : (
+                    snapshot.balances.map((balance) => (
+                      <button
+                        type="button"
+                        className="select-row"
+                        key={balance.address}
+                        onClick={() => setTxReceiver(balance.alias || balance.address)}
+                      >
+                        <span>{balance.alias || shortHash(balance.address, 18)}</span>
+                        <strong>{balance.balance}</strong>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <section className="panel">
+              <div className="panel-title">
+                <h3>Pending Transfers</h3>
+                <span>{snapshot.pendingTransactions.length}</span>
+              </div>
+              <div className="list">
+                {snapshot.pendingTransactions.length === 0 ? (
+                  <p className="empty">Mempool is empty.</p>
+                ) : (
+                  snapshot.pendingTransactions.map((transaction) => (
+                    <div className="list-row stacked" key={transaction.transaction_id}>
+                      <span>{transactionSummary(transaction)}</span>
+                      <code>{shortHash(transaction.transaction_id, 18)}</code>
                     </div>
                   ))
                 )}
