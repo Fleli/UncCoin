@@ -461,13 +461,9 @@ function App() {
     const poll = async () => {
       try {
         await refreshSnapshot();
-        if (!cancelled) {
-          setError(null);
-        }
-      } catch (pollError) {
+      } catch {
         if (!cancelled) {
           setApiStatus("starting");
-          setError(String(pollError));
         }
       }
     };
@@ -503,9 +499,9 @@ function App() {
         if (!cancelled) {
           setMiningStatus(status);
         }
-      } catch (miningError) {
+      } catch {
         if (!cancelled) {
-          setError(String(miningError));
+          setApiStatus("starting");
         }
       }
     };
@@ -769,6 +765,15 @@ function App() {
       setError(String(stopError));
     } finally {
       setBusyAction(null);
+    }
+  }
+
+  async function handleRefresh() {
+    setError(null);
+    try {
+      await refreshSnapshot();
+    } catch (refreshError) {
+      setError(String(refreshError));
     }
   }
 
@@ -1410,7 +1415,7 @@ function App() {
           <div className="topbar-actions">
             {notice ? <span className="notice">{notice}</span> : null}
             {error ? <span className="error-banner">{error}</span> : null}
-            <button type="button" onClick={() => void refreshSnapshot()} disabled={!isApiAvailable}>
+            <button type="button" onClick={() => void handleRefresh()} disabled={!isApiAvailable}>
               Refresh
             </button>
           </div>
