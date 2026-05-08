@@ -2280,6 +2280,17 @@ function App() {
                       disabled={miningStartDisabled}
                       onClick={() => void runNodeAction("start-automine", async () => {
                         const response = await startAutomine(activeApiPort, mineDescription || undefined);
+                        setMiningStatus((currentStatus) => (
+                          currentStatus === null
+                            ? currentStatus
+                            : {
+                              ...currentStatus,
+                              automine: {
+                                running: response.running,
+                                description: response.description,
+                              },
+                            }
+                        ));
                         return { label: "Automine started", detail: response.description };
                       }, "mining")}
                     >
