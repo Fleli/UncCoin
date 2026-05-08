@@ -563,6 +563,33 @@ function ReferenceStrong({
   );
 }
 
+function CopyValue({
+  label,
+  value,
+  placeholder = "-",
+  onCopy,
+}: {
+  label: string;
+  value: string | null | undefined;
+  placeholder?: string;
+  onCopy: (value: string, label: string) => void | Promise<void>;
+}) {
+  const displayValue = value?.trim() || placeholder;
+  return (
+    <div className="readonly-field">
+      <span>{label}</span>
+      <button
+        type="button"
+        className="copy-value"
+        disabled={!value?.trim()}
+        onClick={() => value?.trim() && void onCopy(value.trim(), label)}
+      >
+        <code>{displayValue}</code>
+      </button>
+    </div>
+  );
+}
+
 function isMiningRewardTransaction(transaction: TransactionPayload): boolean {
   return transaction.sender === MINING_REWARD_SENDER;
 }
@@ -3317,10 +3344,12 @@ function App() {
                       <input value={commitSalt} onChange={(event) => setCommitSalt(event.target.value)} />
                     </label>
                   </div>
-                  <label>
-                    Commitment Hash
-                    <input value={commitHash} onChange={(event) => setCommitHash(event.target.value)} />
-                  </label>
+                  <CopyValue
+                    label="Commitment Hash"
+                    value={commitHash}
+                    placeholder="Compute from seed and salt"
+                    onCopy={copyToClipboard}
+                  />
                   <div className="button-row">
                     <button type="button" disabled={disableNodeAction} onClick={() => void handleComputeCommitmentHash()}>
                       Compute Hash
