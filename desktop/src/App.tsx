@@ -1419,7 +1419,11 @@ function App() {
                       </div>
                     ) : null}
 
-                    <button type="submit" disabled={!walletName || busyAction !== null}>
+                    <button
+                      type="submit"
+                      className="primary-action"
+                      disabled={!walletName || busyAction !== null}
+                    >
                       Start Node
                     </button>
                   </form>
@@ -1663,7 +1667,11 @@ function App() {
               />
             </label>
             <div className="button-row">
-              <button type="submit" disabled={nodeState.running || busyAction === "start-node"}>
+              <button
+                type="submit"
+                className="primary-action"
+                disabled={nodeState.running || busyAction === "start-node"}
+              >
                 Start
               </button>
               <button type="button" onClick={handleStop} disabled={!nodeState.running || busyAction === "stop-node"}>

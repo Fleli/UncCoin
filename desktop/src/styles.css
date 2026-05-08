@@ -44,6 +44,17 @@ button:disabled {
   background: #171d21;
 }
 
+.primary-action {
+  border-color: #3d865f;
+  color: #f0fff7;
+  background: #197043;
+}
+
+.primary-action:hover:not(:disabled) {
+  border-color: #62b884;
+  background: #21824f;
+}
+
 .danger-button {
   border-color: #74463f;
   color: #ffc1b7;
