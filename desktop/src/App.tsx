@@ -45,6 +45,7 @@ import "./styles.css";
 
 const DEFAULT_PORT = 9000;
 const BOOTSTRAP_PEERS = [
+  "localhost:9000",
   "100.98.249.35:9000",
   "100.98.249.35:9001",
   "100.71.105.5:4040",
