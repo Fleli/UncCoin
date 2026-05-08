@@ -30,6 +30,7 @@ type WalletSummary = {
   name: string;
   address: string;
   path: string;
+  preferredPort: number;
 };
 
 type ApiRequestOptions = {
@@ -44,8 +45,12 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
   stopNode: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:stop"),
   getNodeState: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:state"),
   listWallets: (): Promise<WalletSummary[]> => ipcRenderer.invoke("wallets:list"),
-  createWallet: (name: string, bitLength?: number): Promise<WalletSummary> => (
-    ipcRenderer.invoke("wallets:create", { name, bitLength })
+  createWallet: (
+    name: string,
+    bitLength?: number,
+    preferredPort?: number,
+  ): Promise<WalletSummary> => (
+    ipcRenderer.invoke("wallets:create", { name, bitLength, preferredPort })
   ),
   getLocalAddresses: (): Promise<string[]> => ipcRenderer.invoke("system:local-addresses"),
   fetchApi: (apiPort: number, path: string, options: ApiRequestOptions = {}): Promise<unknown> => (

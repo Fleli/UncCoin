@@ -28,6 +28,7 @@ type WalletSummary = {
   name: string;
   address: string;
   path: string;
+  preferredPort: number;
 };
 
 type ApiRequestOptions = {
@@ -41,7 +42,7 @@ interface Window {
     stopNode(): Promise<NodeRuntimeState>;
     getNodeState(): Promise<NodeRuntimeState>;
     listWallets(): Promise<WalletSummary[]>;
-    createWallet(name: string, bitLength?: number): Promise<WalletSummary>;
+    createWallet(name: string, bitLength?: number, preferredPort?: number): Promise<WalletSummary>;
     getLocalAddresses(): Promise<string[]>;
     fetchApi(apiPort: number, path: string, options?: ApiRequestOptions): Promise<unknown>;
     onNodeLog(callback: (entry: NodeLogEntry) => void): () => void;

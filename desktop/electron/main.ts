@@ -25,11 +25,13 @@ type WalletSummary = {
   name: string;
   address: string;
   path: string;
+  preferredPort: number;
 };
 
 type CreateWalletRequest = {
   name: string;
   bitLength?: number;
+  preferredPort?: number;
 };
 
 type NodeApiRequest = {
@@ -42,6 +44,8 @@ type NodeApiRequest = {
 let mainWindow: BrowserWindowType | null = null;
 let nodeProcess: ChildProcessWithoutNullStreams | null = null;
 let nodeConfig: NodeRuntimeState["config"] = null;
+
+const DEFAULT_PREFERRED_PORT = 9000;
 
 function repoRoot(): string {
   return path.resolve(app.getAppPath(), "..");
@@ -70,6 +74,14 @@ function localAddresses(): string[] {
     }
   }
   return [...addresses].sort();
+}
+
+function normalizePort(value: unknown, fallback = DEFAULT_PREFERRED_PORT): number {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port < 65536) {
+    return port;
+  }
+  return fallback;
 }
 
 function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
@@ -218,11 +230,13 @@ async function listWallets(): Promise<WalletSummary[]> {
           const walletData = JSON.parse(await readFile(filePath, "utf-8")) as {
             name?: string;
             address?: string;
+            preferred_port?: unknown;
           };
           return {
             name: walletData.name || path.basename(entry, ".json"),
             address: walletData.address || "",
             path: filePath,
+            preferredPort: normalizePort(walletData.preferred_port),
           };
         } catch (error) {
           sendNodeLog("stderr", `Skipping unreadable wallet ${filePath}: ${String(error)}`);
@@ -273,6 +287,7 @@ async function createWallet(request: CreateWalletRequest): Promise<WalletSummary
   if (!Number.isInteger(bitLength) || bitLength < 512) {
     throw new Error("Wallet bit length must be at least 512.");
   }
+  const preferredPort = normalizePort(request.preferredPort);
 
   await runPython([
     "-m",
@@ -282,6 +297,8 @@ async function createWallet(request: CreateWalletRequest): Promise<WalletSummary
     name,
     "--bit-length",
     String(bitLength),
+    "--preferred-port",
+    String(preferredPort),
   ]);
 
   const wallet = (await listWallets()).find((candidate) => candidate.name === name);

@@ -189,6 +189,14 @@ function isLocalBootstrapPeer(
   return localAddressSet.has(parsedPeer.host.toLowerCase());
 }
 
+function normalizePreferredPort(value: unknown): number {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port < 65536) {
+    return port;
+  }
+  return DEFAULT_PORT;
+}
+
 function App() {
   if (!window.unccoinDesktop) {
     return (
@@ -324,6 +332,17 @@ function App() {
 
     await loadSnapshot(activeApiPort);
   }, [activeApiPort, isApiAvailable, loadSnapshot]);
+
+  function applyWalletSelection(walletNameToSelect: string, availableWallets = wallets) {
+    setWalletName(walletNameToSelect);
+    const selectedWallet = availableWallets.find((wallet) => wallet.name === walletNameToSelect);
+    if (selectedWallet === undefined) {
+      return;
+    }
+    const preferredPort = normalizePreferredPort(selectedWallet.preferredPort);
+    setPort(String(preferredPort));
+    setApiPort(String(preferredPort + 10000));
+  }
 
   useEffect(() => {
     void refreshWallets().catch((walletError) => {
@@ -510,9 +529,10 @@ function App() {
     setBusyAction("create-wallet");
     setError(null);
     try {
-      const wallet = await window.unccoinDesktop.createWallet(name);
-      await refreshWallets();
-      setWalletName(wallet.name);
+      const wallet = await window.unccoinDesktop.createWallet(name, undefined, Number(port));
+      const nextWallets = await window.unccoinDesktop.listWallets();
+      setWallets(nextWallets);
+      applyWalletSelection(wallet.name, nextWallets);
       setNewWalletName("");
       setNotice(`Created wallet ${wallet.name}`);
     } catch (walletError) {
@@ -853,7 +873,7 @@ function App() {
                   Stored Wallets
                   <select
                     value={walletName}
-                    onChange={(event) => setWalletName(event.target.value)}
+                    onChange={(event) => applyWalletSelection(event.target.value)}
                     disabled={busyAction !== null}
                   >
                     <option value="">Choose wallet</option>
@@ -874,7 +894,7 @@ function App() {
                         type="button"
                         className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
                         key={wallet.name}
-                        onClick={() => setWalletName(wallet.name)}
+                        onClick={() => applyWalletSelection(wallet.name)}
                         disabled={busyAction !== null}
                       >
                         <span>{wallet.name}</span>
@@ -987,7 +1007,7 @@ function App() {
               Wallet
               <select
                 value={walletName}
-                onChange={(event) => setWalletName(event.target.value)}
+                onChange={(event) => applyWalletSelection(event.target.value)}
                 disabled={nodeState.running}
               >
                 <option value="">Select wallet</option>
@@ -1252,7 +1272,7 @@ function App() {
                         type="button"
                         className="select-row"
                         key={wallet.name}
-                        onClick={() => setWalletName(wallet.name)}
+                        onClick={() => applyWalletSelection(wallet.name)}
                         disabled={nodeState.running}
                       >
                         <span>{wallet.name}</span>
