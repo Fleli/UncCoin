@@ -1,6 +1,6 @@
 # UncCoin Over Tailscale
 
-This guide assumes you have already gone through [GettingStarted.md](GettingStarted.md).
+This guide assumes you have already gone through [Getting started](getting-started.md).
 
 Tailscale is the easiest way to run a small UncCoin network with friends without opening
 router ports or exposing nodes to the public internet.

@@ -1,7 +1,7 @@
 # Getting Started
 
 This guide is for a fresh clone on one machine. For multi-device networking afterward,
-see [Tailscale.md](Tailscale.md).
+see [Tailscale networking](tailscale.md).
 
 UncCoin has two normal ways to run:
 
