@@ -115,11 +115,12 @@ class P2PServer:
     async def broadcast(self, message: dict) -> None:
         await self._broadcast_to_peers(message)
 
-    async def broadcast_transaction(self, transaction: Transaction) -> None:
+    async def broadcast_transaction(self, transaction: Transaction) -> tuple[bool, str | None]:
         transaction_id = sha256_transaction_hash(transaction)
         if transaction_id in self.seen_transaction_ids:
+            reason = "transaction already seen"
             print(f"Transaction {transaction_id[:12]} already seen. Skipping broadcast.")
-            return
+            return False, reason
 
         if self.on_transaction is not None:
             accepted, reason = self.on_transaction(transaction)
@@ -128,7 +129,7 @@ class P2PServer:
                     f"Rejected local transaction {transaction_id[:12]}: "
                     f"{reason or 'unknown reason'}"
                 )
-                return
+                return False, reason
 
         self.seen_transaction_ids.add(transaction_id)
 
@@ -143,6 +144,7 @@ class P2PServer:
             "Broadcast transaction "
             f"{transaction_id[:12]} {self._format_transaction_summary(transaction)}"
         )
+        return True, None
 
     async def broadcast_block(self, block: Block) -> None:
         block_hash = block.block_hash
@@ -160,15 +162,16 @@ class P2PServer:
         )
         print(f"Broadcast block {block_hash[:12]} at height {block.block_id}")
 
-    async def broadcast_wallet_message(self, wallet_message: dict) -> None:
+    async def broadcast_wallet_message(self, wallet_message: dict) -> tuple[bool, str | None]:
         message_id = wallet_message["message_id"]
         if message_id in self.seen_wallet_message_ids:
+            reason = "message already seen"
             print(f"Message {message_id[:12]} already seen. Skipping broadcast.")
-            return
+            return False, reason
 
         if self.on_wallet_message is not None and not self.on_wallet_message(wallet_message):
             print(f"Rejected local message {message_id[:12]}.")
-            return
+            return False, "message rejected"
 
         self.seen_wallet_message_ids.add(message_id)
         await self._broadcast_to_peers(
@@ -183,6 +186,7 @@ class P2PServer:
             f"{message_id[:12]} from {wallet_message['sender']} "
             f"to {wallet_message['receiver']}"
         )
+        return True, None
 
     async def _broadcast_to_peers(
         self,
