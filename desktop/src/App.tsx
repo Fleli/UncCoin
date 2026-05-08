@@ -2111,6 +2111,10 @@ function App() {
               <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
             </div>
             <div>
+              <dt>Last Checked</dt>
+              <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
+            </div>
+            <div>
               <dt>Tip</dt>
               <dd>{shortHash(miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash, 14)}</dd>
             </div>

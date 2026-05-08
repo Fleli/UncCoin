@@ -79,6 +79,7 @@ export type MiningStatus = {
   last_block: {
     height: number | null;
     block_hash: string | null;
+    nonces_checked: number | null;
   };
   recent_miners: MinerStat[];
 };

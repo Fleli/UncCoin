@@ -57,6 +57,7 @@ class Node:
     mining_tip_hash: str | None = field(default=None, init=False)
     mining_last_block_hash: str | None = field(default=None, init=False)
     mining_last_block_height: int | None = field(default=None, init=False)
+    mining_last_block_nonces_checked: int | None = field(default=None, init=False)
     _automine_stop_requested: bool = field(default=False, init=False)
     _current_automine_tip_hash: str | None = field(default=None, init=False)
     _private_automine_tip_hash: str | None = field(default=None, init=False)
@@ -541,6 +542,7 @@ class Node:
             tip_hash=self._mining_tip_hash(),
             reconcile_pending_transactions=not self.private_automine,
         )
+        self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
         await self.broadcast_block(block)
@@ -703,6 +705,7 @@ class Node:
             "last_block": {
                 "height": self.mining_last_block_height,
                 "block_hash": self.mining_last_block_hash,
+                "nonces_checked": self.mining_last_block_nonces_checked,
             },
         }
 
@@ -728,6 +731,7 @@ class Node:
         self.mining_last_update_at = datetime.now()
         self.mining_last_block_height = block.block_id
         self.mining_last_block_hash = block.block_hash
+        self.mining_last_block_nonces_checked = block.nonces_checked
 
     def _report_mining_progress(self, nonce: int) -> None:
         self.mining_last_nonce = int(nonce)

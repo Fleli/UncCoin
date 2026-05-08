@@ -141,6 +141,7 @@ class NodeApiServerTests(unittest.TestCase):
         self.assertEqual(body["description"], "Status test")
         self.assertEqual(body["nonce"], 12345)
         self.assertEqual(body["difficulty_bits"], 7)
+        self.assertIsNone(body["last_block"]["nonces_checked"])
         self.assertEqual(
             body["recent_miners"],
             [

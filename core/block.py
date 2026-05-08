@@ -23,13 +23,14 @@ class Block:
     description: str
     previous_hash: str
     nonce: int = 0
+    nonces_checked: int | None = None
     block_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
         self.block_hash = self.hash_function(self)
 
     def to_dict(self) -> dict:
-        return {
+        block_data = {
             "block_id": self.block_id,
             "transactions": [transaction.to_dict() for transaction in self.transactions],
             "description": self.description,
@@ -37,6 +38,9 @@ class Block:
             "nonce": self.nonce,
             "block_hash": self.block_hash,
         }
+        if self.nonces_checked is not None:
+            block_data["nonces_checked"] = self.nonces_checked
+        return block_data
 
     @classmethod
     def from_dict(
@@ -57,6 +61,11 @@ class Block:
                 description=block_data["description"],
                 previous_hash=block_data["previous_hash"],
                 nonce=int(block_data.get("nonce", 0)),
+                nonces_checked=(
+                    int(block_data["nonces_checked"])
+                    if block_data.get("nonces_checked") is not None
+                    else None
+                ),
             )
 
         block = cls.__new__(cls)
@@ -66,6 +75,11 @@ class Block:
         block.description = block_data["description"]
         block.previous_hash = block_data["previous_hash"]
         block.nonce = int(block_data.get("nonce", 0))
+        block.nonces_checked = (
+            int(block_data["nonces_checked"])
+            if block_data.get("nonces_checked") is not None
+            else None
+        )
         block.block_hash = provided_block_hash
         return block
 
@@ -213,6 +227,7 @@ def proof_of_work(
         raise ProofOfWorkCancelled("Proof of work was cancelled.")
 
     block.nonce, block.block_hash = mining_result.winner
+    block.nonces_checked = mining_result.attempts
 
     return block.block_hash
 

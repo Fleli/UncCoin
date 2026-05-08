@@ -15,6 +15,7 @@ class BlockDeserializeTests(unittest.TestCase):
                 "description": "sync block",
                 "previous_hash": "a" * 64,
                 "nonce": 3,
+                "nonces_checked": 42,
                 "block_hash": "b" * 64,
             },
             hash_function=hash_function,
@@ -22,4 +23,5 @@ class BlockDeserializeTests(unittest.TestCase):
 
         self.assertEqual(block.block_id, 7)
         self.assertEqual(block.block_hash, "b" * 64)
+        self.assertEqual(block.nonces_checked, 42)
         hash_function.assert_not_called()

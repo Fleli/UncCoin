@@ -219,3 +219,4 @@ class ProofOfWorkGpuOnlySettingTests(unittest.TestCase):
 
         self.assertEqual(run_chunked_mining.call_args.args[3], 0)
         self.assertEqual(run_chunked_mining.call_args.kwargs["gpu_device_ids"], (0, 1))
+        self.assertEqual(block.nonces_checked, 8)
