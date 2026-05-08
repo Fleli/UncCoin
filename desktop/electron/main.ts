@@ -451,9 +451,15 @@ async function updateWalletPreferredPort(
     throw new Error(`Wallet '${name}' was not found.`);
   }
 
-  const walletData = JSON.parse(await readFile(existingWallet.path, "utf-8")) as Record<string, unknown>;
-  walletData.preferred_port = preferredPort;
-  await writeFile(existingWallet.path, `${JSON.stringify(walletData, null, 2)}\n`, "utf-8");
+  await runPython([
+    "-m",
+    "wallet.cli",
+    "set-preferred-port",
+    "--name",
+    name,
+    "--preferred-port",
+    String(preferredPort),
+  ]);
 
   const updatedWallet = (await listWallets()).find((candidate) => candidate.path === existingWallet.path);
   if (!updatedWallet) {

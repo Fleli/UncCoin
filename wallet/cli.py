@@ -2,7 +2,7 @@ import argparse
 import json
 
 from wallet.factory import create_wallet
-from wallet.storage import load_wallet, save_wallet
+from wallet.storage import load_wallet, save_wallet, update_wallet_preferred_port
 
 
 def main() -> None:
@@ -18,6 +18,13 @@ def main() -> None:
     show_parser.add_argument("--name", required=True)
     show_parser.add_argument("--json", action="store_true")
     show_parser.add_argument("--include-private", action="store_true")
+
+    preferred_port_parser = subparsers.add_parser(
+        "set-preferred-port",
+        help="Update a wallet's preferred node port.",
+    )
+    preferred_port_parser.add_argument("--name", required=True)
+    preferred_port_parser.add_argument("--preferred-port", type=int, required=True)
 
     args = parser.parse_args()
 
@@ -58,6 +65,13 @@ def main() -> None:
         print(f"Address: {wallet.address}")
         print(f"Preferred port: {wallet.preferred_port}")
         print(f"Public key: {wallet.public_key}")
+        return
+
+    if args.command == "set-preferred-port":
+        wallet = update_wallet_preferred_port(args.name, args.preferred_port)
+        print(f"Wallet: {wallet.name}")
+        print(f"Address: {wallet.address}")
+        print(f"Preferred port: {wallet.preferred_port}")
         return
 
 

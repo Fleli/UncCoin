@@ -34,6 +34,16 @@ class Wallet:
             public_key=self.public_key,
         )
 
+    def key_pair_is_valid(self) -> bool:
+        probe_message = "UNCCOIN_WALLET_KEYPAIR_SELF_TEST"
+        try:
+            return self.verify_signature(
+                message=probe_message,
+                signature=self.sign_message(probe_message),
+            )
+        except (TypeError, ValueError):
+            return False
+
     @staticmethod
     def verify_signature_with_public_key(
         message: str,
@@ -58,12 +68,12 @@ class Wallet:
             "address": self.address,
             "preferred_port": self.preferred_port,
             "public_key": {
-                "exponent": self.public_key[0],
-                "modulus": self.public_key[1],
+                "exponent": str(self.public_key[0]),
+                "modulus": str(self.public_key[1]),
             },
             "private_key": {
-                "exponent": self.private_key[0],
-                "modulus": self.private_key[1],
+                "exponent": str(self.private_key[0]),
+                "modulus": str(self.private_key[1]),
             },
         }
 

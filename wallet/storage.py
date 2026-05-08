@@ -46,10 +46,29 @@ def save_wallet(wallet: Wallet) -> Path:
     return path
 
 
+def update_wallet_preferred_port(name: str, preferred_port: int) -> Wallet:
+    wallet = load_wallet(name)
+    wallet.preferred_port = preferred_port
+    wallet_path(name).write_text(json.dumps(wallet.to_dict(), indent=2), encoding="utf-8")
+    return wallet
+
+
 def load_wallet(name: str) -> Wallet:
     path = wallet_path(name)
     if not path.exists():
         raise FileNotFoundError(f"Wallet '{name}' does not exist at {path}.")
 
     wallet_data = json.loads(path.read_text(encoding="utf-8"))
-    return Wallet.from_dict(wallet_data)
+    wallet = Wallet.from_dict(wallet_data)
+    stored_address = wallet_data.get("address")
+    if stored_address and str(stored_address) != wallet.address:
+        raise ValueError(
+            f"Wallet '{name}' key data does not match its stored address. "
+            "The wallet file may be corrupted; restore it from backup or create a new wallet."
+        )
+    if not wallet.key_pair_is_valid():
+        raise ValueError(
+            f"Wallet '{name}' key pair is invalid. "
+            "The wallet file may be corrupted; restore it from backup or create a new wallet."
+        )
+    return wallet
