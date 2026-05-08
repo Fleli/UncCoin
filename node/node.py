@@ -694,6 +694,7 @@ class Node:
                 else next_difficulty_bits
             ),
             "next_difficulty_bits": next_difficulty_bits,
+            "state_tip_hash": state_tip_hash,
             "tip_hash": self.mining_tip_hash or state_tip_hash,
             "automine": {
                 "running": (

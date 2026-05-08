@@ -71,6 +71,7 @@ export type MiningStatus = {
   nonce: number;
   difficulty_bits: number | null;
   next_difficulty_bits: number | null;
+  state_tip_hash?: string | null;
   tip_hash: string | null;
   automine: {
     running: boolean;

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
   connectPeer,
@@ -184,6 +184,20 @@ function delay(milliseconds: number): Promise<void> {
   });
 }
 
+function miningStatusNeedsSnapshotRefresh(status: MiningStatus, snapshot: Snapshot): boolean {
+  const snapshotTipHash = snapshot.chainHead?.state_tip_hash ?? snapshot.chainHead?.tip_hash ?? null;
+  const statusTipHash = status.state_tip_hash ?? status.tip_hash;
+  if (statusTipHash != null && statusTipHash !== snapshotTipHash) {
+    return true;
+  }
+
+  const lastMinedBlockHash = status.last_block.block_hash;
+  if (lastMinedBlockHash === null) {
+    return false;
+  }
+  return !snapshot.blocks.some((block) => block.block_hash === lastMinedBlockHash);
+}
+
 function parsePeerAddress(peer: string): { host: string; port: number } | null {
   const [host, rawPort] = peer.split(":");
   const port = Number(rawPort);
@@ -277,6 +291,9 @@ function App() {
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
+  const latestSnapshotRef = useRef<Snapshot>(snapshot);
+  const snapshotRefreshRef = useRef<Promise<void> | null>(null);
+  const snapshotRefreshQueuedRef = useRef(false);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -402,7 +419,7 @@ function App() {
       readMiningStatus(apiPortToUse),
     ]);
 
-    setSnapshot({
+    const nextSnapshot = {
       nodeInfo,
       chainHead,
       balances: balances.balances,
@@ -413,7 +430,9 @@ function App() {
       contracts: contracts.contracts,
       receipts: receipts.receipts,
       authorizations: authorizations.authorizations,
-    });
+    };
+    latestSnapshotRef.current = nextSnapshot;
+    setSnapshot(nextSnapshot);
     setMiningStatus(mining);
     if (nodeInfo.sync) {
       setSyncStatus(nodeInfo.sync);
@@ -427,7 +446,25 @@ function App() {
       return;
     }
 
-    await loadSnapshot(activeApiPort);
+    if (snapshotRefreshRef.current !== null) {
+      snapshotRefreshQueuedRef.current = true;
+      await snapshotRefreshRef.current;
+      return;
+    }
+
+    const apiPortToUse = activeApiPort;
+    const refreshPromise = (async () => {
+      try {
+        do {
+          snapshotRefreshQueuedRef.current = false;
+          await loadSnapshot(apiPortToUse);
+        } while (snapshotRefreshQueuedRef.current);
+      } finally {
+        snapshotRefreshRef.current = null;
+      }
+    })();
+    snapshotRefreshRef.current = refreshPromise;
+    await refreshPromise;
   }, [activeApiPort, isApiAvailable, loadSnapshot]);
 
   function applyWalletSelection(walletNameToSelect: string, availableWallets = wallets) {
@@ -449,6 +486,12 @@ function App() {
         : [...currentPeers, peer]
     ));
   }
+
+  const resetSnapshot = useCallback(() => {
+    const nextSnapshot = emptySnapshot();
+    latestSnapshotRef.current = nextSnapshot;
+    setSnapshot(nextSnapshot);
+  }, []);
 
   useEffect(() => {
     if (!desktopStateKey) {
@@ -516,7 +559,7 @@ function App() {
 
   useEffect(() => {
     if (!isApiAvailable) {
-      setSnapshot(emptySnapshot());
+      resetSnapshot();
       setApiStatus("offline");
       setMiningStatus(null);
       return undefined;
@@ -546,7 +589,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [isApiAvailable, refreshSnapshot, startupComplete]);
+  }, [isApiAvailable, refreshSnapshot, resetSnapshot, startupComplete]);
 
   useEffect(() => {
     const shouldPollMiningFast = (
@@ -567,6 +610,9 @@ function App() {
         const status = await readMiningStatus(activeApiPort);
         if (!cancelled) {
           setMiningStatus(status);
+          if (miningStatusNeedsSnapshotRefresh(status, latestSnapshotRef.current)) {
+            await refreshSnapshot();
+          }
         }
       } catch {
         if (!cancelled) {
@@ -590,6 +636,7 @@ function App() {
     isApiAvailable,
     miningStatus?.active,
     miningStatus?.automine.running,
+    refreshSnapshot,
   ]);
 
   async function waitForNodeApi(apiPortToCheck: number) {
@@ -598,10 +645,14 @@ function App() {
     for (let attempt = 0; attempt < 60; attempt += 1) {
       try {
         const nodeInfo = await readNodeInfo(apiPortToCheck);
-        setSnapshot((currentSnapshot) => ({
-          ...currentSnapshot,
-          nodeInfo,
-        }));
+        setSnapshot((currentSnapshot) => {
+          const nextSnapshot = {
+            ...currentSnapshot,
+            nodeInfo,
+          };
+          latestSnapshotRef.current = nextSnapshot;
+          return nextSnapshot;
+        });
         if (nodeInfo.sync) {
           setSyncStatus(nodeInfo.sync);
         }
@@ -843,7 +894,7 @@ function App() {
     try {
       const nextState = await window.unccoinDesktop.stopNode();
       setNodeState(nextState);
-      setSnapshot(emptySnapshot());
+      resetSnapshot();
       setApiStatus("offline");
       setStartupPhase("idle");
       setStartupComplete(false);
