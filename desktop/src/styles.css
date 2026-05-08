@@ -141,6 +141,135 @@ pre {
   color: #aab4bb;
 }
 
+.launch-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 40px;
+  background: #101214;
+}
+
+.launch-card {
+  width: min(760px, calc(100vw - 80px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  border: 1px solid #303b43;
+  border-radius: 8px;
+  padding: 24px;
+  background: #181d20;
+}
+
+.launch-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+
+.launch-header p {
+  margin-top: 6px;
+  color: #98a4ab;
+}
+
+.launch-form,
+.launch-create {
+  display: grid;
+  gap: 14px;
+}
+
+.launch-create {
+  margin-top: 18px;
+  border-top: 1px solid #29333a;
+  padding-top: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.wallet-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wallet-choice {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  min-height: 62px;
+  padding: 10px 12px;
+  background: #111619;
+  text-align: left;
+}
+
+.wallet-choice.selected {
+  border-color: #6aa0b8;
+  background: #20313a;
+}
+
+.wallet-choice span,
+.wallet-choice code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launch-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.launch-details div {
+  border: 1px solid #29333a;
+  border-radius: 6px;
+  padding: 12px;
+  background: #101416;
+}
+
+.launch-log {
+  max-height: 160px;
+  margin: 14px 0;
+  overflow: auto;
+  border: 1px solid #29333a;
+  border-radius: 6px;
+  padding: 12px;
+  color: #c3ccd1;
+  background: #0b0e10;
+  white-space: pre-wrap;
+}
+
+.launch-notice,
+.launch-error {
+  margin-top: 14px;
+  overflow-wrap: anywhere;
+}
+
+.launch-notice {
+  color: #f2d891;
+}
+
+.launch-error {
+  color: #ffb7aa;
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 3px solid #2e3940;
+  border-top-color: #8fc8dc;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;

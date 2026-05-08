@@ -216,7 +216,9 @@ function App() {
   const refreshWallets = useCallback(async () => {
     const nextWallets = await window.unccoinDesktop.listWallets();
     setWallets(nextWallets);
-    setWalletName((current) => current || nextWallets[0]?.name || "");
+    setWalletName((current) => (
+      nextWallets.some((wallet) => wallet.name === current) ? current : ""
+    ));
   }, []);
 
   const refreshSnapshot = useCallback(async () => {
@@ -561,6 +563,170 @@ function App() {
       });
       return { label: "Sent authorization", detail: shortHash(response.message.message_id) };
     });
+  }
+
+  const isStartingNode = (
+    busyAction === "start-node"
+    || (nodeState.running && snapshot.nodeInfo === null && apiStatus !== "live")
+  );
+  const launchLogs = logs.slice(-5);
+
+  if (!nodeState.running || isStartingNode) {
+    return (
+      <main className="launch-shell">
+        <section className="launch-card">
+          {isStartingNode ? (
+            <>
+              <div className="launch-header">
+                <div>
+                  <h1>Starting Node</h1>
+                  <p>{nodeState.config?.walletName || walletName || "Selected wallet"}</p>
+                </div>
+                <span className="spinner" aria-label="Starting" />
+              </div>
+              <dl className="launch-details">
+                <div>
+                  <dt>P2P</dt>
+                  <dd>{nodeState.config?.host || host}:{nodeState.config?.port || port}</dd>
+                </div>
+                <div>
+                  <dt>API</dt>
+                  <dd>{nodeState.config?.apiPort || apiPort}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{apiStatus}</dd>
+                </div>
+              </dl>
+              {error ? <p className="launch-error">{error}</p> : null}
+              {launchLogs.length > 0 ? (
+                <pre className="launch-log">
+                  {launchLogs.map((entry) => `[${entry.stream}] ${entry.message}`).join("")}
+                </pre>
+              ) : null}
+              <div className="button-row">
+                <button type="button" onClick={handleStop} disabled={busyAction === "stop-node"}>
+                  Stop
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="launch-header">
+                <div>
+                  <h1>UncCoin Desktop</h1>
+                  <p>Choose a wallet to start a local node.</p>
+                </div>
+                <span className="status-pill">offline</span>
+              </div>
+
+              <form className="launch-form" onSubmit={handleStart}>
+                <label>
+                  Stored Wallets
+                  <select
+                    value={walletName}
+                    onChange={(event) => setWalletName(event.target.value)}
+                    disabled={busyAction !== null}
+                  >
+                    <option value="">Choose wallet</option>
+                    {wallets.map((wallet) => (
+                      <option key={wallet.name} value={wallet.name}>
+                        {wallet.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="wallet-picker">
+                  {wallets.length === 0 ? (
+                    <p className="empty">No stored wallets found.</p>
+                  ) : (
+                    wallets.map((wallet) => (
+                      <button
+                        type="button"
+                        className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
+                        key={wallet.name}
+                        onClick={() => setWalletName(wallet.name)}
+                        disabled={busyAction !== null}
+                      >
+                        <span>{wallet.name}</span>
+                        <code>{shortHash(wallet.address, 18)}</code>
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="field-row">
+                  <label>
+                    P2P Port
+                    <input
+                      value={port}
+                      inputMode="numeric"
+                      onChange={(event) => {
+                        setPort(event.target.value);
+                        const nextPort = Number(event.target.value || DEFAULT_PORT);
+                        setApiPort(String(nextPort + 10000));
+                      }}
+                      disabled={busyAction !== null}
+                    />
+                  </label>
+                  <label>
+                    API Port
+                    <input
+                      value={apiPort}
+                      inputMode="numeric"
+                      onChange={(event) => setApiPort(event.target.value)}
+                      disabled={busyAction !== null}
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Host
+                  <input
+                    value={host}
+                    onChange={(event) => setHost(event.target.value)}
+                    disabled={busyAction !== null}
+                  />
+                </label>
+
+                <label>
+                  Peers
+                  <input
+                    value={launchPeers}
+                    placeholder="127.0.0.1:9001, 127.0.0.1:9002"
+                    onChange={(event) => setLaunchPeers(event.target.value)}
+                    disabled={busyAction !== null}
+                  />
+                </label>
+
+                <button type="submit" disabled={!walletName || busyAction !== null}>
+                  Start Node
+                </button>
+              </form>
+
+              <form className="launch-create" onSubmit={handleCreateWallet}>
+                <label>
+                  New Wallet
+                  <input
+                    value={newWalletName}
+                    placeholder="Wallet name"
+                    onChange={(event) => setNewWalletName(event.target.value)}
+                    disabled={busyAction !== null}
+                  />
+                </label>
+                <button type="submit" disabled={!newWalletName.trim() || busyAction !== null}>
+                  Create Wallet
+                </button>
+              </form>
+
+              {notice ? <p className="launch-notice">{notice}</p> : null}
+              {error ? <p className="launch-error">{error}</p> : null}
+            </>
+          )}
+        </section>
+      </main>
+    );
   }
 
   const loadedWallet = snapshot.nodeInfo?.wallet;
