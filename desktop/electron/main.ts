@@ -1,7 +1,7 @@
 import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 
@@ -37,6 +37,15 @@ type CreateWalletRequest = {
 type UpdateWalletPreferredPortRequest = {
   name: string;
   preferredPort: number;
+};
+
+type DeleteWalletRequest = {
+  name: string;
+};
+
+type DeletedWalletSummary = {
+  name: string;
+  deletedPath: string;
 };
 
 type NodeApiRequest = {
@@ -345,6 +354,33 @@ async function updateWalletPreferredPort(
   return updatedWallet;
 }
 
+async function deleteWallet(request: DeleteWalletRequest): Promise<DeletedWalletSummary> {
+  const name = request.name.trim();
+  if (!name) {
+    throw new Error("Wallet name is required.");
+  }
+  if (nodeProcess !== null && nodeProcess.exitCode === null) {
+    throw new Error("Stop the running node before deleting a wallet.");
+  }
+
+  const existingWallet = (await listWallets()).find((candidate) => candidate.name === name);
+  if (!existingWallet) {
+    throw new Error(`Wallet '${name}' was not found.`);
+  }
+
+  const deletedDir = path.join(repoRoot(), "state", "deleted");
+  const parsedPath = path.parse(existingWallet.path);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const deletedPath = path.join(
+    deletedDir,
+    `${parsedPath.name}.${timestamp}${parsedPath.ext || ".json"}`,
+  );
+
+  await mkdir(deletedDir, { recursive: true });
+  await rename(existingWallet.path, deletedPath);
+  return { name, deletedPath };
+}
+
 async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   const apiPort = Number(request.apiPort);
   if (!Number.isInteger(apiPort) || apiPort <= 0 || apiPort > 65535) {
@@ -412,6 +448,7 @@ ipcMain.handle(
   "wallets:update-preferred-port",
   (_event, request: UpdateWalletPreferredPortRequest) => updateWalletPreferredPort(request),
 );
+ipcMain.handle("wallets:delete", (_event, request: DeleteWalletRequest) => deleteWallet(request));
 ipcMain.handle("node-api:fetch", (_event, request: NodeApiRequest) => fetchNodeApi(request));
 ipcMain.handle("system:local-addresses", () => localAddresses());
 

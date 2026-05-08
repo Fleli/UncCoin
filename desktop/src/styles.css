@@ -44,6 +44,17 @@ button:disabled {
   background: #171d21;
 }
 
+.danger-button {
+  border-color: #74463f;
+  color: #ffc1b7;
+  background: #261615;
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: #9a5c51;
+  background: #321c1a;
+}
+
 input,
 select,
 textarea {
@@ -347,6 +358,38 @@ pre {
 .preferred-port-bar strong {
   color: #f2f5f7;
   overflow-wrap: anywhere;
+}
+
+.wallet-delete-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #49373a;
+  border-radius: 6px;
+  padding: 12px;
+  background: #171416;
+}
+
+.wallet-delete-zone div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wallet-delete-zone .button-row {
+  display: flex;
+}
+
+.wallet-delete-zone strong {
+  color: #f2f5f7;
+  overflow-wrap: anywhere;
+}
+
+.wallet-delete-zone span {
+  color: #b9a3a0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .launch-details {

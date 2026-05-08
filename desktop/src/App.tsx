@@ -251,6 +251,7 @@ function App() {
   const [walletSearch, setWalletSearch] = useState("");
   const [newWalletName, setNewWalletName] = useState("");
   const [newWalletPreferredPort, setNewWalletPreferredPort] = useState(String(DEFAULT_PORT));
+  const [walletDeleteCandidate, setWalletDeleteCandidate] = useState("");
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(String(DEFAULT_PORT));
   const [apiPort, setApiPort] = useState(String(DEFAULT_PORT + 10000));
@@ -408,6 +409,7 @@ function App() {
 
   function applyWalletSelection(walletNameToSelect: string, availableWallets = wallets) {
     setWalletName(walletNameToSelect);
+    setWalletDeleteCandidate("");
     const selectedWallet = availableWallets.find((wallet) => wallet.name === walletNameToSelect);
     if (selectedWallet === undefined) {
       return;
@@ -698,6 +700,27 @@ function App() {
       setWallets(nextWallets);
       applyWalletSelection(wallet.name, nextWallets);
       setNotice(`Saved ${wallet.name} preferred port ${wallet.preferredPort}`);
+    } catch (walletError) {
+      setError(String(walletError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleDeleteWallet() {
+    if (!walletDeleteCandidate) {
+      return;
+    }
+    setBusyAction("delete-wallet");
+    setError(null);
+    setNotice(null);
+    try {
+      const deletedWallet = await window.unccoinDesktop.deleteWallet(walletDeleteCandidate);
+      const nextWallets = await window.unccoinDesktop.listWallets();
+      setWallets(nextWallets);
+      setWalletName("");
+      setWalletDeleteCandidate("");
+      setNotice(`Moved ${deletedWallet.name} to state/deleted`);
     } catch (walletError) {
       setError(String(walletError));
     } finally {
@@ -1162,6 +1185,51 @@ function App() {
                         Save Preferred Port
                       </button>
                     </div>
+
+                    {selectedWallet ? (
+                      <div className="wallet-delete-zone">
+                        {walletDeleteCandidate === selectedWallet.name ? (
+                          <>
+                            <div>
+                              <strong>Move {selectedWallet.name} to deleted wallets?</strong>
+                              <span>The wallet JSON will be archived in state/deleted with a timestamp.</span>
+                            </div>
+                            <div className="button-row">
+                              <button
+                                type="button"
+                                className="danger-button"
+                                onClick={() => void handleDeleteWallet()}
+                                disabled={busyAction !== null}
+                              >
+                                Confirm Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setWalletDeleteCandidate("")}
+                                disabled={busyAction !== null}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div>
+                              <strong>{selectedWallet.name}</strong>
+                              <span>Delete archives this wallet file without destroying it.</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="danger-button"
+                              onClick={() => setWalletDeleteCandidate(selectedWallet.name)}
+                              disabled={busyAction !== null}
+                            >
+                              Delete Wallet
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ) : null}
 
                     <button type="submit" disabled={!walletName || busyAction !== null}>
                       Start Node

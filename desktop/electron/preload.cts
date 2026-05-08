@@ -33,6 +33,11 @@ type WalletSummary = {
   preferredPort: number;
 };
 
+type DeletedWalletSummary = {
+  name: string;
+  deletedPath: string;
+};
+
 type ApiRequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
@@ -57,6 +62,9 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
     preferredPort: number,
   ): Promise<WalletSummary> => (
     ipcRenderer.invoke("wallets:update-preferred-port", { name, preferredPort })
+  ),
+  deleteWallet: (name: string): Promise<DeletedWalletSummary> => (
+    ipcRenderer.invoke("wallets:delete", { name })
   ),
   getLocalAddresses: (): Promise<string[]> => ipcRenderer.invoke("system:local-addresses"),
   fetchApi: (apiPort: number, path: string, options: ApiRequestOptions = {}): Promise<unknown> => (
