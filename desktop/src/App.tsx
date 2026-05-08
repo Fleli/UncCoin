@@ -234,6 +234,21 @@ function formatAmount(value: string | null | undefined): string {
   return value ?? "0";
 }
 
+function balanceSortValue(balance: BalanceRow): number {
+  const value = Number.parseFloat(balance.balance);
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+}
+
+function sortBalancesDescending(balances: BalanceRow[]): BalanceRow[] {
+  return [...balances].sort((left, right) => {
+    const balanceDelta = balanceSortValue(right) - balanceSortValue(left);
+    if (balanceDelta !== 0) {
+      return balanceDelta;
+    }
+    return (left.alias ?? left.address).localeCompare(right.alias ?? right.address);
+  });
+}
+
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -2154,6 +2169,7 @@ function App() {
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
+  const walletBalancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
   const knownPeers = snapshot.peers.known;
   const disableNodeAction = !isApiAvailable || busyAction !== null;
@@ -2837,7 +2853,7 @@ function App() {
                 <span>{snapshot.balances.length}</span>
               </div>
               <div className="table">
-                {snapshot.balances.map((balance) => (
+                {walletBalancesByAmount.map((balance) => (
                   <div className="table-row" key={balance.address}>
                     <ReferenceCode value={balance.address} />
                     <span>{balance.alias || "-"}</span>
