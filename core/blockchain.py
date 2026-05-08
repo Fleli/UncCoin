@@ -1013,15 +1013,17 @@ class Blockchain:
             )
 
         program = transaction.payload.get("input")
+        metadata = {}
         contract = state.contracts.get(contract_address)
         if contract is not None:
             program = contract["program"]
+            metadata = contract.get("metadata", {})
             code_hash = str(
                 contract.get(
                     "code_hash",
                     compute_contract_code_hash(
                         contract["program"],
-                        contract.get("metadata", {}),
+                        metadata,
                     ),
                 )
             )
@@ -1054,6 +1056,7 @@ class Blockchain:
                 commitments=state.commitments,
                 reveals=state.reveals,
                 authorization_index=authorization_index,
+                metadata=metadata,
                 block_height=execution_block_height or 0,
             ),
         )

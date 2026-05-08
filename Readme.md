@@ -95,8 +95,9 @@ are accepted. Salt is optional.
 deployer, deploy nonce, and code hash. The deploy source can be inline JSON or a file in
 `state/contracts`. The JSON can be either a program directly or an object with `program` and
 `metadata` fields. Metadata is an object; `metadata.request_ids` is reserved for request ids
-relevant to the contract. For example, `deploy 0 coinflip.uvm` deploys
-`state/contracts/coinflip.uvm` and prints the derived contract address and code hash.
+relevant to the contract. Integer metadata values are available to deployed code through
+`READ_METADATA`. For example, `deploy 0 coinflip.uvm` deploys `state/contracts/coinflip.uvm`
+and prints the derived contract address and code hash.
 
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
 program by exact address or unique address prefix.
@@ -149,6 +150,9 @@ integer.
 and `0` otherwise. `BLOCK_HEIGHT` pushes the block height currently executing the contract,
 which lets contracts distinguish "not revealed yet" from "missed the deadline."
 
+`READ_METADATA <key>` reads an immutable integer value from the contract's deploy metadata
+and pushes it onto the stack. Missing keys and non-integer values fail execution.
+
 `TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
 that amount between balances. The source must be the execute transaction sender, the contract
 itself, or a wallet that provided a valid UVM authorization for the exact request id. The
@@ -178,6 +182,7 @@ NOT
 SHA256
 MEM_LOAD <key>
 MEM_STORE <key>
+READ_METADATA <key>
 LOAD <key>
 STORE <key>
 READ_COMMIT <wallet> <request_id>
@@ -208,7 +213,7 @@ AND/OR/XOR/JUMP: 3
 JUMPI/MEM_STORE: 5
 MEM_LOAD: 3
 BLOCK_HEIGHT: 2
-HAS_REVEAL: 10
+HAS_REVEAL/READ_METADATA: 10
 SHA256/HAS_AUTH/REQUIRE_AUTH: 20
 LOAD: 25
 READ_COMMIT: 30
@@ -235,10 +240,10 @@ bitwise `XOR`, then hash the result with `SHA256`.
 The repo includes `state/contracts/coinflip.uvm`, a two-wallet example that should be deployed
 with `deploy 0 coinflip.uvm`. It expects both hardcoded wallets to authorize the printed
 contract address and reveal under request id `coinflip`, stakes 100 from each wallet, and pays
-200 to the derived winner. The toy contract has a hardcoded reveal deadline at block 10:
-before then, a missing reveal no-ops; after then, a single missing revealer forfeits 100 to
-the revealer who showed up. It stores `settled = 1` after a payout or timeout close so replay
-execution cannot pay twice.
+200 to the derived winner. The toy contract reads `reveal_deadline` from deploy metadata:
+before that deadline, a missing reveal no-ops; after it, a single missing revealer forfeits
+100 to the revealer who showed up. It stores `settled = 1` after a payout or timeout close so
+replay execution cannot pay twice.
 
 ## Local Convenience Commands
 

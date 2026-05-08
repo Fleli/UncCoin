@@ -32,6 +32,7 @@ UVM_GAS_COSTS = {
     "SHA256": 20,
     "MEM_LOAD": 3,
     "MEM_STORE": 5,
+    "READ_METADATA": 10,
     "LOAD": 25,
     "STORE": 100,
     "READ_COMMIT": 30,
@@ -64,6 +65,7 @@ class UvmExecutionContext:
     commitments: dict[str, dict[str, str]] = field(default_factory=dict)
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     authorization_index: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     block_height: int = 0
 
 
@@ -445,6 +447,12 @@ def _execute_instruction(
         memory[_require_key_operand(opcode, operands[0])] = _pop(stack)
         return None
 
+    if opcode == "READ_METADATA":
+        _require_operand_count(opcode, operands, 1)
+        metadata_key = _require_key_operand(opcode, operands[0])
+        _push(stack, _read_metadata_word(context.metadata, metadata_key))
+        return None
+
     if opcode == "LOAD":
         _require_operand_count(opcode, operands, 1)
         _push(stack, storage.get(_require_key_operand(opcode, operands[0]), 0))
@@ -602,6 +610,27 @@ def _resolve_account_operand(
     if account == CONTRACT_SELF_ADDRESS:
         return context.contract_address
     return account
+
+
+def _read_metadata_word(metadata: dict[str, Any], key: str) -> int:
+    if key not in metadata:
+        raise _UvmExecutionError(f"missing metadata key {key}")
+    value = metadata[key]
+    if isinstance(value, bool):
+        raise _UvmExecutionError(f"metadata key {key} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        try:
+            if stripped_value.startswith(("0x", "0X")):
+                return int(stripped_value, 16)
+            return int(stripped_value)
+        except ValueError as error:
+            raise _UvmExecutionError(
+                f"metadata key {key} must be an integer"
+            ) from error
+    raise _UvmExecutionError(f"metadata key {key} must be an integer")
 
 
 def _validate_jump_target(target: int, program_length: int) -> int:

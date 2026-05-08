@@ -74,6 +74,59 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertEqual(result.memory, {"temp": 9})
         self.assertEqual(result.storage, {"persisted": 9})
 
+    def test_read_metadata_pushes_integer_metadata_value(self) -> None:
+        result = execute_uvm_program(
+            [
+                ["READ_METADATA", "deadline"],
+                ["STORE", "deadline"],
+                ["READ_METADATA", "hex_value"],
+                ["STORE", "hex_value"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=300,
+                metadata={
+                    "deadline": 10,
+                    "hex_value": "0x2a",
+                },
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.storage, {"deadline": 10, "hex_value": 42})
+
+    def test_read_metadata_rejects_missing_or_non_integer_value(self) -> None:
+        missing_result = execute_uvm_program(
+            [
+                ["READ_METADATA", "missing"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=100,
+            ),
+        )
+        invalid_result = execute_uvm_program(
+            [
+                ["READ_METADATA", "name"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=100,
+                metadata={"name": "coinflip"},
+            ),
+        )
+
+        self.assertFalse(missing_result.success)
+        self.assertIn("missing metadata key missing", missing_result.error or "")
+        self.assertFalse(invalid_result.success)
+        self.assertIn("metadata key name must be an integer", invalid_result.error or "")
+
     def test_sha256_hashes_stack_value_to_integer(self) -> None:
         result = execute_uvm_program(
             [

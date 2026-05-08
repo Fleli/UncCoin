@@ -74,16 +74,21 @@ class DeployTransactionTests(unittest.TestCase):
         blockchain = create_blockchain()
         deployer = create_wallet(name="deployer")
         caller = create_wallet(name="caller")
+        program = [
+            ["READ_METADATA", "number"],
+            ["STORE", "number"],
+            ["HALT"],
+        ]
+        metadata = {
+            "number": 7,
+            "request_ids": ["casino-play-1"],
+        }
         deploy_transaction = sign_transaction(
             deployer,
             Transaction.deploy(
                 sender=deployer.address,
-                program=[
-                    ["PUSH", 7],
-                    ["STORE", "number"],
-                    ["HALT"],
-                ],
-                metadata={"request_ids": ["casino-play-1"]},
+                program=program,
+                metadata=metadata,
                 fee=Decimal("0"),
                 timestamp=datetime.now(),
                 nonce=blockchain.get_next_nonce(deployer.address),
@@ -232,8 +237,8 @@ class NodeDeployTransactionTests(unittest.TestCase):
         self.assertIsNotNone(contract)
         assert contract is not None
         self.assertEqual(contract["code_hash"], deploy_transaction.payload["code_hash"])
-        self.assertEqual(contract["program"], expected_program)
-        self.assertEqual(contract["metadata"], {})
+        self.assertEqual(contract["program"], expected_program["program"])
+        self.assertEqual(contract["metadata"], expected_program["metadata"])
 
     def test_node_creates_contract_bound_authorization_receipt(self) -> None:
         blockchain = create_blockchain()

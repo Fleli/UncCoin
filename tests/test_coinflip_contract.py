@@ -15,7 +15,12 @@ CONTRACT_ADDRESS = "coinflip-contract"
 
 def load_coinflip_program():
     contract_path = Path(__file__).resolve().parent.parent / "state/contracts/coinflip.uvm"
-    return json.loads(contract_path.read_text(encoding="utf-8"))
+    return json.loads(contract_path.read_text(encoding="utf-8"))["program"]
+
+
+def load_coinflip_metadata():
+    contract_path = Path(__file__).resolve().parent.parent / "state/contracts/coinflip.uvm"
+    return json.loads(contract_path.read_text(encoding="utf-8"))["metadata"]
 
 
 def reveal(seed: int) -> dict[str, str]:
@@ -49,6 +54,7 @@ class CoinflipContractTests(unittest.TestCase):
                 },
                 balances={PLAYER_B: Decimal("100")},
                 authorization_index=authorization_index(PLAYER_B),
+                metadata=load_coinflip_metadata(),
             ),
         )
 
@@ -71,6 +77,7 @@ class CoinflipContractTests(unittest.TestCase):
                 },
                 balances={PLAYER_B: Decimal("100")},
                 authorization_index=authorization_index(PLAYER_B),
+                metadata=load_coinflip_metadata(),
             ),
         )
 
@@ -104,6 +111,7 @@ class CoinflipContractTests(unittest.TestCase):
                     CONTRACT_ADDRESS: Decimal("0"),
                 },
                 authorization_index=authorization_index(PLAYER_A, PLAYER_B),
+                metadata=load_coinflip_metadata(),
             ),
         )
 
@@ -126,6 +134,7 @@ class CoinflipContractTests(unittest.TestCase):
                 gas_limit=2_000,
                 storage={"settled": 1},
                 block_height=11,
+                metadata=load_coinflip_metadata(),
             ),
         )
 
