@@ -201,7 +201,13 @@ def _native_proof_of_work(
             minimum=0,
         )
     default_worker_count = max(1, os.cpu_count() or 1)
-    native_gpu_enabled = native_gpu_available()
+    native_gpu_enabled = False
+    if gpu_mode != "disabled":
+        try:
+            native_gpu_enabled = native_gpu_available()
+        except Exception:
+            if gpu_mode == "required":
+                raise
     if gpu_mode == "required" and not native_gpu_enabled:
         raise ValueError("GPU mining is unavailable.")
     gpu_enabled = native_gpu_enabled and gpu_mode != "disabled"
