@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 
 API_PREFIX = "/api/v1"
+PEER_CONNECT_TIMEOUT_SECONDS = 3.0
 
 
 class PeerRequest(BaseModel):
@@ -339,7 +340,15 @@ def create_api_app(node: "Node") -> FastAPI:
     async def connect_peer(request: PeerRequest) -> dict[str, Any]:
         host, port = _parse_peer(request.peer)
         try:
-            await node.connect_to_peer(host, port)
+            await asyncio.wait_for(
+                node.connect_to_peer(host, port),
+                timeout=PEER_CONNECT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as error:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Timed out connecting to peer {host}:{port}",
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"connected": node.list_peers(), "known": node.list_known_peers()}
