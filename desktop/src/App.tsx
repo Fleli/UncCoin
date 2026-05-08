@@ -337,6 +337,12 @@ function transactionSummary(transaction: TransactionPayload): string {
   return `${kind} ${transaction.receiver}`;
 }
 
+function outgoingTransactionSummary(transaction: TransactionPayload): string {
+  const kind = transactionKind(transaction);
+  const kindPrefix = kind === "transfer" ? "" : `${kind} `;
+  return `-> ${kindPrefix}${transaction.receiver} (${transaction.amount})`;
+}
+
 function newestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
   return [...items].sort((left, right) => String(right.timestamp ?? "").localeCompare(String(left.timestamp ?? "")));
 }
@@ -2542,7 +2548,7 @@ function App() {
                     ) : (
                       snapshot.pendingTransactions.map((transaction) => (
                         <div className="list-row stacked" key={transaction.transaction_id}>
-                          <ReferenceText value={transactionSummary(transaction)} />
+                          <ReferenceText value={outgoingTransactionSummary(transaction)} />
                           <ReferenceCode value={transaction.transaction_id} />
                         </div>
                       ))
