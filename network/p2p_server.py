@@ -17,6 +17,7 @@ from core.transaction import Transaction
 CHAIN_SYNC_CHUNK_SIZE = 20
 FASTSYNC_INITIAL_BATCH_CHUNKS = 50
 FASTSYNC_STREAM_DRAIN_INTERVAL = 8
+P2P_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass
@@ -80,13 +81,22 @@ class P2PServer:
             return
 
         self.server.close()
-        await self.server.wait_closed()
+        try:
+            await asyncio.wait_for(
+                self.server.wait_closed(),
+                timeout=P2P_CLOSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            self._notify("Timed out waiting for P2P server socket to close.")
         self.server = None
 
-        for writer in list(self.active_connections.values()):
-            writer.close()
-            await writer.wait_closed()
-
+        await asyncio.gather(
+            *[
+                self._close_writer(writer, peer)
+                for peer, writer in list(self.active_connections.items())
+            ],
+            return_exceptions=True,
+        )
         self.active_connections.clear()
 
     async def connect_to_peer(self, host: str, port: int) -> None:
@@ -191,8 +201,7 @@ class P2PServer:
 
         for peer in disconnected_peers:
             writer = self.active_connections.pop(peer)
-            writer.close()
-            await writer.wait_closed()
+            await self._close_writer(writer, peer)
 
     async def request_peer_list(self, host: str, port: int) -> None:
         await self.send_to_peer(host, port, {"type": "peer_request"})
@@ -322,8 +331,7 @@ class P2PServer:
         finally:
             self.active_connections.pop(peer, None)
             self.fast_sync_states.pop(peer, None)
-            writer.close()
-            await writer.wait_closed()
+            await self._close_writer(writer, peer)
             self._notify(f"Disconnected from peer {peer.host}:{peer.port}")
 
     async def _handle_message(self, message: dict, peer: PeerAddress) -> PeerAddress:
@@ -923,6 +931,27 @@ class P2PServer:
     ) -> None:
         writer.write(P2PServer._encode_message(message))
         await writer.drain()
+
+    async def _close_writer(
+        self,
+        writer: asyncio.StreamWriter,
+        peer: PeerAddress | None = None,
+    ) -> None:
+        writer.close()
+        try:
+            await asyncio.wait_for(
+                writer.wait_closed(),
+                timeout=P2P_CLOSE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            if peer is None:
+                self._notify("Timed out waiting for peer connection to close.")
+                return
+            self._notify(
+                f"Timed out waiting for peer {peer.host}:{peer.port} to close."
+            )
+        except (ConnectionError, OSError):
+            return
 
     def _notify(self, message: str) -> None:
         if self.on_notification is not None:

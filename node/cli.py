@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import contextlib
 
 from node.node import Node
 from wallet import load_wallet
@@ -97,10 +98,14 @@ async def _run_from_cli() -> None:
         else:
             await node.interactive_console()
     finally:
-        if api_server is not None:
-            await api_server.stop()
-        server_task.cancel()
-        await node.stop()
+        try:
+            if api_server is not None:
+                await api_server.stop()
+            await node.stop()
+        finally:
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await server_task
 
 
 def main() -> None:
