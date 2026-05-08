@@ -377,3 +377,7 @@ UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2
 
 If you also want local CPU workers on the pod, set `UNCCOIN_BUILD_CPU_POW_EXTENSION=1`
 before `./scripts/setup_runpod_cuda.sh` so the native CPU extension is built too.
+
+## License
+
+UncCoin is released under the [MIT License](LICENSE).
