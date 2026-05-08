@@ -97,11 +97,17 @@ API:  127.0.0.1:<p2p-port + 10000>
 ```
 
 Do not expose the API over Tailscale unless you intentionally want remote programs to control
-that local node. If you do need that for a trusted machine:
+that local node. If you do need that for a trusted machine, set a bearer token:
 
 ```bash
-UNCCOIN_API_HOST=0.0.0.0 ./scripts/run.sh alice 9000
+UNCCOIN_API_HOST=0.0.0.0 \
+UNCCOIN_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+./scripts/run.sh alice 9000
 ```
+
+Control requests under `/api/v1/control/*` must then include
+`Authorization: Bearer <token>`. The desktop app handles this automatically for nodes it
+starts and keeps the token in the Electron main process.
 
 ## 6. Desktop App With Tailscale
 
@@ -154,5 +160,6 @@ UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2
 
 - Tailscale is only networking; it is not a Python dependency.
 - Keep wallet JSON files private.
+- Keep API tokens private; they authorize wallet-signing control actions.
 - The current node sync is intended for small trusted test networks.
 - UncCoin is not hardened for real-value or adversarial deployment.

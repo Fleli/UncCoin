@@ -74,7 +74,8 @@ From the launch screen you can:
 - skip miner warmup if you want the node window to open immediately
 
 The desktop app starts the Python node and API for you. It uses API port `P2P port + 10000`
-unless you choose a different API port in the UI.
+unless you choose a different API port in the UI. The desktop app also generates a per-run
+API bearer token and uses it for wallet-signing control actions automatically.
 
 Multiple desktop instances can run at once. The desktop dev server picks a free local port
 automatically; the node P2P/API ports still need to be different per running node.
@@ -140,8 +141,24 @@ To override the API host or port:
 UNCCOIN_API_HOST=127.0.0.1 UNCCOIN_API_PORT=19001 ./scripts/run.sh alice 9001
 ```
 
-Only expose the API beyond localhost if you understand the risk; it can perform wallet/node
-actions for the local node.
+The terminal node can run without an API token when the API is bound to loopback. If you expose
+the API beyond localhost, a bearer token is required because `/api/v1/control/*` can perform
+wallet/node actions for the local node:
+
+```bash
+UNCCOIN_API_HOST=0.0.0.0 \
+UNCCOIN_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+./scripts/run.sh alice 9000
+```
+
+Use the token with control requests:
+
+```bash
+curl -H "Authorization: Bearer $UNCCOIN_API_TOKEN" \
+  http://127.0.0.1:19000/api/v1/control/sync \
+  -H "Content-Type: application/json" \
+  -d '{"fast": true}'
+```
 
 ## 7. Connecting Nodes
 

@@ -43,6 +43,10 @@ python3 -m wallet.cli create --name alice
 `127.0.0.1:<p2p-port + 10000>` by default, so a node on `9000` has API docs at
 `http://127.0.0.1:19000/docs`.
 
+Mutating API routes under `/api/v1/control/*` can be protected with a bearer token by setting
+`UNCCOIN_API_TOKEN`. The desktop app does this automatically for nodes it starts. If you bind
+the API beyond loopback with `UNCCOIN_API_HOST`, a token is required.
+
 To verify a checkout before sharing or running it:
 
 ```bash
