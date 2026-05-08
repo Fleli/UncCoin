@@ -2,7 +2,7 @@ import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
-import { networkInterfaces } from "node:os";
+import { cpus, networkInterfaces } from "node:os";
 import path from "node:path";
 
 const { app, BrowserWindow, ipcMain } = electron;
@@ -83,6 +83,7 @@ let nodeProcess: ChildProcessWithoutNullStreams | null = null;
 let nodeConfig: NodeRuntimeState["config"] = null;
 
 const DEFAULT_PREFERRED_PORT = 9000;
+const NODE_API_TIMEOUT_MS = 8000;
 
 function repoRoot(): string {
   return path.resolve(app.getAppPath(), "..");
@@ -93,6 +94,11 @@ function pythonCommand(): string {
     return process.env.UNCCOIN_PYTHON;
   }
   return process.platform === "win32" ? "python" : "python3";
+}
+
+function desktopMiningCpuWorkers(): string {
+  const logicalCpuCount = cpus().length || 1;
+  return String(Math.max(1, logicalCpuCount - 2));
 }
 
 function runtimeState(): NodeRuntimeState {
@@ -241,6 +247,7 @@ async function startNode(config: StartNodeConfig): Promise<NodeRuntimeState> {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: "1",
+      UNCCOIN_MINING_CPU_WORKERS: process.env.UNCCOIN_MINING_CPU_WORKERS ?? desktopMiningCpuWorkers(),
     },
   });
 
@@ -507,23 +514,38 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   }
   const endpointPath = request.path;
   const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
-  const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`, {
-    method,
-    headers: request.body === undefined ? undefined : {
-      "Content-Type": "application/json",
-    },
-    body: request.body === undefined ? undefined : JSON.stringify(request.body),
-  });
-  const bodyText = await response.text();
-  const body = bodyText ? JSON.parse(bodyText) : null;
-  if (!response.ok) {
-    throw new Error(
-      typeof body?.detail === "string"
-        ? body.detail
-        : `API request failed with status ${response.status}`,
-    );
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, NODE_API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`, {
+      method,
+      headers: request.body === undefined ? undefined : {
+        "Content-Type": "application/json",
+      },
+      body: request.body === undefined ? undefined : JSON.stringify(request.body),
+      signal: controller.signal,
+    });
+    const bodyText = await response.text();
+    const body = bodyText ? JSON.parse(bodyText) : null;
+    if (!response.ok) {
+      throw new Error(
+        typeof body?.detail === "string"
+          ? body.detail
+          : `API request failed with status ${response.status}`,
+      );
+    }
+    return body;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`API request timed out after ${NODE_API_TIMEOUT_MS / 1000}s.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return body;
 }
 
 function createWindow(): void {
