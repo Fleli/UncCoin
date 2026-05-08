@@ -1,6 +1,9 @@
 import unittest
+from pathlib import Path
 
 from wallet import create_wallet
+from wallet.storage import normalize_wallet_name
+from wallet.storage import wallet_path
 from wallet.wallet import Wallet
 
 
@@ -21,6 +24,30 @@ class WalletModelTests(unittest.TestCase):
         restored_wallet = Wallet.from_dict(wallet_data)
 
         self.assertEqual(restored_wallet.preferred_port, 9000)
+
+    def test_wallet_name_rejects_path_traversal(self) -> None:
+        invalid_names = (
+            "../alice",
+            "..\\alice",
+            "/tmp/alice",
+            "nested/alice",
+            "nested\\alice",
+            ".",
+            "..",
+            "",
+        )
+
+        for name in invalid_names:
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    normalize_wallet_name(name)
+
+    def test_wallet_path_stays_inside_wallet_directory(self) -> None:
+        path = wallet_path("alice-01.main")
+
+        self.assertEqual(path.name, "alice-01.main.json")
+        self.assertEqual(path.parent.name, "wallets")
+        self.assertFalse(Path("alice-01.main").is_absolute())
 
 
 if __name__ == "__main__":
