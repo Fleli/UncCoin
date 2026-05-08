@@ -297,6 +297,15 @@ pre {
   color: #ffb7aa;
 }
 
+.peer-status.skipped {
+  border-color: #4c5358;
+  background: #15191c;
+}
+
+.peer-status.skipped span {
+  color: #c2c8cc;
+}
+
 .launch-notice,
 .launch-error {
   margin-top: 14px;

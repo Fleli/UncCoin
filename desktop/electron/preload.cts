@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
   createWallet: (name: string, bitLength?: number): Promise<WalletSummary> => (
     ipcRenderer.invoke("wallets:create", { name, bitLength })
   ),
+  getLocalAddresses: (): Promise<string[]> => ipcRenderer.invoke("system:local-addresses"),
   fetchApi: (apiPort: number, path: string, options: ApiRequestOptions = {}): Promise<unknown> => (
     ipcRenderer.invoke("node-api:fetch", { apiPort, path, ...options })
   ),

@@ -42,6 +42,7 @@ interface Window {
     getNodeState(): Promise<NodeRuntimeState>;
     listWallets(): Promise<WalletSummary[]>;
     createWallet(name: string, bitLength?: number): Promise<WalletSummary>;
+    getLocalAddresses(): Promise<string[]>;
     fetchApi(apiPort: number, path: string, options?: ApiRequestOptions): Promise<unknown>;
     onNodeLog(callback: (entry: NodeLogEntry) => void): () => void;
     onNodeState(callback: (state: NodeRuntimeState) => void): () => void;

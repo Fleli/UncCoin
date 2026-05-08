@@ -76,7 +76,7 @@ type ActionResult = {
 
 type BootstrapAttempt = {
   peer: string;
-  status: "pending" | "connected" | "failed";
+  status: "pending" | "connected" | "failed" | "skipped";
   detail?: string;
 };
 
@@ -163,6 +163,32 @@ function delay(milliseconds: number): Promise<void> {
   });
 }
 
+function parsePeerAddress(peer: string): { host: string; port: number } | null {
+  const [host, rawPort] = peer.split(":");
+  const port = Number(rawPort);
+  if (!host || !Number.isInteger(port)) {
+    return null;
+  }
+  return { host, port };
+}
+
+function isLocalBootstrapPeer(
+  peer: string,
+  nodeConfig: NodeRuntimeState["config"],
+  localAddresses: string[],
+): boolean {
+  const parsedPeer = parsePeerAddress(peer);
+  if (parsedPeer === null || nodeConfig === null || parsedPeer.port !== nodeConfig.port) {
+    return false;
+  }
+
+  const localAddressSet = new Set([
+    ...localAddresses,
+    nodeConfig.host,
+  ].map((address) => address.toLowerCase()));
+  return localAddressSet.has(parsedPeer.host.toLowerCase());
+}
+
 function App() {
   if (!window.unccoinDesktop) {
     return (
@@ -198,6 +224,7 @@ function App() {
   const [startupComplete, setStartupComplete] = useState(false);
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [localAddresses, setLocalAddresses] = useState<string[]>([]);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -302,6 +329,9 @@ function App() {
     void refreshWallets().catch((walletError) => {
       setError(String(walletError));
     });
+    window.unccoinDesktop.getLocalAddresses().then(setLocalAddresses).catch((addressError) => {
+      setError(String(addressError));
+    });
     window.unccoinDesktop.getNodeState().then(setNodeState).catch((stateError) => {
       setError(String(stateError));
     });
@@ -370,18 +400,30 @@ function App() {
     throw new Error(`Node API did not become available on port ${apiPortToCheck}.`);
   }
 
-  async function connectBootstrapPeers(apiPortToUse: number): Promise<BootstrapAttempt[]> {
+  async function connectBootstrapPeers(
+    apiPortToUse: number,
+    nodeConfig: NodeRuntimeState["config"],
+  ): Promise<BootstrapAttempt[]> {
     setStartupPhase("connecting-bootstrap");
-    setBootstrapAttempts(BOOTSTRAP_PEERS.map((peer) => ({ peer, status: "pending" })));
+    const initialAttempts = BOOTSTRAP_PEERS.map((peer): BootstrapAttempt => (
+      isLocalBootstrapPeer(peer, nodeConfig, localAddresses)
+        ? { peer, status: "skipped", detail: "local node" }
+        : { peer, status: "pending" }
+    ));
+    setBootstrapAttempts(initialAttempts);
 
     const attempts = await Promise.all(
-      BOOTSTRAP_PEERS.map(async (peer): Promise<BootstrapAttempt> => {
+      initialAttempts.map(async (attempt): Promise<BootstrapAttempt> => {
+        if (attempt.status === "skipped") {
+          return attempt;
+        }
         try {
+          const peer = attempt.peer;
           await connectPeer(apiPortToUse, peer);
           return { peer, status: "connected" };
         } catch (connectError) {
           return {
-            peer,
+            peer: attempt.peer,
             status: "failed",
             detail: connectError instanceof Error ? connectError.message : String(connectError),
           };
@@ -413,17 +455,25 @@ function App() {
     throw new Error("Fastsync did not finish within 4 minutes.");
   }
 
-  async function finishStartup(apiPortToUse: number) {
+  async function finishStartup(
+    apiPortToUse: number,
+    nodeConfig: NodeRuntimeState["config"],
+  ) {
     await waitForNodeApi(apiPortToUse);
-    const attempts = await connectBootstrapPeers(apiPortToUse);
+    const attempts = await connectBootstrapPeers(apiPortToUse, nodeConfig);
     const connectedBootstrapPeers = attempts.filter((attempt) => attempt.status === "connected");
+    const skippedBootstrapPeers = attempts.filter((attempt) => attempt.status === "skipped");
 
     if (connectedBootstrapPeers.length > 0) {
       const syncResponse = await syncChain(apiPortToUse, true);
       setNotice(`Connected ${connectedBootstrapPeers.length} bootstrap peer(s); fastsync requested from ${syncResponse.requested_peers} peer(s).`);
       await waitForFastSyncToFinish(apiPortToUse);
     } else {
-      setNotice("No bootstrap peers were reachable; continuing with the local chain.");
+      setNotice(
+        skippedBootstrapPeers.length > 0
+          ? "Skipped this node's bootstrap address; no other bootstrap peers were reachable."
+          : "No bootstrap peers were reachable; continuing with the local chain.",
+      );
     }
 
     await loadSnapshot(apiPortToUse);
@@ -491,7 +541,7 @@ function App() {
       });
       setNodeState(nextState);
       const startupApiPort = nextState.config?.apiPort ?? Number(apiPort);
-      await finishStartup(startupApiPort);
+      await finishStartup(startupApiPort, nextState.config);
     } catch (startError) {
       setError(String(startError));
     } finally {
@@ -696,6 +746,13 @@ function App() {
   const launchLogs = logs.slice(-5);
   const activeSyncPeers = syncStatus?.fastsync.peers ?? [];
   const startupStatusLabel = startupPhase.replace("-", " ");
+  const previewNodeConfig = {
+    walletName,
+    host,
+    port: Number(port),
+    apiPort: Number(apiPort),
+    peers: launchPeerList,
+  };
 
   if (!nodeState.running || isStartingNode) {
     return (
@@ -780,9 +837,12 @@ function App() {
                 <h3>Bootstrap Peers</h3>
                 <div className="bootstrap-list">
                   {BOOTSTRAP_PEERS.map((peer) => (
-                    <div className="peer-status" key={peer}>
+                    <div
+                      className={`peer-status ${isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "skipped" : ""}`}
+                      key={peer}
+                    >
                       <code>{peer}</code>
-                      <span>auto</span>
+                      <span>{isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "self" : "auto"}</span>
                     </div>
                   ))}
                 </div>

@@ -2,6 +2,7 @@ import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 
 const { app, BrowserWindow, ipcMain } = electron;
@@ -59,6 +60,16 @@ function runtimeState(): NodeRuntimeState {
     pid: nodeProcess?.pid ?? null,
     config: nodeConfig,
   };
+}
+
+function localAddresses(): string[] {
+  const addresses = new Set(["127.0.0.1", "::1", "localhost"]);
+  for (const networkInterface of Object.values(networkInterfaces())) {
+    for (const addressInfo of networkInterface ?? []) {
+      addresses.add(addressInfo.address);
+    }
+  }
+  return [...addresses].sort();
 }
 
 function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
@@ -344,6 +355,7 @@ ipcMain.handle("node:state", () => runtimeState());
 ipcMain.handle("wallets:list", () => listWallets());
 ipcMain.handle("wallets:create", (_event, request: CreateWalletRequest) => createWallet(request));
 ipcMain.handle("node-api:fetch", (_event, request: NodeApiRequest) => fetchNodeApi(request));
+ipcMain.handle("system:local-addresses", () => localAddresses());
 
 app.whenReady().then(createWindow).catch((error) => {
   console.error(error);
