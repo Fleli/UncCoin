@@ -12,7 +12,36 @@ UncCoin is a toy but fairly complete proof-of-work cryptocurrency built in Pytho
 - orphan block handling
 - canonical-chain persistence
 - interactive node CLI
+- local FastAPI node API
+- desktop GUI for wallet/node/mining workflows
 - private automine mode for dedicated miners
+
+## Quick Start
+
+For the desktop app:
+
+```bash
+git clone https://github.com/Fleli/UncCoin.git
+cd UncCoin
+./scripts/setup_desktop.sh
+./scripts/desktop.sh
+```
+
+`setup_desktop.sh` installs the Python API dependencies and desktop npm dependencies.
+
+For the terminal node:
+
+```bash
+git clone https://github.com/Fleli/UncCoin.git
+cd UncCoin
+python3 -m pip install -r requirements-api.txt
+python3 -m wallet.cli create --name alice
+./scripts/run.sh alice 9000
+```
+
+`scripts/run.sh` starts both the P2P node and the local node API. The API listens on
+`127.0.0.1:<p2p-port + 10000>` by default, so a node on `9000` has API docs at
+`http://127.0.0.1:19000/docs`.
 
 ## PoW Evolution
 
@@ -27,9 +56,9 @@ Shoutout to Niklas Unneland, who built [unccoin.no](https://unccoin.no/) around 
 
 ## Docs
 
-- [GettingStarted.md](/Users/frederikedvardsen/Desktop/unccoin/GettingStarted.md)
-  First local setup, wallet creation, native build, and running nodes.
-- [Tailscale.md](/Users/frederikedvardsen/Desktop/unccoin/Tailscale.md)
+- [GettingStarted.md](GettingStarted.md)
+  First local setup, desktop setup, wallet creation, node/API ports, mining backends, and running nodes.
+- [Tailscale.md](Tailscale.md)
   Running UncCoin across multiple devices over Tailscale.
 
 ## Interactive Node Commands
@@ -262,6 +291,10 @@ make 9002
 
 ## Mining Tuning
 
+The default mining backend is `auto`: it uses GPU/native mining when available and falls
+back to the pure Python miner when native mining has not been built. The desktop Mining tab
+can select `auto`, `gpu`, `native`, or `python`, and can build the native miner when needed.
+
 Mining can be tuned with environment variables:
 
 - `UNCCOIN_MINING_CPU_WORKERS`
@@ -290,6 +323,9 @@ Mining can be tuned with environment variables:
 When `UNCCOIN_MINING_CPU_WORKERS` is not set, UncCoin benchmarks a few local worker counts once and
 caches the fastest result in `state/mining_tuning.json`. This only affects local mining execution.
 
+The desktop app can run miner warmup during startup so first mining does not pay the full
+backend initialization cost. This can be skipped from the launch screen.
+
 ## Private Automine Mode
 
 For a dedicated fast miner, the node CLI supports `--private-automine`.
@@ -306,13 +342,13 @@ In that mode the node:
 With the helper script you can enable it like this:
 
 ```bash
-UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
 For a dedicated cloud GPU miner, combine it with GPU-only mode:
 
 ```bash
-UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
 ## Runpod 4090
@@ -328,7 +364,7 @@ For a simple Runpod setup:
 ```bash
 ./scripts/setup_runpod_cuda.sh
 python3 scripts/benchmark_gpu_pow.py
-UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <port> [peer-host:peer-port ...]
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
 If you also want local CPU workers on the pod, set `UNCCOIN_BUILD_CPU_POW_EXTENSION=1`

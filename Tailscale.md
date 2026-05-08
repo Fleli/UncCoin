@@ -1,143 +1,158 @@
 # UncCoin Over Tailscale
 
-This guide assumes you have already gone through [GettingStarted.md](/Users/frederikedvardsen/Desktop/unccoin/GettingStarted.md) and want to move from one-machine testing to multiple devices.
+This guide assumes you have already gone through [GettingStarted.md](GettingStarted.md).
 
-Tailscale is the simplest way to run UncCoin across multiple devices without exposing nodes directly to the public internet.
-
-## Why Tailscale
-
-Tailscale gives each device a private network address, so UncCoin nodes can talk to each other over normal TCP without:
-
-- router port forwarding
-- public IP setup
-- exposing the node directly to the internet
+Tailscale is the easiest way to run a small UncCoin network with friends without opening
+router ports or exposing nodes to the public internet.
 
 ## 1. Install Tailscale
 
-Each participant installs Tailscale on their own device and joins the same tailnet.
+Each participant should install Tailscale and join the same tailnet.
 
 Official docs:
 
 - https://tailscale.com/docs/install
 - https://tailscale.com/docs/install/start
 
-## 2. Verify Tailscale Connectivity
+## 2. Find Each Node Address
 
-On each device, confirm that Tailscale is running and find the device's Tailscale IP.
-
-You can usually check with:
+On each machine:
 
 ```bash
 tailscale ip -4
 ```
 
-Then test reachability to another device:
+Test connectivity to a friend:
 
 ```bash
 tailscale ping <peer-tailscale-ip>
 ```
 
-If that works, the devices can most likely reach each other for UncCoin too.
+If `tailscale ping` works, the machines should be able to connect UncCoin nodes over TCP.
 
-## 3. Build Native Proof of Work
+## 3. Install UncCoin Dependencies
 
-Do this once per device:
+On each machine:
+
+```bash
+git clone https://github.com/Fleli/UncCoin.git
+cd UncCoin
+python3 -m pip install -r requirements-api.txt
+```
+
+For the desktop app, also run:
+
+```bash
+./scripts/setup_desktop.sh
+```
+
+Native mining is optional. The Python miner works without building anything. Native/GPU
+mining can be built from the desktop Mining tab or with:
 
 ```bash
 ./scripts/build_native_pow.sh
 ```
 
-You can force a rebuild with:
+## 4. Create Wallets
 
-```bash
-./scripts/build_native_pow.sh --force
-```
-
-## 4. Create a Wallet
-
-Each person should create their own wallet:
+Each participant should create their own wallet:
 
 ```bash
 python3 -m wallet.cli create --name <wallet-name>
 ```
 
-To inspect it:
+Desktop users can create a wallet from the launch screen instead.
+
+## 5. Start Nodes
+
+The helper script binds the P2P node to `0.0.0.0`, so it is reachable over Tailscale:
 
 ```bash
-python3 -m wallet.cli show --name <wallet-name>
+./scripts/run.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
 ```
 
-## 5. Start a Node
-
-Important: for cross-device networking, do not bind only to `127.0.0.1`.
-Use `--host 0.0.0.0` so the node listens on the machine's network interfaces.
-
-Example first node:
+First node:
 
 ```bash
-python3 -m node.cli --host 0.0.0.0 --wallet-name <wallet-name> --port 9000
+./scripts/run.sh alice 9000
 ```
 
-Example second node connecting to the first over Tailscale:
+Second node connecting to the first:
 
 ```bash
-./scripts/run.sh <wallet-name> 9001 <peer-tailscale-ip>:9000
+./scripts/run.sh bob 9001 <alice-tailscale-ip>:9000
 ```
 
-Example third node:
+Third node:
 
 ```bash
-./scripts/run.sh <wallet-name> 9002 <peer-tailscale-ip>:9000
+./scripts/run.sh charlie 9002 <alice-tailscale-ip>:9000
 ```
 
-The script also works for the first node:
-
-```bash
-./scripts/run.sh <wallet-name> 9000
-```
-
-## 6. Use the Node CLI
-
-Once connected, useful interactive commands include:
+The node API stays local by default:
 
 ```text
-peers
-known-peers
-discover
-sync
-localself
-add-peer <host:port>
-alias <wallet-id> <alias>
-autosend <wallet-id>
-autosend off
-mute
-unmute
-tx <receiver> <amount> <fee>
-commit <request-id> <commitment-hash> <fee>
-reveal <request-id> <seed> <fee> [salt]
-deploy <fee> <json-or-file>
-view-contract <contract>
-authorize <contract> <request-id> [valid-blocks]
-execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
-receipt <txid-prefix>
-msg <wallet> <content>
-messages
-mine [description]
-automine [description]
-stop
-blockchain
-balance [address]
-balances
-balances >100
-balances <50
-txtblockchain <relative-path>
-clear
-quit
+P2P:  0.0.0.0:<p2p-port>
+API:  127.0.0.1:<p2p-port + 10000>
 ```
 
-## Notes
+Do not expose the API over Tailscale unless you intentionally want remote programs to control
+that local node. If you do need that for a trusted machine:
 
-- The current node sync is good enough for a small toy network, but still simple.
-- Canonical blockchain state is persisted per wallet address.
-- Native proof of work currently builds for macOS.
-- Tailscale is used only for networking; it is not a Python dependency.
+```bash
+UNCCOIN_API_HOST=0.0.0.0 ./scripts/run.sh alice 9000
+```
+
+## 6. Desktop App With Tailscale
+
+Start the desktop app:
+
+```bash
+./scripts/desktop.sh
+```
+
+The launch screen lets you choose/create a wallet and select a P2P port. It also shows the
+built-in bootstrap peers. The `100.x.x.x` bootstrap peers are Tailscale addresses, so they
+only work for machines on the same tailnet. You can disable any bootstrap peer for a specific
+launch.
+
+When one of the bootstrap peers is the local node's own address, the desktop launcher skips it
+automatically.
+
+## 7. Connect Manually
+
+From the terminal node prompt:
+
+```text
+add-peer <peer-tailscale-ip>:<peer-port>
+sync
+peers
+```
+
+From the desktop app, use the Network tab to connect to a peer or retry bootstrap peers.
+
+## 8. Mining
+
+For normal testnet use, the desktop app's default `auto` miner is enough. It uses GPU/native
+mining when available and falls back to Python when native mining is not built.
+
+For a dedicated miner:
+
+```bash
+UNCCOIN_PRIVATE_AUTOMINE=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
+```
+
+For a dedicated Linux NVIDIA/CUDA miner:
+
+```bash
+./scripts/setup_runpod_cuda.sh
+python3 scripts/benchmark_gpu_pow.py
+UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
+```
+
+## 9. Notes
+
+- Tailscale is only networking; it is not a Python dependency.
+- Keep wallet JSON files private.
+- The current node sync is intended for small trusted test networks.
+- UncCoin is not hardened for real-value or adversarial deployment.
