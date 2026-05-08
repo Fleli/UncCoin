@@ -11,6 +11,7 @@ def main() -> None:
     create_parser = subparsers.add_parser("create", help="Create and persist a named wallet.")
     create_parser.add_argument("--name", required=True)
     create_parser.add_argument("--bit-length", type=int, default=1024)
+    create_parser.add_argument("--preferred-port", type=int, default=9000)
 
     show_parser = subparsers.add_parser("show", help="Load and display a named wallet.")
     show_parser.add_argument("--name", required=True)
@@ -18,10 +19,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "create":
-        wallet = create_wallet(name=args.name, bit_length=args.bit_length)
+        wallet = create_wallet(
+            name=args.name,
+            bit_length=args.bit_length,
+            preferred_port=args.preferred_port,
+        )
         path = save_wallet(wallet)
         print(f"Created wallet '{wallet.name}'")
         print(f"Address: {wallet.address}")
+        print(f"Preferred port: {wallet.preferred_port}")
         print(f"Saved to: {path}")
         return
 
@@ -29,6 +35,7 @@ def main() -> None:
         wallet = load_wallet(args.name)
         print(f"Wallet: {wallet.name}")
         print(f"Address: {wallet.address}")
+        print(f"Preferred port: {wallet.preferred_port}")
         print(f"Public key: {wallet.public_key}")
         return
 

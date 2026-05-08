@@ -2,11 +2,18 @@ import hashlib
 from dataclasses import dataclass
 
 
+DEFAULT_PREFERRED_PORT = 9000
+
+
 @dataclass
 class Wallet:
     public_key: tuple[int, int]
     private_key: tuple[int, int]
     name: str | None = None
+    preferred_port: int = DEFAULT_PREFERRED_PORT
+
+    def __post_init__(self) -> None:
+        self.preferred_port = _normalize_preferred_port(self.preferred_port)
 
     @property
     def address(self) -> str:
@@ -49,6 +56,7 @@ class Wallet:
         return {
             "name": self.name,
             "address": self.address,
+            "preferred_port": self.preferred_port,
             "public_key": {
                 "exponent": self.public_key[0],
                 "modulus": self.public_key[1],
@@ -71,8 +79,21 @@ class Wallet:
                 int(wallet_data["private_key"]["modulus"]),
             ),
             name=wallet_data.get("name"),
+            preferred_port=_normalize_preferred_port(
+                wallet_data.get("preferred_port", DEFAULT_PREFERRED_PORT)
+            ),
         )
 
     @staticmethod
     def _message_digest(message: str) -> int:
         return int(hashlib.sha256(message.encode("utf-8")).hexdigest(), 16)
+
+
+def _normalize_preferred_port(preferred_port: object) -> int:
+    try:
+        port = int(preferred_port)
+    except (TypeError, ValueError):
+        return DEFAULT_PREFERRED_PORT
+    if 0 < port < 65536:
+        return port
+    return DEFAULT_PREFERRED_PORT
