@@ -663,6 +663,7 @@ Commands:
     txtblockchain <relative-path> Write blockchain state JSON to a file
     mute                          Hide incoming network notifications
     unmute                        Show incoming network notifications
+    help                          Show this help text
     clear                         Add spacing before the next prompt
     quit                          Exit
 
@@ -684,6 +685,10 @@ Wallet commands accept either a wallet address or a local alias."""
 
             if line == "quit":
                 return
+
+            if line == "help":
+                print(self._interactive_help_text())
+                continue
 
             if line == "clear":
                 print("\n" * 6, end="")
