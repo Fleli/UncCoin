@@ -273,6 +273,46 @@ class NodeDeployTransactionTests(unittest.TestCase):
             },
         )
 
+    def test_node_formats_deployed_contract_view(self) -> None:
+        blockchain = create_blockchain()
+        deployer = create_wallet(name="deployer")
+        node = Node(
+            host="127.0.0.1",
+            port=9504,
+            wallet=deployer,
+            blockchain=blockchain,
+        )
+        program = [
+            ["PUSH", 7],
+            ["STORE", "number"],
+            ["HALT"],
+        ]
+        metadata = {"request_ids": ["casino-play-1"]}
+        deploy_transaction = node.create_signed_deploy(
+            program=program,
+            metadata=metadata,
+            fee="0",
+        )
+        accepted, reason = node._handle_incoming_transaction(deploy_transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="deploy contract",
+        )
+
+        formatted_contract = node.format_contract_view(deploy_transaction.receiver[:12])
+
+        self.assertIn(f"Contract {deploy_transaction.receiver}:", formatted_contract)
+        self.assertIn(f"deployer: {deployer.address}", formatted_contract)
+        self.assertIn(
+            f"code_hash: {deploy_transaction.payload['code_hash']}",
+            formatted_contract,
+        )
+        self.assertIn('metadata: {"request_ids": ["casino-play-1"]}', formatted_contract)
+        self.assertIn('"PUSH",', formatted_contract)
+        self.assertIn('"STORE",', formatted_contract)
+        self.assertIn('"HALT"', formatted_contract)
+
     def test_node_creates_signed_execute_transaction_and_formats_receipt(self) -> None:
         blockchain = create_blockchain()
         caller = create_wallet(name="caller")

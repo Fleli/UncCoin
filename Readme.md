@@ -50,6 +50,7 @@ tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
 deploy <fee> <json-or-file>
+view-contract <contract>
 authorize <contract> <request-id> [valid-blocks]
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
@@ -96,6 +97,9 @@ deployer, deploy nonce, and code hash. The deploy source can be inline JSON or a
 `metadata` fields. Metadata is an object; `metadata.request_ids` is reserved for request ids
 relevant to the contract. For example, `deploy 0 coinflip.uvm` deploys
 `state/contracts/coinflip.uvm` and prints the derived contract address and code hash.
+
+`view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
+program by exact address or unique address prefix.
 
 `authorize` prints a signed off-chain UVM consent receipt for a deployed contract and request
 id. The receipt is not broadcast by itself; hand it to the executor, who includes it in the

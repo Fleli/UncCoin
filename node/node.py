@@ -637,6 +637,7 @@ Commands:
     reveal <request-id> <seed> <fee> [salt]
                                   Reveal a seed for a prior commitment
     deploy <fee> <json-or-file>   Deploy UVM code from JSON or state/contracts
+    view-contract <contract>      Show deployed UVM contract details
     authorize <contract> <request-id> [valid-blocks]
                                   Print a signed off-chain UVM consent receipt
     execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
@@ -909,6 +910,17 @@ Wallet commands accept either a wallet address or a local alias."""
                     print(f"Code hash: {transaction.payload['code_hash']}")
                 except ValueError as error:
                     print(f"Invalid deploy command: {error}")
+                continue
+
+            if line.startswith("view-contract "):
+                try:
+                    print(
+                        self.format_contract_view(
+                            line[len("view-contract "):].strip()
+                        )
+                    )
+                except ValueError as error:
+                    print(f"Invalid view-contract command: {error}")
                 continue
 
             if line.startswith("authorize "):
@@ -1298,6 +1310,48 @@ Wallet commands accept either a wallet address or a local alias."""
                 f"prev={block.previous_hash[:12]} txs={len(block.transactions)} "
                 f'"{block.description}"'
             )
+        return "\n".join(lines)
+
+    def format_contract_view(self, contract_reference: str) -> str:
+        if self.blockchain is None:
+            return "No blockchain is loaded."
+
+        contract_reference = contract_reference.strip()
+        if not contract_reference:
+            raise ValueError("view-contract requires a contract address or prefix.")
+
+        state = self.blockchain._get_state_for_tip(self._state_tip_hash())
+        matches = [
+            (contract_address, contract)
+            for contract_address, contract in state.contracts.items()
+            if contract_address.startswith(contract_reference)
+        ]
+        if not matches:
+            return f"No contract found for {contract_reference}."
+        if len(matches) > 1:
+            return (
+                f"Contract prefix {contract_reference} is ambiguous: "
+                + ", ".join(contract_address[:12] for contract_address, _ in matches)
+            )
+
+        contract_address, contract = matches[0]
+        metadata = contract.get("metadata", {})
+        program = contract.get("program", [])
+        code_hash = str(
+            contract.get(
+                "code_hash",
+                compute_contract_code_hash(program, metadata),
+            )
+        )
+        lines = [
+            f"Contract {contract_address}:",
+            f"  deployer: {self.format_wallet_reference(contract.get('deployer', ''))}",
+            f"  code_hash: {code_hash}",
+            f"  metadata: {json.dumps(metadata, sort_keys=True)}",
+            "  program:",
+        ]
+        program_json = json.dumps(program, indent=2, sort_keys=True)
+        lines.extend(f"    {line}" for line in program_json.splitlines())
         return "\n".join(lines)
 
     def format_uvm_receipt(self, transaction_reference: str) -> str:

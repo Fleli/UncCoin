@@ -129,6 +129,7 @@ tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
 deploy <fee> <json-or-file>
+view-contract <contract>
 authorize <contract> <request-id> [valid-blocks]
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
