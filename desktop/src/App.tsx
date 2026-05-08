@@ -563,33 +563,6 @@ function ReferenceStrong({
   );
 }
 
-function CopyValue({
-  label,
-  value,
-  placeholder = "-",
-  onCopy,
-}: {
-  label: string;
-  value: string | null | undefined;
-  placeholder?: string;
-  onCopy: (value: string, label: string) => void | Promise<void>;
-}) {
-  const displayValue = value?.trim() || placeholder;
-  return (
-    <div className="readonly-field">
-      <span>{label}</span>
-      <button
-        type="button"
-        className="copy-value"
-        disabled={!value?.trim()}
-        onClick={() => value?.trim() && void onCopy(value.trim(), label)}
-      >
-        <code>{displayValue}</code>
-      </button>
-    </div>
-  );
-}
-
 function isMiningRewardTransaction(transaction: TransactionPayload): boolean {
   return transaction.sender === MINING_REWARD_SENDER;
 }
@@ -801,7 +774,6 @@ function App() {
   const [aliasName, setAliasName] = useState("");
   const [autosendTarget, setAutosendTarget] = useState("");
   const [commitRequestId, setCommitRequestId] = useState("");
-  const [commitHash, setCommitHash] = useState("");
   const [commitSeed, setCommitSeed] = useState("");
   const [commitSalt, setCommitSalt] = useState("");
   const [commitFee, setCommitFee] = useState("0");
@@ -1805,39 +1777,9 @@ function App() {
   async function handleCommit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("commit-randomness", async () => {
-      let commitmentHash = commitHash.trim();
-      if (!commitmentHash && commitSeed.trim()) {
-        const walletAddress = snapshot.nodeInfo?.wallet?.address;
-        if (!walletAddress) {
-          throw new Error("A loaded wallet is required to compute a commitment hash.");
-        }
-        commitmentHash = await createRevealCommitmentHash(
-          walletAddress,
-          commitRequestId,
-          commitSeed,
-          commitSalt,
-        );
-        setCommitHash(commitmentHash);
-        setRevealRequestId(commitRequestId);
-        setRevealSeed(commitSeed);
-        setRevealSalt(commitSalt);
-      }
-      const response = await createCommitment(activeApiPort, {
-        request_id: commitRequestId,
-        commitment_hash: commitmentHash,
-        fee: commitFee,
-      });
-      return { label: "Broadcast commitment", detail: response.transaction_id };
-    });
-  }
-
-  async function handleComputeCommitmentHash() {
-    setError(null);
-    setNotice(null);
-    try {
       const walletAddress = snapshot.nodeInfo?.wallet?.address;
       if (!walletAddress) {
-        throw new Error("A loaded wallet is required to compute a commitment hash.");
+        throw new Error("A loaded wallet is required to commit randomness.");
       }
       const commitmentHash = await createRevealCommitmentHash(
         walletAddress,
@@ -1845,14 +1787,16 @@ function App() {
         commitSeed,
         commitSalt,
       );
-      setCommitHash(commitmentHash);
       setRevealRequestId(commitRequestId);
       setRevealSeed(commitSeed);
       setRevealSalt(commitSalt);
-      setNotice(`Computed commitment hash: ${commitmentHash}`);
-    } catch (commitmentError) {
-      setError(commitmentError instanceof Error ? commitmentError.message : String(commitmentError));
-    }
+      const response = await createCommitment(activeApiPort, {
+        request_id: commitRequestId,
+        commitment_hash: commitmentHash,
+        fee: commitFee,
+      });
+      return { label: "Broadcast commitment", detail: response.transaction_id };
+    });
   }
 
   async function handleReveal(event: FormEvent<HTMLFormElement>) {
@@ -3344,20 +3288,9 @@ function App() {
                       <input value={commitSalt} onChange={(event) => setCommitSalt(event.target.value)} />
                     </label>
                   </div>
-                  <CopyValue
-                    label="Commitment Hash"
-                    value={commitHash}
-                    placeholder="Compute from seed and salt"
-                    onCopy={copyToClipboard}
-                  />
-                  <div className="button-row">
-                    <button type="button" disabled={disableNodeAction} onClick={() => void handleComputeCommitmentHash()}>
-                      Compute Hash
-                    </button>
-                    <button type="submit" disabled={disableNodeAction}>
-                      Commit
-                    </button>
-                  </div>
+                  <button type="submit" disabled={disableNodeAction}>
+                    Commit
+                  </button>
                 </form>
                 <form className="form-grid separated" onSubmit={handleReveal}>
                   <label>

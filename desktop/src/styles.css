@@ -1349,45 +1349,6 @@ dd {
   white-space: nowrap;
 }
 
-.readonly-field {
-  display: grid;
-  gap: 6px;
-}
-
-.readonly-field > span {
-  color: #aab4ba;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.copy-value {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  border-color: #2d414c;
-  padding: 9px 11px;
-  background: #0e1214;
-  text-align: left;
-}
-
-.copy-value:disabled {
-  opacity: 1;
-  cursor: default;
-}
-
-.copy-value code {
-  display: block;
-  min-width: 0;
-  color: #9fc3d3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.copy-value:disabled code {
-  color: #707a81;
-}
-
 .topbar-actions {
   min-width: 0;
   align-content: flex-start;
