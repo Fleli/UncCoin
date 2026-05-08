@@ -11,4 +11,7 @@ WALLET_NAME="$1"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-exec python3 -m wallet.cli show --name "$WALLET_NAME"
+source "$ROOT_DIR/scripts/_python.sh"
+PYTHON_BIN="$(unccoin_python "$ROOT_DIR")"
+
+exec "$PYTHON_BIN" -m wallet.cli show --name "$WALLET_NAME"

@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+source "$ROOT_DIR/scripts/_python.sh"
+
+if [[ -z "${UNCCOIN_PYTHON:-}" ]]; then
+  export UNCCOIN_PYTHON="$(unccoin_python "$ROOT_DIR")"
+fi
+
 find_available_port() {
   local start_port="${1:-5173}"
   node - "$start_port" <<'NODE'
@@ -50,5 +56,6 @@ fi
 
 export VITE_DEV_SERVER_PORT
 echo "Starting UncCoin Desktop on http://127.0.0.1:${VITE_DEV_SERVER_PORT}"
+echo "Using Python: $UNCCOIN_PYTHON"
 
 exec npm --prefix desktop run dev

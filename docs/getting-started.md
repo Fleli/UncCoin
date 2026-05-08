@@ -42,11 +42,15 @@ cd UncCoin
 ## 3. Install Python API Dependencies
 
 The helper node script starts the local FastAPI state/control API automatically, so install
-the API dependencies before running nodes:
+the API dependencies before running nodes. Use a local virtual environment so Ubuntu/Debian
+does not reject the install with `externally-managed-environment`:
 
 ```bash
-python3 -m pip install -r requirements-api.txt
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements-api.txt
 ```
+
+`./scripts/setup_desktop.sh` performs these same Python setup steps automatically.
 
 The node API is local by default and listens on `node_port + 10000`. It exposes read/state
 endpoints and `/api/v1/control/*` endpoints for wallet-signing node actions. A node on P2P
@@ -59,6 +63,9 @@ Install desktop dependencies once:
 ```bash
 ./scripts/setup_desktop.sh
 ```
+
+This creates `.venv`, installs the Python API dependencies there, and installs desktop npm
+dependencies. The run scripts automatically use `.venv` when it exists.
 
 Start the desktop app:
 
@@ -94,13 +101,13 @@ Build the desktop frontend without launching it:
 Create a wallet:
 
 ```bash
-python3 -m wallet.cli create --name <wallet-name>
+./.venv/bin/python -m wallet.cli create --name <wallet-name>
 ```
 
 Inspect a wallet:
 
 ```bash
-python3 -m wallet.cli show --name <wallet-name>
+./.venv/bin/python -m wallet.cli show --name <wallet-name>
 ```
 
 Shortcut:
@@ -206,7 +213,7 @@ Linux NVIDIA/CUDA setup:
 
 ```bash
 ./scripts/setup_runpod_cuda.sh
-python3 scripts/benchmark_gpu_pow.py
+./.venv/bin/python scripts/benchmark_gpu_pow.py
 ```
 
 Dedicated GPU miner:

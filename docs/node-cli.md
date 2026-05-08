@@ -21,13 +21,13 @@ Example:
 Create a wallet:
 
 ```bash
-python3 -m wallet.cli create --name <wallet-name>
+./.venv/bin/python -m wallet.cli create --name <wallet-name>
 ```
 
 Inspect a wallet:
 
 ```bash
-python3 -m wallet.cli show --name <wallet-name>
+./.venv/bin/python -m wallet.cli show --name <wallet-name>
 ```
 
 Shortcut:

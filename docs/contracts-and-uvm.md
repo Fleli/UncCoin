@@ -27,7 +27,7 @@ deployer, deploy nonce, and code hash. Deploy source can be inline JSON or a fil
 Readable `.uvm-asm` files can be compiled into deployable `.uvm` JSON:
 
 ```bash
-python3 -m assembler <source.uvm-asm> -o <output.uvm>
+./.venv/bin/python -m assembler <source.uvm-asm> -o <output.uvm>
 ```
 
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and

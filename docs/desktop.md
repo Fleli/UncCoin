@@ -12,6 +12,10 @@ Install desktop dependencies once:
 ./scripts/setup_desktop.sh
 ```
 
+This creates a local `.venv`, installs Python API dependencies there, and installs desktop
+npm dependencies. On Debian/Ubuntu this avoids the system Python
+`externally-managed-environment` error.
+
 Start the app:
 
 ```bash

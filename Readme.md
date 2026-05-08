@@ -27,7 +27,7 @@ Run the desktop app:
 Or run a terminal node:
 
 ```bash
-python3 -m wallet.cli create --name alice
+./.venv/bin/python -m wallet.cli create --name alice
 ./scripts/run.sh alice 9000
 ```
 

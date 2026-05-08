@@ -37,7 +37,8 @@ On each machine:
 ```bash
 git clone https://github.com/Fleli/UncCoin.git
 cd UncCoin
-python3 -m pip install -r requirements-api.txt
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements-api.txt
 ```
 
 For the desktop app, also run:
@@ -58,7 +59,7 @@ mining can be built from the desktop Mining tab or with:
 Each participant should create their own wallet:
 
 ```bash
-python3 -m wallet.cli create --name <wallet-name>
+./.venv/bin/python -m wallet.cli create --name <wallet-name>
 ```
 
 Desktop users can create a wallet from the launch screen instead.
@@ -152,7 +153,7 @@ For a dedicated Linux NVIDIA/CUDA miner:
 
 ```bash
 ./scripts/setup_runpod_cuda.sh
-python3 scripts/benchmark_gpu_pow.py
+./.venv/bin/python scripts/benchmark_gpu_pow.py
 UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
 ```
 
