@@ -2992,10 +2992,6 @@ function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload |
 
       <dl className="block-meta">
         <div>
-          <dt>Hash</dt>
-          <dd title={block.block_hash}>{shortHash(block.block_hash, 18)}</dd>
-        </div>
-        <div>
           <dt>Previous</dt>
           <dd title={block.previous_hash}>{shortHash(block.previous_hash, 18)}</dd>
         </div>
