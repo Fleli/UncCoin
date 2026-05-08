@@ -663,7 +663,7 @@ Commands:
     txtblockchain <relative-path> Write blockchain state JSON to a file
     mute                          Hide incoming network notifications
     unmute                        Show incoming network notifications
-    clear                         Clear the screen
+    clear                         Add spacing before the next prompt
     quit                          Exit
 
 Wallet commands accept either a wallet address or a local alias."""
@@ -686,7 +686,7 @@ Wallet commands accept either a wallet address or a local alias."""
                 return
 
             if line == "clear":
-                print("\033[2J\033[H", end="")
+                print("\n" * 6, end="")
                 continue
 
             if line == "peers":
