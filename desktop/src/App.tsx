@@ -12,6 +12,7 @@ import {
   readBlocks,
   readChainHead,
   readContracts,
+  readMiningStatus,
   readMessages,
   readNodeInfo,
   readPeers,
@@ -33,6 +34,7 @@ import {
   type ChainHead,
   type ContractEntry,
   type MessageEntry,
+  type MiningStatus,
   type NodeInfo,
   type PeersResponse,
   type ReceiptEntry,
@@ -119,6 +121,24 @@ function formatAmount(value: string | null | undefined): string {
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function formatNumber(value: number | null | undefined): string {
+  return typeof value === "number" ? value.toLocaleString() : "-";
+}
+
+function formatElapsed(startedAt: string | null | undefined): string {
+  if (!startedAt) {
+    return "-";
+  }
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started)) {
+    return "-";
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -241,6 +261,7 @@ function App() {
   const [startupComplete, setStartupComplete] = useState(false);
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
 
@@ -326,6 +347,7 @@ function App() {
       contracts,
       receipts,
       authorizations,
+      mining,
     ] = await Promise.all([
       readNodeInfo(apiPortToUse),
       readChainHead(apiPortToUse),
@@ -337,6 +359,7 @@ function App() {
       readContracts(apiPortToUse),
       readReceipts(apiPortToUse),
       readAuthorizations(apiPortToUse),
+      readMiningStatus(apiPortToUse),
     ]);
 
     setSnapshot({
@@ -351,6 +374,7 @@ function App() {
       receipts: receipts.receipts,
       authorizations: authorizations.authorizations,
     });
+    setMiningStatus(mining);
     if (nodeInfo.sync) {
       setSyncStatus(nodeInfo.sync);
     }
@@ -409,6 +433,7 @@ function App() {
     if (!isApiAvailable) {
       setSnapshot(emptySnapshot());
       setApiStatus("offline");
+      setMiningStatus(null);
       return undefined;
     }
 
@@ -437,6 +462,50 @@ function App() {
       window.clearInterval(interval);
     };
   }, [isApiAvailable, refreshSnapshot]);
+
+  useEffect(() => {
+    const shouldPollMiningFast = (
+      isApiAvailable
+      && (
+        busyAction === "mine-block"
+        || miningStatus?.active === true
+        || miningStatus?.automine.running === true
+      )
+    );
+    if (!shouldPollMiningFast) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const pollMining = async () => {
+      try {
+        const status = await readMiningStatus(activeApiPort);
+        if (!cancelled) {
+          setMiningStatus(status);
+        }
+      } catch (miningError) {
+        if (!cancelled) {
+          setError(String(miningError));
+        }
+      }
+    };
+
+    void pollMining();
+    const interval = window.setInterval(() => {
+      void pollMining();
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    activeApiPort,
+    busyAction,
+    isApiAvailable,
+    miningStatus?.active,
+    miningStatus?.automine.running,
+  ]);
 
   async function waitForNodeApi(apiPortToCheck: number) {
     setStartupPhase("waiting-api");
@@ -661,6 +730,7 @@ function App() {
       setStartupComplete(false);
       setBootstrapAttempts([]);
       setSyncStatus(null);
+      setMiningStatus(null);
       setNotice("Stopped node");
     } catch (stopError) {
       setError(String(stopError));
@@ -1124,6 +1194,16 @@ function App() {
   const connectedPeers = snapshot.peers.connected;
   const knownPeers = snapshot.peers.known;
   const disableNodeAction = !isApiAvailable || busyAction !== null;
+  const miningActive = miningStatus?.active === true;
+  const automineRunning = miningStatus?.automine.running === true;
+  const miningModeLabel = miningActive
+    ? miningStatus?.mode ?? "mining"
+    : automineRunning
+    ? "automine queued"
+    : "ready";
+  const miningDifficulty = miningStatus?.difficulty_bits ?? snapshot.chainHead?.next_difficulty_bits ?? null;
+  const miningStartDisabled = !isApiAvailable || busyAction !== null || miningActive || automineRunning;
+  const miningStopDisabled = !isApiAvailable || busyAction === "stop-automine" || !automineRunning;
 
   return (
     <main className="app-shell">
@@ -1320,64 +1400,24 @@ function App() {
               </section>
             </div>
 
-            <div className="panel-grid two">
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Mining</h3>
-                  <span>{busyAction === "mine-block" ? "mining" : "ready"}</span>
-                </div>
-                <form className="inline-form" onSubmit={handleMine}>
-                  <input
-                    value={mineDescription}
-                    placeholder="Block description"
-                    onChange={(event) => setMineDescription(event.target.value)}
-                    disabled={disableNodeAction}
-                  />
-                  <button type="submit" disabled={disableNodeAction}>
-                    Mine
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disableNodeAction}
-                    onClick={() => void runNodeAction("start-automine", async () => {
-                      const response = await startAutomine(activeApiPort, mineDescription || undefined);
-                      return { label: "Automine started", detail: response.description };
-                    })}
-                  >
-                    Automine
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disableNodeAction}
-                    onClick={() => void runNodeAction("stop-automine", async () => {
-                      await stopAutomine(activeApiPort);
-                      return { label: "Automine stopped" };
-                    })}
-                  >
-                    Stop
-                  </button>
-                </form>
-              </section>
-
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Recent Blocks</h3>
-                  <span>{latestBlocks.length}</span>
-                </div>
-                <div className="list">
-                  {latestBlocks.length === 0 ? (
-                    <p className="empty">No blocks loaded.</p>
-                  ) : (
-                    latestBlocks.map((block) => (
-                      <div className="list-row" key={block.block_hash}>
-                        <span>#{block.height} {shortHash(block.block_hash, 14)}</span>
-                        <strong>{block.transaction_count} tx</strong>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            </div>
+            <section className="panel">
+              <div className="panel-title">
+                <h3>Recent Blocks</h3>
+                <span>{latestBlocks.length}</span>
+              </div>
+              <div className="list">
+                {latestBlocks.length === 0 ? (
+                  <p className="empty">No blocks loaded.</p>
+                ) : (
+                  latestBlocks.map((block) => (
+                    <div className="list-row" key={block.block_hash}>
+                      <span>#{block.height} {shortHash(block.block_hash, 14)}</span>
+                      <strong>{block.transaction_count} tx</strong>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
           </section>
         ) : null}
 
@@ -1818,6 +1858,98 @@ function App() {
           </section>
         ) : null}
       </section>
+
+      <aside className="mining-column">
+        <section className="panel mining-panel">
+          <div className="panel-title">
+            <h3>Mining</h3>
+            <span>{miningModeLabel}</span>
+          </div>
+
+          <div className={`mining-readout ${miningActive ? "active" : ""}`}>
+            <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
+            <strong>{formatNumber(miningStatus?.nonce)}</strong>
+            <small>
+              {miningActive
+                ? `running ${formatElapsed(miningStatus?.started_at)}`
+                : miningStatus?.last_block.block_hash
+                ? `last block #${miningStatus.last_block.height ?? "-"}`
+                : "idle"}
+            </small>
+          </div>
+
+          <dl className="detail-list mining-stats">
+            <div>
+              <dt>Difficulty</dt>
+              <dd>{formatNumber(miningDifficulty)}</dd>
+            </div>
+            <div>
+              <dt>Pending Tx</dt>
+              <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
+            </div>
+            <div>
+              <dt>Tip</dt>
+              <dd>{shortHash(miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash, 14)}</dd>
+            </div>
+          </dl>
+
+          <form className="form-grid mining-controls" onSubmit={handleMine}>
+            <label>
+              Mine Description
+              <input
+                value={mineDescription}
+                placeholder="Block description"
+                onChange={(event) => setMineDescription(event.target.value)}
+                disabled={!isApiAvailable || busyAction === "mine-block"}
+              />
+            </label>
+            <div className="button-row">
+              <button type="submit" disabled={miningStartDisabled}>
+                Mine Once
+              </button>
+              <button
+                type="button"
+                disabled={miningStartDisabled}
+                onClick={() => void runNodeAction("start-automine", async () => {
+                  const response = await startAutomine(activeApiPort, mineDescription || undefined);
+                  return { label: "Automine started", detail: response.description };
+                })}
+              >
+                Start Auto
+              </button>
+              <button
+                type="button"
+                disabled={miningStopDisabled}
+                onClick={() => void runNodeAction("stop-automine", async () => {
+                  await stopAutomine(activeApiPort);
+                  return { label: "Automine stopped" };
+                })}
+              >
+                Stop
+              </button>
+            </div>
+          </form>
+
+          <section className="miner-board">
+            <div className="panel-title compact-title">
+              <h3>Active Miners</h3>
+              <span>{miningStatus?.recent_miners.length ?? 0}</span>
+            </div>
+            <div className="list">
+              {miningStatus?.recent_miners.length ? (
+                miningStatus.recent_miners.map((miner) => (
+                  <div className="list-row stacked" key={miner.address}>
+                    <span>{miner.alias || shortHash(miner.address, 16)}</span>
+                    <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
+                  </div>
+                ))
+              ) : (
+                <p className="empty">No recent mined blocks.</p>
+              )}
+            </div>
+          </section>
+        </section>
+      </aside>
     </main>
   );
 }

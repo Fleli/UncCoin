@@ -56,6 +56,33 @@ export type SyncStatus = {
   };
 };
 
+export type MinerStat = {
+  address: string;
+  alias: string | null;
+  blocks: number;
+};
+
+export type MiningStatus = {
+  active: boolean;
+  mode: "manual" | "automine" | string | null;
+  description: string;
+  started_at: string | null;
+  last_update_at: string | null;
+  nonce: number;
+  difficulty_bits: number | null;
+  next_difficulty_bits: number | null;
+  tip_hash: string | null;
+  automine: {
+    running: boolean;
+    description: string;
+  };
+  last_block: {
+    height: number | null;
+    block_hash: string | null;
+  };
+  recent_miners: MinerStat[];
+};
+
 export type TransactionPayload = {
   transaction_id: string;
   sender: string;
@@ -169,6 +196,10 @@ export function readNodeInfo(apiPort: number): Promise<NodeInfo> {
 
 export function readSyncStatus(apiPort: number): Promise<SyncStatus> {
   return requestApi<SyncStatus>(apiPort, "/sync/status");
+}
+
+export function readMiningStatus(apiPort: number): Promise<MiningStatus> {
+  return requestApi<MiningStatus>(apiPort, "/mining/status");
 }
 
 export function readBalances(apiPort: number): Promise<BalancesResponse> {

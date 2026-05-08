@@ -378,9 +378,9 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
 function createWindow(): void {
   const preloadPath = path.join(app.getAppPath(), "dist-electron", "preload.cjs");
   mainWindow = new BrowserWindow({
-    width: 1180,
+    width: 1280,
     height: 760,
-    minWidth: 980,
+    minWidth: 1180,
     minHeight: 640,
     backgroundColor: "#101417",
     webPreferences: {

@@ -13,7 +13,7 @@
 
 body {
   margin: 0;
-  min-width: 980px;
+  min-width: 1180px;
 }
 
 button,
@@ -116,7 +116,7 @@ pre {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr) 330px;
   min-height: 100vh;
   background: #101214;
 }
@@ -605,6 +605,73 @@ dd {
 .workspace {
   min-width: 0;
   padding: 18px 22px 28px;
+}
+
+.mining-column {
+  min-width: 0;
+  border-left: 1px solid #283138;
+  padding: 18px;
+  background: #14181b;
+}
+
+.mining-panel {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.mining-readout {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #2b353c;
+  border-radius: 8px;
+  padding: 14px;
+  background: #101416;
+}
+
+.mining-readout.active {
+  border-color: #547f62;
+  background: #101914;
+}
+
+.mining-readout span,
+.mining-readout small {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.mining-readout strong {
+  color: #f2f5f7;
+  font-size: 28px;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.mining-readout.active strong {
+  color: #9de0be;
+}
+
+.mining-stats {
+  border: 1px solid #283138;
+  border-radius: 8px;
+  padding: 12px;
+  background: #151a1d;
+}
+
+.mining-controls {
+  border-top: 1px solid #283138;
+  padding-top: 14px;
+}
+
+.miner-board {
+  border-top: 1px solid #283138;
+  padding-top: 14px;
+}
+
+.compact-title {
+  margin-bottom: 10px;
 }
 
 .topbar {
