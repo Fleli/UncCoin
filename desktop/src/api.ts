@@ -80,6 +80,37 @@ export type MinerStat = {
   blocks: number;
 };
 
+export type MiningBackendId = "auto" | "gpu" | "native" | "python" | string;
+
+export type MiningWarmupStatus = {
+  active: boolean;
+  status: "idle" | "running" | "ready" | "failed" | string;
+  backend: MiningBackendId;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  detail: unknown;
+};
+
+export type MiningBackendOption = {
+  id: MiningBackendId;
+  label: string;
+  available: boolean;
+  can_build: boolean;
+  description: string;
+};
+
+export type MiningBackendsResponse = {
+  selected: MiningBackendId;
+  native: {
+    path: string;
+    built: boolean;
+    needs_rebuild: boolean;
+  };
+  warmup: MiningWarmupStatus;
+  backends: MiningBackendOption[];
+};
+
 export type MiningStatus = {
   active: boolean;
   mode: "manual" | "automine" | string | null;
@@ -95,6 +126,8 @@ export type MiningStatus = {
     running: boolean;
     description: string;
   };
+  backend: MiningBackendId;
+  warmup: MiningWarmupStatus;
   last_block: {
     height: number | null;
     block_hash: string | null;
@@ -198,13 +231,22 @@ export type AuthorizationResponse = {
   authorization: Record<string, unknown>;
 };
 
+type RequestOptions = {
+  timeoutMs?: number;
+};
+
 async function requestApi<T>(
   apiPort: number,
   path: string,
   method: "GET" | "POST" = "GET",
   body?: unknown,
+  options: RequestOptions = {},
 ): Promise<T> {
-  return window.unccoinDesktop.fetchApi(apiPort, path, { method, body }) as Promise<T>;
+  return window.unccoinDesktop.fetchApi(
+    apiPort,
+    path,
+    { method, body, timeoutMs: options.timeoutMs },
+  ) as Promise<T>;
 }
 
 export function readChainHead(apiPort: number): Promise<ChainHead> {
@@ -221,6 +263,14 @@ export function readSyncStatus(apiPort: number): Promise<SyncStatus> {
 
 export function readMiningStatus(apiPort: number): Promise<MiningStatus> {
   return requestApi<MiningStatus>(apiPort, "/mining/status");
+}
+
+export function readMiningBackends(apiPort: number): Promise<MiningBackendsResponse> {
+  return requestApi<MiningBackendsResponse>(apiPort, "/mining/backends");
+}
+
+export function readMiningWarmup(apiPort: number): Promise<MiningWarmupStatus> {
+  return requestApi<MiningWarmupStatus>(apiPort, "/mining/warmup");
 }
 
 export function readBalances(apiPort: number): Promise<BalancesResponse> {
@@ -291,6 +341,30 @@ export function sendMessage(
 
 export function mineBlock(apiPort: number, description?: string): Promise<MineResponse> {
   return requestApi(apiPort, "/control/mine", "POST", { description });
+}
+
+export function setMiningBackend(
+  apiPort: number,
+  backend: MiningBackendId,
+): Promise<MiningBackendsResponse> {
+  return requestApi(apiPort, "/control/mining/backend", "POST", { backend });
+}
+
+export function buildMiningBackend(
+  apiPort: number,
+  backend: MiningBackendId,
+): Promise<{ built: boolean; path: string; capabilities: MiningBackendsResponse }> {
+  return requestApi(
+    apiPort,
+    "/control/mining/backend/build",
+    "POST",
+    { backend },
+    { timeoutMs: 120000 },
+  );
+}
+
+export function startMiningWarmup(apiPort: number): Promise<MiningWarmupStatus> {
+  return requestApi(apiPort, "/control/mining/warmup", "POST", {});
 }
 
 export function startAutomine(

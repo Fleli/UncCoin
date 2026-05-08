@@ -1,6 +1,7 @@
 import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
+  buildMiningBackend,
   connectPeer,
   createCommitment,
   deployContract,
@@ -13,6 +14,7 @@ import {
   readBlocks,
   readChainHead,
   readContracts,
+  readMiningBackends,
   readMiningStatus,
   readMessages,
   readNetworkStats,
@@ -27,7 +29,9 @@ import {
   sendTransaction,
   setAlias,
   setAutosend,
+  setMiningBackend,
   startAutomine,
+  startMiningWarmup,
   stopAutomine,
   storeAuthorization,
   syncChain,
@@ -36,6 +40,9 @@ import {
   type ChainHead,
   type ContractEntry,
   type MessageEntry,
+  type MiningBackendId,
+  type MiningBackendOption,
+  type MiningBackendsResponse,
   type MiningStatus,
   type NetworkStatsResponse,
   type NodeInfo,
@@ -100,7 +107,7 @@ type BootstrapAttempt = {
   detail?: string;
 };
 
-type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-bootstrap" | "fastsync" | "ready";
+type StartupPhase = "idle" | "starting-node" | "waiting-api" | "warming-miner" | "connecting-bootstrap" | "fastsync" | "ready";
 
 const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
   { id: "overview", label: "Overview", icon: "overview" },
@@ -261,6 +268,16 @@ function formatElapsed(startedAt: string | null | undefined): string {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+
+function miningBackendButtonLabel(option: MiningBackendOption, selected: MiningBackendId): string {
+  if (option.available) {
+    return option.id === selected ? "Selected" : `Use ${option.label}`;
+  }
+  if (option.can_build) {
+    return `Build ${option.label}`;
+  }
+  return "Unavailable";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -517,6 +534,8 @@ function App() {
   const [networkBootstrapAttempts, setNetworkBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
+  const [miningBackends, setMiningBackends] = useState<MiningBackendsResponse | null>(null);
+  const [warmMinerOnStartup, setWarmMinerOnStartup] = useState(true);
   const [blockchainSearch, setBlockchainSearch] = useState("");
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
@@ -669,6 +688,15 @@ function App() {
     latestSnapshotRef.current = nextSnapshot;
     setSnapshot(nextSnapshot);
     setMiningStatus(mining);
+    setMiningBackends((currentBackends) => (
+      currentBackends === null
+        ? currentBackends
+        : {
+          ...currentBackends,
+          selected: mining.backend,
+          warmup: mining.warmup,
+        }
+    ));
     if (nodeInfo.sync) {
       setSyncStatus(nodeInfo.sync);
     }
@@ -701,6 +729,11 @@ function App() {
     snapshotRefreshRef.current = refreshPromise;
     await refreshPromise;
   }, [activeApiPort, isApiAvailable, loadSnapshot]);
+
+  const refreshMiningBackends = useCallback(async (apiPortToUse = activeApiPort) => {
+    const response = await readMiningBackends(apiPortToUse);
+    setMiningBackends(response);
+  }, [activeApiPort]);
 
   function applyWalletSelection(walletNameToSelect: string, availableWallets = wallets) {
     setWalletName(walletNameToSelect);
@@ -802,6 +835,7 @@ function App() {
       resetSnapshot();
       setApiStatus("offline");
       setMiningStatus(null);
+      setMiningBackends(null);
       return undefined;
     }
     if (!startupComplete) {
@@ -902,8 +936,10 @@ function App() {
       isApiAvailable
       && (
         busyAction === "mine-block"
+        || busyAction === "warm-miner"
         || miningStatus?.active === true
         || miningStatus?.automine.running === true
+        || miningStatus?.warmup.active === true
       )
     );
     if (!shouldPollMiningFast) {
@@ -916,6 +952,15 @@ function App() {
         const status = await readMiningStatus(activeApiPort);
         if (!cancelled) {
           setMiningStatus(status);
+          setMiningBackends((currentBackends) => (
+            currentBackends === null
+              ? currentBackends
+              : {
+                ...currentBackends,
+                selected: status.backend,
+                warmup: status.warmup,
+              }
+          ));
           if (miningStatusNeedsSnapshotRefresh(status, latestSnapshotRef.current)) {
             await refreshSnapshot();
           }
@@ -942,8 +987,19 @@ function App() {
     isApiAvailable,
     miningStatus?.active,
     miningStatus?.automine.running,
+    miningStatus?.warmup.active,
     refreshSnapshot,
   ]);
+
+  useEffect(() => {
+    if (!isApiAvailable || activeTab !== "mining") {
+      return;
+    }
+
+    void refreshMiningBackends().catch(() => {
+      setMiningBackends(null);
+    });
+  }, [activeTab, isApiAvailable, refreshMiningBackends]);
 
   async function waitForNodeApi(apiPortToCheck: number) {
     setStartupPhase("waiting-api");
@@ -969,6 +1025,50 @@ function App() {
       }
     }
     throw new Error(`Node API did not become available on port ${apiPortToCheck}.`);
+  }
+
+  async function warmMinerForStartup(apiPortToUse: number) {
+    if (!warmMinerOnStartup) {
+      return;
+    }
+
+    setStartupPhase("warming-miner");
+    try {
+      const warmup = await startMiningWarmup(apiPortToUse);
+      setMiningStatus((currentStatus) => (
+        currentStatus === null
+          ? currentStatus
+          : {
+            ...currentStatus,
+            warmup,
+            backend: warmup.backend,
+          }
+      ));
+
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        const status = await readMiningStatus(apiPortToUse);
+        setMiningStatus(status);
+        setMiningBackends((currentBackends) => (
+          currentBackends === null
+            ? currentBackends
+            : {
+              ...currentBackends,
+              selected: status.backend,
+              warmup: status.warmup,
+            }
+        ));
+        if (!status.warmup.active) {
+          if (status.warmup.status === "failed") {
+            setNotice(`Miner warmup failed; continuing startup. ${status.warmup.error || ""}`.trim());
+          }
+          return;
+        }
+        await delay(500);
+      }
+      setNotice("Miner warmup is still running; continuing startup.");
+    } catch (warmupError) {
+      setNotice(`Miner warmup skipped after API error: ${warmupError instanceof Error ? warmupError.message : String(warmupError)}`);
+    }
   }
 
   async function connectBootstrapPeers(
@@ -1051,6 +1151,7 @@ function App() {
       );
     }
 
+    await warmMinerForStartup(apiPortToUse);
     await loadSnapshot(apiPortToUse);
     setStartupPhase("ready");
     setStartupComplete(true);
@@ -1299,6 +1400,41 @@ function App() {
     });
   }
 
+  async function handleUseMiningBackend(backend: MiningBackendId) {
+    await runNodeAction("set-mining-backend", async () => {
+      const response = await setMiningBackend(activeApiPort, backend);
+      setMiningBackends(response);
+      const status = await readMiningStatus(activeApiPort);
+      setMiningStatus(status);
+      return { label: "Mining backend", detail: response.selected };
+    }, "none");
+  }
+
+  async function handleBuildMiningBackend(backend: MiningBackendId) {
+    await runNodeAction("build-mining-backend", async () => {
+      const response = await buildMiningBackend(activeApiPort, backend);
+      setMiningBackends(response.capabilities);
+      return { label: "Built miner", detail: response.path };
+    }, "none");
+  }
+
+  async function handleWarmMinerNow() {
+    await runNodeAction("warm-miner", async () => {
+      const warmup = await startMiningWarmup(activeApiPort);
+      setMiningStatus((currentStatus) => (
+        currentStatus === null
+          ? currentStatus
+          : { ...currentStatus, warmup, backend: warmup.backend }
+      ));
+      setMiningBackends((currentBackends) => (
+        currentBackends === null
+          ? currentBackends
+          : { ...currentBackends, warmup, selected: warmup.backend }
+      ));
+      return { label: "Miner warmup started", detail: warmup.backend };
+    }, "mining");
+  }
+
   async function handleConnectPeer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("connect-peer", async () => {
@@ -1515,12 +1651,14 @@ function App() {
     "waiting-api",
     "connecting-bootstrap",
     "fastsync",
+    "warming-miner",
     "ready",
   ];
   const startupPhaseLabels: Record<StartupPhase, string> = {
     idle: "Preparing",
     "starting-node": "Starting Node",
     "waiting-api": "Opening API",
+    "warming-miner": "Warming Miner",
     "connecting-bootstrap": "Connecting Peers",
     fastsync: "Syncing Chain",
     ready: "Ready",
@@ -1529,6 +1667,7 @@ function App() {
     idle: "Preparing the node process.",
     "starting-node": "Launching the local Python node process.",
     "waiting-api": "The node is running and the local API is warming up.",
+    "warming-miner": "Benchmarking the selected miner so the first mined block starts smoothly.",
     "connecting-bootstrap": "Trying the selected bootstrap peers.",
     fastsync: "A bootstrap peer answered; downloading current chain state.",
     ready: "Node is ready.",
@@ -1583,6 +1722,14 @@ function App() {
                 <div>
                   <dt>Status</dt>
                   <dd>{startupStatusLabel}</dd>
+                </div>
+                <div>
+                  <dt>Miner</dt>
+                  <dd>
+                    {warmMinerOnStartup
+                      ? miningStatus?.warmup.status ?? "pending"
+                      : "skipped"}
+                  </dd>
                 </div>
               </dl>
               <div className="bootstrap-panel">
@@ -1836,6 +1983,18 @@ function App() {
                     />
                   </label>
                 </div>
+                <label className="option-toggle">
+                  <input
+                    type="checkbox"
+                    checked={warmMinerOnStartup}
+                    disabled={busyAction !== null}
+                    onChange={(event) => setWarmMinerOnStartup(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Warm up miner on startup</strong>
+                    <small>Runs backend checks and tuning before the node window opens.</small>
+                  </span>
+                </label>
               </section>
 
               <section className="bootstrap-panel bootstrap-secondary">
@@ -1904,6 +2063,9 @@ function App() {
   const miningDifficulty = miningStatus?.difficulty_bits ?? snapshot.chainHead?.next_difficulty_bits ?? null;
   const miningStartDisabled = !isApiAvailable || busyAction !== null || miningActive || automineRunning;
   const miningStopDisabled = !isApiAvailable || busyAction === "stop-automine" || !automineRunning;
+  const selectedMiningBackend = miningBackends?.selected ?? miningStatus?.backend ?? "auto";
+  const miningWarmupStatus = miningBackends?.warmup ?? miningStatus?.warmup ?? null;
+  const miningBackendOptions = miningBackends?.backends ?? [];
   const activeTabLabel = tabs.find((tab) => tab.id === activeTab)?.label ?? "";
   const walletDisplayName = loadedWallet?.name || walletName || "No wallet loaded";
   const walletBalance = loadedWallet ? formatAmount(ownBalance?.balance) : "-";
@@ -2333,6 +2495,68 @@ function App() {
                     <dd>{miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash ?? "-"}</dd>
                   </div>
                 </dl>
+
+                <section className="miner-backends">
+                  <div className="panel-title compact-title">
+                    <h3>Miner Backend</h3>
+                    <button
+                      type="button"
+                      onClick={() => void handleWarmMinerNow()}
+                      disabled={!isApiAvailable || busyAction !== null || miningActive || miningWarmupStatus?.active === true}
+                    >
+                      {miningWarmupStatus?.active ? "Warming" : "Warm Up Now"}
+                    </button>
+                  </div>
+                  <div className="backend-meta">
+                    <span>Selected: {selectedMiningBackend}</span>
+                    <span>Warmup: {miningWarmupStatus?.status ?? "idle"}</span>
+                  </div>
+                  <div className="backend-grid">
+                    {miningBackendOptions.length === 0 ? (
+                      <p className="empty">Open miner backend status...</p>
+                    ) : (
+                      miningBackendOptions.map((option) => {
+                        const isSelected = option.id === selectedMiningBackend;
+                        const canAct = option.available || option.can_build;
+                        return (
+                          <button
+                            type="button"
+                            className={[
+                              "backend-option",
+                              isSelected ? "selected" : "",
+                              !option.available ? "unavailable" : "",
+                            ].filter(Boolean).join(" ")}
+                            key={option.id}
+                            title={option.description}
+                            disabled={
+                              !isApiAvailable
+                              || busyAction !== null
+                              || miningActive
+                              || automineRunning
+                              || miningWarmupStatus?.active === true
+                              || !canAct
+                              || (option.available && isSelected)
+                            }
+                            onClick={() => {
+                              if (!option.available && option.can_build) {
+                                void handleBuildMiningBackend(option.id);
+                                return;
+                              }
+                              void handleUseMiningBackend(option.id);
+                            }}
+                          >
+                            <span>{option.label}</span>
+                            <small>{option.description}</small>
+                            <strong>{miningBackendButtonLabel(option, selectedMiningBackend)}</strong>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                  {miningWarmupStatus?.error ? (
+                    <p className="inline-warning">{miningWarmupStatus.error}</p>
+                  ) : null}
+                </section>
 
                 <form className="form-grid mining-controls" onSubmit={handleMine}>
                   <label>

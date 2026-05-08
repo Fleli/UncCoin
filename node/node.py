@@ -744,7 +744,9 @@ class Node:
         return self.mining_backend_status()
 
     def build_mining_backend(self, backend: str) -> dict[str, Any]:
-        return build_pow_backend(backend)
+        result = build_pow_backend(backend)
+        result["capabilities"] = self.mining_backend_status()
+        return result
 
     async def start_miner_warmup(self) -> dict[str, Any]:
         if (

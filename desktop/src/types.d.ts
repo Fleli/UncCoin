@@ -56,6 +56,7 @@ type DesktopState = {
 type ApiRequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
+  timeoutMs?: number;
 };
 
 interface Window {

@@ -76,6 +76,7 @@ type NodeApiRequest = {
   path: string;
   method?: "GET" | "POST";
   body?: unknown;
+  timeoutMs?: number;
 };
 
 let mainWindow: BrowserWindowType | null = null;
@@ -514,10 +515,11 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
   }
   const endpointPath = request.path;
   const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+  const timeoutMs = Number(request.timeoutMs || NODE_API_TIMEOUT_MS);
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
-  }, NODE_API_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     const response = await fetch(`http://127.0.0.1:${apiPort}/api/v1${normalizedPath}`, {
@@ -540,7 +542,7 @@ async function fetchNodeApi(request: NodeApiRequest): Promise<unknown> {
     return body;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`API request timed out after ${NODE_API_TIMEOUT_MS / 1000}s.`);
+      throw new Error(`API request timed out after ${timeoutMs / 1000}s.`);
     }
     throw error;
   } finally {
