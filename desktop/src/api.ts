@@ -24,6 +24,7 @@ export type NodeInfo = {
     target: string | null;
     enabled: boolean;
   };
+  sync?: SyncStatus;
 };
 
 export type BalanceRow = {
@@ -41,6 +42,18 @@ export type BalancesResponse = {
 export type PeersResponse = {
   connected: string[];
   known: string[];
+};
+
+export type SyncStatus = {
+  phase: "ready" | "fastsync" | string;
+  fastsync: {
+    active: boolean;
+    peers: Array<{
+      peer: string;
+      expected_start_height: number;
+      pending_chunks: number;
+    }>;
+  };
 };
 
 export type TransactionPayload = {
@@ -152,6 +165,10 @@ export function readChainHead(apiPort: number): Promise<ChainHead> {
 
 export function readNodeInfo(apiPort: number): Promise<NodeInfo> {
   return requestApi<NodeInfo>(apiPort, "/node");
+}
+
+export function readSyncStatus(apiPort: number): Promise<SyncStatus> {
+  return requestApi<SyncStatus>(apiPort, "/sync/status");
 }
 
 export function readBalances(apiPort: number): Promise<BalancesResponse> {

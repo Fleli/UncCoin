@@ -17,6 +17,7 @@ import {
   readPeers,
   readPendingTransactions,
   readReceipts,
+  readSyncStatus,
   revealCommitment,
   sendAuthorization,
   sendMessage,
@@ -35,11 +36,17 @@ import {
   type NodeInfo,
   type PeersResponse,
   type ReceiptEntry,
+  type SyncStatus,
   type TransactionPayload,
 } from "./api";
 import "./styles.css";
 
 const DEFAULT_PORT = 9000;
+const BOOTSTRAP_PEERS = [
+  "100.98.249.35:9000",
+  "100.98.249.35:9001",
+  "100.71.105.5:4040",
+];
 const DEFAULT_DEPLOY_JSON = `{
   "program": [["HALT"]],
   "metadata": {"name": "noop"}
@@ -66,6 +73,14 @@ type ActionResult = {
   label: string;
   detail?: string;
 };
+
+type BootstrapAttempt = {
+  peer: string;
+  status: "pending" | "connected" | "failed";
+  detail?: string;
+};
+
+type StartupPhase = "idle" | "starting-node" | "waiting-api" | "connecting-bootstrap" | "fastsync" | "ready";
 
 const tabs: Array<{ id: TabId; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -142,6 +157,12 @@ function newestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
   return [...items].sort((left, right) => String(right.timestamp ?? "").localeCompare(String(left.timestamp ?? "")));
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
 function App() {
   if (!window.unccoinDesktop) {
     return (
@@ -173,6 +194,10 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState("offline");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [startupPhase, setStartupPhase] = useState<StartupPhase>("idle");
+  const [startupComplete, setStartupComplete] = useState(false);
+  const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -221,12 +246,7 @@ function App() {
     ));
   }, []);
 
-  const refreshSnapshot = useCallback(async () => {
-    if (!isApiAvailable) {
-      setApiStatus("offline");
-      return;
-    }
-
+  const loadSnapshot = useCallback(async (apiPortToUse: number) => {
     const [
       nodeInfo,
       chainHead,
@@ -239,16 +259,16 @@ function App() {
       receipts,
       authorizations,
     ] = await Promise.all([
-      readNodeInfo(activeApiPort),
-      readChainHead(activeApiPort),
-      readBalances(activeApiPort),
-      readPeers(activeApiPort),
-      readPendingTransactions(activeApiPort),
-      readBlocks(activeApiPort),
-      readMessages(activeApiPort),
-      readContracts(activeApiPort),
-      readReceipts(activeApiPort),
-      readAuthorizations(activeApiPort),
+      readNodeInfo(apiPortToUse),
+      readChainHead(apiPortToUse),
+      readBalances(apiPortToUse),
+      readPeers(apiPortToUse),
+      readPendingTransactions(apiPortToUse),
+      readBlocks(apiPortToUse),
+      readMessages(apiPortToUse),
+      readContracts(apiPortToUse),
+      readReceipts(apiPortToUse),
+      readAuthorizations(apiPortToUse),
     ]);
 
     setSnapshot({
@@ -263,8 +283,20 @@ function App() {
       receipts: receipts.receipts,
       authorizations: authorizations.authorizations,
     });
+    if (nodeInfo.sync) {
+      setSyncStatus(nodeInfo.sync);
+    }
     setApiStatus("live");
-  }, [activeApiPort, isApiAvailable]);
+  }, []);
+
+  const refreshSnapshot = useCallback(async () => {
+    if (!isApiAvailable) {
+      setApiStatus("offline");
+      return;
+    }
+
+    await loadSnapshot(activeApiPort);
+  }, [activeApiPort, isApiAvailable, loadSnapshot]);
 
   useEffect(() => {
     void refreshWallets().catch((walletError) => {
@@ -316,6 +348,89 @@ function App() {
     };
   }, [isApiAvailable, refreshSnapshot]);
 
+  async function waitForNodeApi(apiPortToCheck: number) {
+    setStartupPhase("waiting-api");
+    setApiStatus("starting");
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try {
+        const nodeInfo = await readNodeInfo(apiPortToCheck);
+        setSnapshot((currentSnapshot) => ({
+          ...currentSnapshot,
+          nodeInfo,
+        }));
+        if (nodeInfo.sync) {
+          setSyncStatus(nodeInfo.sync);
+        }
+        setApiStatus("live");
+        return;
+      } catch {
+        await delay(500);
+      }
+    }
+    throw new Error(`Node API did not become available on port ${apiPortToCheck}.`);
+  }
+
+  async function connectBootstrapPeers(apiPortToUse: number): Promise<BootstrapAttempt[]> {
+    setStartupPhase("connecting-bootstrap");
+    setBootstrapAttempts(BOOTSTRAP_PEERS.map((peer) => ({ peer, status: "pending" })));
+
+    const attempts = await Promise.all(
+      BOOTSTRAP_PEERS.map(async (peer): Promise<BootstrapAttempt> => {
+        try {
+          await connectPeer(apiPortToUse, peer);
+          return { peer, status: "connected" };
+        } catch (connectError) {
+          return {
+            peer,
+            status: "failed",
+            detail: connectError instanceof Error ? connectError.message : String(connectError),
+          };
+        }
+      }),
+    );
+
+    setBootstrapAttempts(attempts);
+    return attempts;
+  }
+
+  async function waitForFastSyncToFinish(apiPortToUse: number) {
+    setStartupPhase("fastsync");
+    let sawActiveFastSync = false;
+
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      const status = await readSyncStatus(apiPortToUse);
+      setSyncStatus(status);
+
+      if (status.fastsync.active) {
+        sawActiveFastSync = true;
+      } else if (sawActiveFastSync || attempt >= 2) {
+        return;
+      }
+
+      await delay(1000);
+    }
+
+    throw new Error("Fastsync did not finish within 4 minutes.");
+  }
+
+  async function finishStartup(apiPortToUse: number) {
+    await waitForNodeApi(apiPortToUse);
+    const attempts = await connectBootstrapPeers(apiPortToUse);
+    const connectedBootstrapPeers = attempts.filter((attempt) => attempt.status === "connected");
+
+    if (connectedBootstrapPeers.length > 0) {
+      const syncResponse = await syncChain(apiPortToUse, true);
+      setNotice(`Connected ${connectedBootstrapPeers.length} bootstrap peer(s); fastsync requested from ${syncResponse.requested_peers} peer(s).`);
+      await waitForFastSyncToFinish(apiPortToUse);
+    } else {
+      setNotice("No bootstrap peers were reachable; continuing with the local chain.");
+    }
+
+    await loadSnapshot(apiPortToUse);
+    setStartupPhase("ready");
+    setStartupComplete(true);
+  }
+
   async function runNodeAction(label: string, action: () => Promise<ActionResult | void>) {
     if (!isApiAvailable) {
       setError("Start the node before running node actions.");
@@ -360,6 +475,10 @@ function App() {
   async function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusyAction("start-node");
+    setStartupPhase("starting-node");
+    setStartupComplete(false);
+    setBootstrapAttempts([]);
+    setSyncStatus(null);
     setError(null);
     setNotice(null);
     try {
@@ -371,7 +490,8 @@ function App() {
         peers: launchPeerList,
       });
       setNodeState(nextState);
-      setNotice(`Started node on ${host}:${port}`);
+      const startupApiPort = nextState.config?.apiPort ?? Number(apiPort);
+      await finishStartup(startupApiPort);
     } catch (startError) {
       setError(String(startError));
     } finally {
@@ -388,6 +508,10 @@ function App() {
       setNodeState(nextState);
       setSnapshot(emptySnapshot());
       setApiStatus("offline");
+      setStartupPhase("idle");
+      setStartupComplete(false);
+      setBootstrapAttempts([]);
+      setSyncStatus(null);
       setNotice("Stopped node");
     } catch (stopError) {
       setError(String(stopError));
@@ -567,9 +691,11 @@ function App() {
 
   const isStartingNode = (
     busyAction === "start-node"
-    || (nodeState.running && snapshot.nodeInfo === null && apiStatus !== "live")
+    || (nodeState.running && !startupComplete)
   );
   const launchLogs = logs.slice(-5);
+  const activeSyncPeers = syncStatus?.fastsync.peers ?? [];
+  const startupStatusLabel = startupPhase.replace("-", " ");
 
   if (!nodeState.running || isStartingNode) {
     return (
@@ -595,9 +721,40 @@ function App() {
                 </div>
                 <div>
                   <dt>Status</dt>
-                  <dd>{apiStatus}</dd>
+                  <dd>{startupStatusLabel}</dd>
                 </div>
               </dl>
+              <div className="bootstrap-panel">
+                <h3>Bootstrap Peers</h3>
+                <div className="bootstrap-list">
+                  {(bootstrapAttempts.length === 0
+                    ? BOOTSTRAP_PEERS.map((peer) => ({ peer, status: "pending" as const }))
+                    : bootstrapAttempts
+                  ).map((attempt) => (
+                    <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
+                      <code>{attempt.peer}</code>
+                      <span>{attempt.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {startupPhase === "fastsync" ? (
+                <div className="bootstrap-panel">
+                  <h3>Fastsync</h3>
+                  {activeSyncPeers.length === 0 ? (
+                    <p className="empty">Waiting for fastsync status...</p>
+                  ) : (
+                    <div className="bootstrap-list">
+                      {activeSyncPeers.map((peer) => (
+                        <div className="peer-status connected" key={peer.peer}>
+                          <code>{peer.peer}</code>
+                          <span>height {peer.expected_start_height}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
               {error ? <p className="launch-error">{error}</p> : null}
               {launchLogs.length > 0 ? (
                 <pre className="launch-log">
@@ -618,6 +775,17 @@ function App() {
                   <p>Choose a wallet to start a local node.</p>
                 </div>
                 <span className="status-pill">offline</span>
+              </div>
+              <div className="bootstrap-panel">
+                <h3>Bootstrap Peers</h3>
+                <div className="bootstrap-list">
+                  {BOOTSTRAP_PEERS.map((peer) => (
+                    <div className="peer-status" key={peer}>
+                      <code>{peer}</code>
+                      <span>auto</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <form className="launch-form" onSubmit={handleStart}>

@@ -178,6 +178,10 @@ pre {
   gap: 14px;
 }
 
+.launch-form {
+  margin-top: 16px;
+}
+
 .launch-create {
   margin-top: 18px;
   border-top: 1px solid #29333a;
@@ -238,6 +242,59 @@ pre {
   color: #c3ccd1;
   background: #0b0e10;
   white-space: pre-wrap;
+}
+
+.bootstrap-panel {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  border: 1px solid #29333a;
+  border-radius: 8px;
+  padding: 12px;
+  background: #111619;
+}
+
+.bootstrap-list {
+  display: grid;
+  gap: 8px;
+}
+
+.peer-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #2b353c;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #0d1113;
+}
+
+.peer-status code {
+  color: #9fc3d3;
+  overflow-wrap: anywhere;
+}
+
+.peer-status span {
+  color: #9aa5ac;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.peer-status.connected {
+  border-color: #367b5c;
+}
+
+.peer-status.connected span {
+  color: #9de0be;
+}
+
+.peer-status.failed {
+  border-color: #815046;
+}
+
+.peer-status.failed span {
+  color: #ffb7aa;
 }
 
 .launch-notice,
