@@ -331,6 +331,7 @@ class Blockchain:
         progress_callback: Callable[[int], None] | None = None,
         tip_hash: str | None = None,
         reconcile_pending_transactions: bool = True,
+        mining_backend: str | None = None,
     ) -> Block:
         base_tip_hash = self.main_tip_hash if tip_hash is None else tip_hash
         if base_tip_hash is None:
@@ -359,6 +360,7 @@ class Blockchain:
             block,
             self.get_difficulty_bits_for_height(block.block_id),
             progress_callback=progress_callback,
+            mining_backend=mining_backend,
         )
 
         add_result = self.add_block_result(

@@ -3,6 +3,12 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from config import DEFAULT_GPU_BATCH_SIZE, DEFAULT_MINING_PROGRESS_INTERVAL
+from core.mining_backend import MINING_BACKEND_AUTO
+from core.mining_backend import MINING_BACKEND_GPU
+from core.mining_backend import MINING_BACKEND_NATIVE
+from core.mining_backend import MINING_BACKEND_PYTHON
+from core.mining_backend import normalize_mining_backend
+from core.mining_backend import selected_mining_backend
 from core.mining_tuning import get_tuned_gpu_chunk_multiplier
 from core.mining_tuning import get_tuned_gpu_launch_config
 from core.mining_tuning import get_tuned_gpu_worker_count
@@ -11,6 +17,7 @@ from core.mining_scheduler import get_cpu_chunk_size
 from core.mining_scheduler import get_gpu_device_ids
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available as native_gpu_available
+from core.python_pow import run_python_mining
 from core.serialization import serialize_block_prefix
 from core.transaction import Transaction
 
@@ -122,13 +129,69 @@ def proof_of_work(
     difficulty_bits: int,
     progress_callback: Callable[[int], None] | None = None,
     progress_interval: int = DEFAULT_MINING_PROGRESS_INTERVAL,
+    mining_backend: str | None = None,
 ) -> str:
     if (
         block.hash_function.__module__ != "core.hashing"
         or block.hash_function.__name__ != "sha256_block_hash"
     ):
-        raise ValueError("Native proof-of-work only supports core.hashing.sha256_block_hash.")
+        raise ValueError("Proof-of-work only supports core.hashing.sha256_block_hash.")
 
+    backend = (
+        selected_mining_backend()
+        if mining_backend is None
+        else normalize_mining_backend(mining_backend)
+    )
+    if backend == MINING_BACKEND_PYTHON:
+        return _python_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
+        )
+    if backend == MINING_BACKEND_NATIVE:
+        return _native_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
+            gpu_mode="disabled",
+        )
+    if backend == MINING_BACKEND_GPU:
+        return _native_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
+            gpu_mode="required",
+        )
+
+    try:
+        return _native_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
+            gpu_mode=MINING_BACKEND_AUTO,
+        )
+    except ProofOfWorkCancelled:
+        raise
+    except Exception:
+        return _python_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
+        )
+
+
+def _native_proof_of_work(
+    block: Block,
+    difficulty_bits: int,
+    progress_callback: Callable[[int], None] | None,
+    progress_interval: int,
+    gpu_mode: str,
+) -> str:
     prefix = serialize_block_prefix(block)
     native_progress_interval = 0
     if progress_callback is not None:
@@ -138,7 +201,10 @@ def proof_of_work(
             minimum=0,
         )
     default_worker_count = max(1, os.cpu_count() or 1)
-    gpu_enabled = native_gpu_available()
+    native_gpu_enabled = native_gpu_available()
+    if gpu_mode == "required" and not native_gpu_enabled:
+        raise ValueError("GPU mining is unavailable.")
+    gpu_enabled = native_gpu_enabled and gpu_mode != "disabled"
     gpu_batch_size = _read_int_env(
         "UNCCOIN_GPU_BATCH_SIZE",
         DEFAULT_GPU_BATCH_SIZE,
@@ -186,7 +252,9 @@ def proof_of_work(
         ) if gpu_enabled else 1,
         minimum=1,
     ) if gpu_enabled else 0
-    if os.environ.get("UNCCOIN_MINING_CPU_WORKERS") is not None:
+    if gpu_mode == "required":
+        worker_count = 0
+    elif os.environ.get("UNCCOIN_MINING_CPU_WORKERS") is not None:
         worker_count = _read_int_env(
             "UNCCOIN_MINING_CPU_WORKERS",
             default_worker_count,
@@ -229,6 +297,27 @@ def proof_of_work(
     block.nonce, block.block_hash = mining_result.winner
     block.nonces_checked = mining_result.attempts
 
+    return block.block_hash
+
+
+def _python_proof_of_work(
+    block: Block,
+    difficulty_bits: int,
+    progress_callback: Callable[[int], None] | None,
+    progress_interval: int,
+) -> str:
+    mining_result = run_python_mining(
+        serialize_block_prefix(block),
+        difficulty_bits,
+        block.nonce,
+        progress_interval,
+        progress_callback,
+    )
+    if mining_result.winner is None:
+        raise ProofOfWorkCancelled("Proof of work was cancelled.")
+
+    block.nonce, block.block_hash = mining_result.winner
+    block.nonces_checked = mining_result.attempts
     return block.block_hash
 
 

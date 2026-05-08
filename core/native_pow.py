@@ -4,6 +4,7 @@ import os
 import platform
 import subprocess
 import sysconfig
+import threading
 from pathlib import Path
 
 from config import DEFAULT_GPU_BATCH_SIZE
@@ -18,6 +19,7 @@ METAL_HEADER_PATH = NATIVE_DIR / "powmetal.h"
 EXTENSION_PATH = ROOT_DIR / f"{MODULE_NAME}{sysconfig.get_config_var('EXT_SUFFIX')}"
 _native_pow_module = None
 _cuda_pow_module = None
+_python_cancel_requested = threading.Event()
 
 
 def mine_pow(
@@ -180,6 +182,8 @@ def mine_pow_gpu_chunk(
 
 
 def request_pow_cancel() -> None:
+    _python_cancel_requested.set()
+
     backend = _optional_cuda_backend()
     if backend is not None:
         backend.request_cancel()
@@ -189,12 +193,30 @@ def request_pow_cancel() -> None:
 
 
 def reset_pow_cancel() -> None:
+    _python_cancel_requested.clear()
+
     backend = _optional_cuda_backend()
     if backend is not None:
         backend.reset_cancel()
 
     if _native_pow_module is not None:
         _native_pow_module.reset_cancel()
+
+
+def pow_cancel_requested() -> bool:
+    return _python_cancel_requested.is_set()
+
+
+def native_extension_built() -> bool:
+    return EXTENSION_PATH.exists() and not _extension_needs_rebuild()
+
+
+def native_extension_status() -> dict:
+    return {
+        "path": str(EXTENSION_PATH),
+        "built": native_extension_built(),
+        "needs_rebuild": _extension_needs_rebuild(),
+    }
 
 
 def build_native_pow_extension(force: bool = False) -> Path:
