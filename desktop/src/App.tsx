@@ -213,13 +213,6 @@ function emptySnapshot(): Snapshot {
   };
 }
 
-function shortHash(value: string | null | undefined, length = 12): string {
-  if (!value) {
-    return "-";
-  }
-  return value.length > length ? `${value.slice(0, length)}...` : value;
-}
-
 function formatAmount(value: string | null | undefined): string {
   return value ?? "0";
 }
@@ -297,9 +290,9 @@ function transactionKind(transaction: TransactionPayload): string {
 function transactionSummary(transaction: TransactionPayload): string {
   const kind = transactionKind(transaction);
   if (kind === "transfer") {
-    return `${shortHash(transaction.sender)} -> ${shortHash(transaction.receiver)} (${transaction.amount})`;
+    return `${transaction.sender} -> ${transaction.receiver} (${transaction.amount})`;
   }
-  return `${kind} ${shortHash(transaction.receiver)}`;
+  return `${kind} ${transaction.receiver}`;
 }
 
 function newestFirst<T extends { timestamp?: string }>(items: T[]): T[] {
@@ -333,7 +326,7 @@ function displayReference(value: string | null | undefined, length = 16): { valu
     return { value: "-" };
   }
   return {
-    value: shortHash(value, length),
+    value,
     title: value.length > length ? value : undefined,
   };
 }
@@ -1294,7 +1287,7 @@ function App() {
         amount: txAmount,
         fee: txFee,
       });
-      return { label: "Broadcast transaction", detail: shortHash(response.transaction_id) };
+      return { label: "Broadcast transaction", detail: response.transaction_id };
     });
   }
 
@@ -1302,7 +1295,7 @@ function App() {
     event.preventDefault();
     await runNodeAction("mine-block", async () => {
       const response = await mineBlock(activeApiPort, mineDescription || undefined);
-      return { label: "Mined block", detail: `${response.block.height} ${shortHash(response.block.block_hash)}` };
+      return { label: "Mined block", detail: `${response.block.height} ${response.block.block_hash}` };
     });
   }
 
@@ -1376,7 +1369,7 @@ function App() {
         content: messageContent,
       });
       setMessageContent("");
-      return { label: "Sent message", detail: shortHash(response.message.message_id) };
+      return { label: "Sent message", detail: response.message.message_id };
     });
   }
 
@@ -1387,7 +1380,7 @@ function App() {
         wallet: aliasWallet,
         alias: aliasName,
       });
-      return { label: "Saved alias", detail: response.alias ?? shortHash(response.wallet) };
+      return { label: "Saved alias", detail: response.alias ?? response.wallet };
     });
   }
 
@@ -1397,7 +1390,7 @@ function App() {
       const response = await setAutosend(activeApiPort, autosendTarget || null);
       return {
         label: response.enabled ? "Autosend enabled" : "Autosend disabled",
-        detail: response.target ? shortHash(response.target) : undefined,
+        detail: response.target || undefined,
       };
     });
   }
@@ -1410,7 +1403,7 @@ function App() {
         commitment_hash: commitHash,
         fee: commitFee,
       });
-      return { label: "Broadcast commitment", detail: shortHash(response.transaction_id) };
+      return { label: "Broadcast commitment", detail: response.transaction_id };
     });
   }
 
@@ -1423,7 +1416,7 @@ function App() {
         fee: revealFee,
         salt: revealSalt,
       });
-      return { label: "Broadcast reveal", detail: shortHash(response.transaction_id) };
+      return { label: "Broadcast reveal", detail: response.transaction_id };
     });
   }
 
@@ -1448,7 +1441,7 @@ function App() {
       const response = await deployContract(activeApiPort, payload);
       setExecuteContractAddress(response.contract_address ?? "");
       setAuthContractAddress(response.contract_address ?? "");
-      return { label: "Broadcast deploy", detail: shortHash(response.contract_address) };
+      return { label: "Broadcast deploy", detail: response.contract_address };
     });
   }
 
@@ -1469,7 +1462,7 @@ function App() {
         input: parsedInput,
         authorizations: parsedAuthorizations.filter(isRecord),
       });
-      return { label: "Broadcast execute", detail: shortHash(response.transaction_id) };
+      return { label: "Broadcast execute", detail: response.transaction_id };
     });
   }
 
@@ -1505,7 +1498,7 @@ function App() {
         request_id: authRequestId,
         valid_for_blocks: authValidBlocks || null,
       });
-      return { label: "Sent authorization", detail: shortHash(response.message.message_id) };
+      return { label: "Sent authorization", detail: response.message.message_id };
     });
   }
 
@@ -1680,7 +1673,7 @@ function App() {
                             disabled={busyAction !== null}
                           >
                             <span>{wallet.name}</span>
-                            <code>{shortHash(wallet.address, 18)}</code>
+                            <code>{wallet.address}</code>
                             <small>port {wallet.preferredPort}</small>
                           </button>
                         ))
@@ -2108,7 +2101,7 @@ function App() {
               </article>
               <article className="metric wide">
                 <span>Tip</span>
-                <strong>{shortHash(snapshot.chainHead?.tip_hash, 22)}</strong>
+                <strong>{snapshot.chainHead?.tip_hash ?? "-"}</strong>
               </article>
             </div>
 
@@ -2124,7 +2117,7 @@ function App() {
                   ) : (
                     snapshot.balances.map((balance) => (
                       <div className="list-row" key={balance.address}>
-                        <span>{balance.alias || shortHash(balance.address, 18)}</span>
+                        <span>{balance.alias || balance.address}</span>
                         <strong>{balance.balance}</strong>
                       </div>
                     ))
@@ -2144,7 +2137,7 @@ function App() {
                     snapshot.pendingTransactions.map((transaction) => (
                       <div className="list-row stacked" key={transaction.transaction_id}>
                         <span>{transactionSummary(transaction)}</span>
-                        <code>{shortHash(transaction.transaction_id, 18)}</code>
+                        <code>{transaction.transaction_id}</code>
                       </div>
                     ))
                   )}
@@ -2163,7 +2156,7 @@ function App() {
                 ) : (
                   latestBlocks.map((block) => (
                     <div className="list-row" key={block.block_hash}>
-                      <span>#{block.height} {shortHash(block.block_hash, 14)}</span>
+                      <span>#{block.height} {block.block_hash}</span>
                       <strong>{block.transaction_count} tx</strong>
                     </div>
                   ))
@@ -2178,7 +2171,7 @@ function App() {
             <section className="panel blockchain-toolbar">
               <div>
                 <strong>{blockchainWindowLabel}</strong>
-                <span>{blockchainWindow ? shortHash(blockchainWindow.targetHash, 18) : shortHash(snapshot.chainHead?.tip_hash, 18)}</span>
+                <span>{blockchainWindow ? blockchainWindow.targetHash : snapshot.chainHead?.tip_hash ?? "-"}</span>
               </div>
               <form className="block-search-form" onSubmit={handleBlockchainSearch}>
                 <input
@@ -2271,7 +2264,7 @@ function App() {
                         key={balance.address}
                         onClick={() => setTxReceiver(balance.alias || balance.address)}
                       >
-                        <span>{balance.alias || shortHash(balance.address, 18)}</span>
+                        <span>{balance.alias || balance.address}</span>
                         <strong>{balance.balance}</strong>
                       </button>
                     ))
@@ -2292,7 +2285,7 @@ function App() {
                   snapshot.pendingTransactions.map((transaction) => (
                     <div className="list-row stacked" key={transaction.transaction_id}>
                       <span>{transactionSummary(transaction)}</span>
-                      <code>{shortHash(transaction.transaction_id, 18)}</code>
+                      <code>{transaction.transaction_id}</code>
                     </div>
                   ))
                 )}
@@ -2337,7 +2330,7 @@ function App() {
                   </div>
                   <div>
                     <dt>Tip</dt>
-                    <dd>{shortHash(miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash, 14)}</dd>
+                    <dd>{miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash ?? "-"}</dd>
                   </div>
                 </dl>
 
@@ -2399,7 +2392,7 @@ function App() {
                   {miningStatus?.recent_miners.length ? (
                     miningStatus.recent_miners.map((miner) => (
                       <div className="list-row stacked" key={miner.address}>
-                        <span>{miner.alias || shortHash(miner.address, 16)}</span>
+                        <span>{miner.alias || miner.address}</span>
                         <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
                       </div>
                     ))
@@ -2444,7 +2437,7 @@ function App() {
                         disabled={nodeState.running}
                       >
                         <span>{wallet.name}</span>
-                        <code>{shortHash(wallet.address, 18)}</code>
+                        <code>{wallet.address}</code>
                       </button>
                     ))
                   )}
@@ -2732,7 +2725,7 @@ function App() {
                     latestMessages.map((message, index) => (
                       <div className="list-row stacked" key={message.message_id || `${message.timestamp}-${index}`}>
                         <span>{message.content || "-"}</span>
-                        <code>{shortHash(message.sender || message.peer, 14)}{" -> "}{shortHash(message.receiver, 14)}</code>
+                        <code>{message.sender || message.peer || "-"}{" -> "}{message.receiver || "-"}</code>
                       </div>
                     ))
                   )}
@@ -2919,8 +2912,8 @@ function App() {
                           setAuthContractAddress(contract.address);
                         }}
                       >
-                        <span>{shortHash(contract.address, 18)}</span>
-                        <code>{shortHash(String(contract.contract.code_hash ?? ""), 14)}</code>
+                        <span>{contract.address}</span>
+                        <code>{String(contract.contract.code_hash ?? "-")}</code>
                       </button>
                     ))
                   )}
@@ -2938,7 +2931,7 @@ function App() {
                   ) : (
                     latestReceipts.map((receipt) => (
                       <details className="details-row" key={receipt.transaction_id}>
-                        <summary>{shortHash(receipt.transaction_id, 18)}</summary>
+                        <summary>{receipt.transaction_id}</summary>
                         <pre>{formatJson(receipt.receipt)}</pre>
                       </details>
                     ))
@@ -2993,7 +2986,7 @@ function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload |
       <dl className="block-meta">
         <div>
           <dt>Previous</dt>
-          <dd title={block.previous_hash}>{shortHash(block.previous_hash, 18)}</dd>
+          <dd title={block.previous_hash}>{block.previous_hash}</dd>
         </div>
         <div>
           <dt>Nonce</dt>
@@ -3039,7 +3032,7 @@ function BlockchainTransactionCard({ transaction }: { transaction: TransactionPa
     <article className={`chain-transaction ${transactionClass}`}>
       <div className="transaction-heading">
         <strong>{transactionKindLabel(transaction)}</strong>
-        <span>{shortHash(transaction.transaction_id, 10)}</span>
+        <span title={transaction.transaction_id}>{transaction.transaction_id}</span>
       </div>
       <dl>
         {transactionRows(transaction).map((row) => (

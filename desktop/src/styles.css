@@ -319,8 +319,7 @@ pre {
 .wallet-choice code,
 .wallet-choice small {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .wallet-choice small {
@@ -1127,8 +1126,7 @@ dd {
   color: #9fc3d3;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .blockchain-toolbar p {
@@ -1193,6 +1191,13 @@ dd {
   color: #8f9aa1;
   font-size: 12px;
   font-weight: 720;
+}
+
+.transaction-heading span {
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .block-card header strong {
@@ -1435,9 +1440,7 @@ dd {
 .select-row span,
 .table-row span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .list-row strong,
@@ -1500,6 +1503,7 @@ dd {
 .details-row summary {
   cursor: pointer;
   color: #9fc3d3;
+  overflow-wrap: anywhere;
 }
 
 .details-row pre,
