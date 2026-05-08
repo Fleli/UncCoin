@@ -234,6 +234,7 @@ function App() {
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
+  const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -284,6 +285,10 @@ function App() {
       || String(wallet.preferredPort).includes(query)
     ));
   }, [walletSearch, wallets]);
+  const enabledBootstrapPeers = useMemo(
+    () => BOOTSTRAP_PEERS.filter((peer) => !disabledBootstrapPeers.includes(peer)),
+    [disabledBootstrapPeers],
+  );
 
   const refreshWallets = useCallback(async () => {
     const nextWallets = await window.unccoinDesktop.listWallets();
@@ -354,6 +359,14 @@ function App() {
     const preferredPort = normalizePreferredPort(selectedWallet.preferredPort);
     setPort(String(preferredPort));
     setApiPort(String(preferredPort + 10000));
+  }
+
+  function toggleBootstrapPeer(peer: string) {
+    setDisabledBootstrapPeers((currentPeers) => (
+      currentPeers.includes(peer)
+        ? currentPeers.filter((currentPeer) => currentPeer !== peer)
+        : [...currentPeers, peer]
+    ));
   }
 
   useEffect(() => {
@@ -437,7 +450,9 @@ function App() {
   ): Promise<BootstrapAttempt[]> {
     setStartupPhase("connecting-bootstrap");
     const initialAttempts = BOOTSTRAP_PEERS.map((peer): BootstrapAttempt => (
-      isLocalBootstrapPeer(peer, nodeConfig, localAddresses)
+      disabledBootstrapPeers.includes(peer)
+        ? { peer, status: "skipped", detail: "disabled" }
+        : isLocalBootstrapPeer(peer, nodeConfig, localAddresses)
         ? { peer, status: "skipped", detail: "local node" }
         : { peer, status: "pending" }
     ));
@@ -501,7 +516,9 @@ function App() {
       await waitForFastSyncToFinish(apiPortToUse);
     } else {
       setNotice(
-        skippedBootstrapPeers.length > 0
+        enabledBootstrapPeers.length === 0
+          ? "All bootstrap peers were disabled for this launch; continuing with the local chain."
+          : skippedBootstrapPeers.length > 0
           ? "Skipped this node's bootstrap address; no other bootstrap peers were reachable."
           : "No bootstrap peers were reachable; continuing with the local chain.",
       );
@@ -950,21 +967,6 @@ function App() {
                       />
                     </label>
 
-                    <div className="bootstrap-panel">
-                      <h3>Bootstrap Peers</h3>
-                      <div className="bootstrap-list">
-                        {BOOTSTRAP_PEERS.map((peer) => (
-                          <div
-                            className={`peer-status ${isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "skipped" : ""}`}
-                            key={peer}
-                          >
-                            <code>{peer}</code>
-                            <span>{isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "self" : "auto"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
                     <button type="submit" disabled={!walletName || busyAction !== null}>
                       Start Node
                     </button>
@@ -1002,6 +1004,34 @@ function App() {
                   </form>
                 </section>
               </div>
+
+              <section className="bootstrap-panel bootstrap-secondary">
+                <div className="secondary-title">
+                  <h3>Bootstrap Peers</h3>
+                  <p>Used only for this startup; disable any peer to skip it for this launch.</p>
+                </div>
+                <div className="bootstrap-list horizontal">
+                  {BOOTSTRAP_PEERS.map((peer) => {
+                    const isDisabled = disabledBootstrapPeers.includes(peer);
+                    const isSelf = isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses);
+                    return (
+                      <label
+                        className={`peer-status bootstrap-toggle ${isDisabled ? "disabled" : ""} ${isSelf ? "skipped" : ""}`}
+                        key={peer}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!isDisabled}
+                          disabled={busyAction !== null}
+                          onChange={() => toggleBootstrapPeer(peer)}
+                        />
+                        <code>{peer}</code>
+                        <span>{isDisabled ? "off" : isSelf ? "self" : "auto"}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
 
               {notice ? <p className="launch-notice">{notice}</p> : null}
               {error ? <p className="launch-error">{error}</p> : null}

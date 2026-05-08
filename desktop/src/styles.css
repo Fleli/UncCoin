@@ -294,9 +294,31 @@ pre {
   background: #111619;
 }
 
+.bootstrap-secondary {
+  margin: 18px 0 0;
+  background: #14191c;
+  opacity: 0.9;
+}
+
+.secondary-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.secondary-title p {
+  color: #8f9aa1;
+  font-size: 12px;
+}
+
 .bootstrap-list {
   display: grid;
   gap: 8px;
+}
+
+.bootstrap-list.horizontal {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .peer-status {
@@ -308,6 +330,16 @@ pre {
   border-radius: 6px;
   padding: 8px 10px;
   background: #0d1113;
+}
+
+.bootstrap-toggle {
+  cursor: pointer;
+}
+
+.bootstrap-toggle input {
+  width: auto;
+  min-width: 16px;
+  margin: 0;
 }
 
 .peer-status code {
@@ -335,6 +367,16 @@ pre {
 
 .peer-status.failed span {
   color: #ffb7aa;
+}
+
+.peer-status.disabled {
+  border-color: #343b40;
+  background: #111518;
+}
+
+.peer-status.disabled code,
+.peer-status.disabled span {
+  color: #707a81;
 }
 
 .peer-status.skipped {
