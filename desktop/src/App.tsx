@@ -2558,38 +2558,34 @@ function App() {
                 <span>{miningModeLabel}</span>
               </div>
 
-              <div className={`mining-readout ${miningActive ? "active" : ""}`}>
-                <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
-                <strong>{formatNumber(miningStatus?.nonce)}</strong>
-                <small>
-                  {miningActive
-                    ? `running ${formatElapsed(miningStatus?.started_at)}`
-                    : miningStatus?.last_block.block_hash
-                    ? `last block #${miningStatus.last_block.height ?? "-"}`
-                    : "idle"}
-                </small>
-              </div>
+              <div className="mining-summary-row">
+                <div className={`mining-readout ${miningActive ? "active" : ""}`}>
+                  <span>{miningActive ? "Current Nonce" : "Last Nonce"}</span>
+                  <strong>{formatNumber(miningStatus?.nonce)}</strong>
+                  <small>
+                    {miningActive
+                      ? `running ${formatElapsed(miningStatus?.started_at)}`
+                      : miningStatus?.last_block.block_hash
+                      ? `last block #${miningStatus.last_block.height ?? "-"}`
+                      : "idle"}
+                  </small>
+                </div>
 
-              <dl className="detail-list mining-stats">
-                <div>
-                  <dt>Difficulty</dt>
-                  <dd>{formatNumber(miningDifficulty)}</dd>
-                </div>
-                <div>
-                  <dt>Pending Tx</dt>
-                  <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Last Checked</dt>
-                  <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
-                </div>
-                <div>
-                  <dt>Tip</dt>
-                  <dd>
-                    <ReferenceText value={miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash} />
-                  </dd>
-                </div>
-              </dl>
+                <dl className="detail-list mining-stats">
+                  <div>
+                    <dt>Difficulty</dt>
+                    <dd>{formatNumber(miningDifficulty)}</dd>
+                  </div>
+                  <div>
+                    <dt>Pending Tx</dt>
+                    <dd>{snapshot.chainHead?.pending_transaction_count ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Last Checked</dt>
+                    <dd>{formatNumber(miningStatus?.last_block.nonces_checked)}</dd>
+                  </div>
+                </dl>
+              </div>
 
               <section className="miner-backends">
                 <div className="panel-title compact-title">

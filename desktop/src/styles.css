@@ -920,6 +920,13 @@ dd {
   gap: 14px;
 }
 
+.mining-summary-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(360px, 1.25fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
 .mining-readout {
   display: grid;
   gap: 6px;
