@@ -1735,6 +1735,42 @@ dd {
   background: #20282d;
 }
 
+.contract-card-main,
+.contract-row-meta {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.contract-card-main {
+  flex: 1 1 56%;
+}
+
+.contract-card-main strong {
+  color: #f2f5f7;
+}
+
+.contract-row-meta {
+  flex: 1 1 44%;
+  justify-items: end;
+  color: #8f9aa1;
+  font-size: 12px;
+}
+
+.auth-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.auth-summary span {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .table {
   display: grid;
 }

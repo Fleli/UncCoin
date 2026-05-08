@@ -24,7 +24,6 @@ import {
   readReceipts,
   readSyncStatus,
   revealCommitment,
-  sendAuthorization,
   sendMessage,
   sendTransaction,
   setAlias,
@@ -33,7 +32,6 @@ import {
   startAutomine,
   startMiningWarmup,
   stopAutomine,
-  storeAuthorization,
   syncChain,
   type BalanceRow,
   type BlockPayload,
@@ -65,7 +63,6 @@ const DEFAULT_DEPLOY_JSON = `{
   "metadata": {"name": "noop"}
 }`;
 const DEFAULT_EXECUTE_JSON = "null";
-const DEFAULT_AUTH_JSON = "[]";
 const RECENT_BLOCK_LIMIT = 12;
 const BLOCKCHAIN_VIEW_BLOCKS = 2;
 const MINING_REWARD_SENDER = "SYSTEM";
@@ -335,6 +332,50 @@ function miningBackendIsWarmed(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function contractMetadata(contract: ContractEntry): Record<string, unknown> {
+  const metadata = contract.contract.metadata;
+  return isRecord(metadata) ? metadata : {};
+}
+
+function contractDisplayName(contract: ContractEntry): string {
+  return recordString(contractMetadata(contract), "name") ?? "Contract";
+}
+
+function contractCodeHash(contract: ContractEntry): string | null {
+  return recordString(contract.contract, "code_hash");
+}
+
+function authorizationScopeLabel(authorization: Record<string, unknown>): string {
+  const scope = authorization.scope;
+  if (!isRecord(scope) || Object.keys(scope).length === 0) {
+    return "open";
+  }
+
+  const from = recordString(scope, "valid_from_height");
+  const until = recordString(scope, "valid_until_height");
+  if (from !== null && until !== null) {
+    return `blocks ${from}-${until}`;
+  }
+  if (until !== null) {
+    return `until ${until}`;
+  }
+  if (from !== null) {
+    return `from ${from}`;
+  }
+  return "scoped";
 }
 
 function parseJsonField(value: string, label: string): unknown {
@@ -707,12 +748,9 @@ function App() {
   const [executeValue, setExecuteValue] = useState("0");
   const [executeFee, setExecuteFee] = useState("0");
   const [executeInputJson, setExecuteInputJson] = useState(DEFAULT_EXECUTE_JSON);
-  const [executeAuthJson, setExecuteAuthJson] = useState(DEFAULT_AUTH_JSON);
   const [authContractAddress, setAuthContractAddress] = useState("");
   const [authRequestId, setAuthRequestId] = useState("");
   const [authValidBlocks, setAuthValidBlocks] = useState("");
-  const [authReceiver, setAuthReceiver] = useState("");
-  const [authorizationJson, setAuthorizationJson] = useState("{}");
 
   const activeApiPort = nodeState.config?.apiPort ?? Number(apiPort);
   const isApiAvailable = nodeState.running && Number.isInteger(activeApiPort);
@@ -1749,10 +1787,6 @@ function App() {
     event.preventDefault();
     await runNodeAction("execute-contract", async () => {
       const parsedInput = parseJsonField(executeInputJson, "Execute input JSON");
-      const parsedAuthorizations = parseJsonField(executeAuthJson || "[]", "Authorizations JSON");
-      if (!Array.isArray(parsedAuthorizations)) {
-        throw new Error("Authorizations JSON must be an array.");
-      }
       const response = await executeContract(activeApiPort, {
         contract_address: executeContractAddress,
         gas_limit: executeGasLimit,
@@ -1760,7 +1794,6 @@ function App() {
         value: executeValue,
         fee: executeFee,
         input: parsedInput,
-        authorizations: parsedAuthorizations.filter(isRecord),
       });
       return { label: "Broadcast execute", detail: response.transaction_id };
     });
@@ -1774,31 +1807,7 @@ function App() {
         request_id: authRequestId,
         valid_for_blocks: authValidBlocks || null,
       });
-      setAuthorizationJson(formatJson(response.authorization));
-      return { label: "Created authorization", detail: authRequestId };
-    });
-  }
-
-  async function handleStoreAuthorization() {
-    await runNodeAction("store-authorization", async () => {
-      const parsedAuthorization = parseJsonField(authorizationJson, "Authorization JSON");
-      if (!isRecord(parsedAuthorization)) {
-        throw new Error("Authorization JSON must be an object.");
-      }
-      const response = await storeAuthorization(activeApiPort, parsedAuthorization);
-      return { label: response.stored ? "Stored authorization" : "Authorization already stored" };
-    });
-  }
-
-  async function handleSendAuthorization() {
-    await runNodeAction("send-authorization", async () => {
-      const response = await sendAuthorization(activeApiPort, {
-        receiver: authReceiver,
-        contract_address: authContractAddress,
-        request_id: authRequestId,
-        valid_for_blocks: authValidBlocks || null,
-      });
-      return { label: "Sent authorization", detail: response.message.message_id };
+      return { label: "Broadcast authorization", detail: response.transaction_id };
     });
   }
 
@@ -2214,6 +2223,7 @@ function App() {
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
+  const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
   const knownPeers = snapshot.peers.known;
@@ -3148,10 +3158,6 @@ function App() {
                     Input JSON
                     <textarea className="code-input" value={executeInputJson} onChange={(event) => setExecuteInputJson(event.target.value)} />
                   </label>
-                  <label>
-                    Authorizations JSON
-                    <textarea className="code-input short" value={executeAuthJson} onChange={(event) => setExecuteAuthJson(event.target.value)} />
-                  </label>
                   <button type="submit" disabled={disableNodeAction}>
                     Execute
                   </button>
@@ -3180,26 +3186,26 @@ function App() {
                       <input value={authValidBlocks} onChange={(event) => setAuthValidBlocks(event.target.value)} />
                     </label>
                   </div>
-                  <label>
-                    Receiver
-                    <input value={authReceiver} onChange={(event) => setAuthReceiver(event.target.value)} />
-                  </label>
-                  <label>
-                    Authorization JSON
-                    <textarea className="code-input short" value={authorizationJson} onChange={(event) => setAuthorizationJson(event.target.value)} />
-                  </label>
-                  <div className="button-row">
-                    <button type="submit" disabled={disableNodeAction}>
-                      Create
-                    </button>
-                    <button type="button" disabled={disableNodeAction} onClick={() => void handleStoreAuthorization()}>
-                      Store
-                    </button>
-                    <button type="button" disabled={disableNodeAction} onClick={() => void handleSendAuthorization()}>
-                      Send
-                    </button>
-                  </div>
+                  <button type="submit" disabled={disableNodeAction}>
+                    Authorize
+                  </button>
                 </form>
+                <div className="list padded authorization-list">
+                  {latestAuthorizations.length === 0 ? (
+                    <p className="empty">No mined authorizations.</p>
+                  ) : (
+                    latestAuthorizations.map((authorization, index) => (
+                      <div className="list-row stacked" key={`${recordString(authorization, "wallet")}-${recordString(authorization, "request_id")}-${index}`}>
+                        <div className="auth-summary">
+                          <strong>{recordString(authorization, "request_id") ?? "-"}</strong>
+                          <span>{authorizationScopeLabel(authorization)}</span>
+                        </div>
+                        <ReferenceCode value={recordString(authorization, "wallet")} prefix="wallet " />
+                        <ReferenceCode value={recordString(authorization, "contract_address")} prefix="contract " />
+                      </div>
+                    ))
+                  )}
+                </div>
               </section>
 
               <section className="panel">
@@ -3270,8 +3276,14 @@ function App() {
                           setAuthContractAddress(contract.address);
                         }}
                       >
-                        <ReferenceText value={contract.address} />
-                        <ReferenceCode value={String(contract.contract.code_hash ?? "-")} />
+                        <span className="contract-card-main">
+                          <strong>{contractDisplayName(contract)}</strong>
+                          <ReferenceCode value={contract.address} />
+                        </span>
+                        <span className="contract-row-meta">
+                          <ReferenceCode value={contractCodeHash(contract)} prefix="code " />
+                          <span>{Object.keys(contract.storage).length} storage</span>
+                        </span>
                       </button>
                     ))
                   )}

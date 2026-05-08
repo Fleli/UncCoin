@@ -221,14 +221,11 @@ export type BroadcastTransactionResponse = {
   transaction: TransactionPayload;
   contract_address?: string;
   code_hash?: string;
+  request_id?: string;
 };
 
 export type MineResponse = {
   block: BlockPayload;
-};
-
-export type AuthorizationResponse = {
-  authorization: Record<string, unknown>;
 };
 
 type RequestOptions = {
@@ -422,7 +419,6 @@ export function executeContract(
     value: string;
     fee: string;
     input: unknown;
-    authorizations: Record<string, unknown>[];
   },
 ): Promise<BroadcastTransactionResponse> {
   return requestApi(apiPort, "/control/contracts/execute", "POST", payload);
@@ -431,25 +427,6 @@ export function executeContract(
 export function authorizeContract(
   apiPort: number,
   payload: { contract_address: string; request_id: string; valid_for_blocks?: string | null },
-): Promise<AuthorizationResponse> {
+): Promise<BroadcastTransactionResponse> {
   return requestApi(apiPort, "/control/contracts/authorize", "POST", payload);
-}
-
-export function storeAuthorization(
-  apiPort: number,
-  authorization: Record<string, unknown>,
-): Promise<{ stored: boolean }> {
-  return requestApi(apiPort, "/control/authorizations/store", "POST", { authorization });
-}
-
-export function sendAuthorization(
-  apiPort: number,
-  payload: {
-    receiver: string;
-    contract_address: string;
-    request_id: string;
-    valid_for_blocks?: string | null;
-  },
-): Promise<{ message: MessageEntry }> {
-  return requestApi(apiPort, "/control/authorizations/send", "POST", payload);
 }
