@@ -103,7 +103,7 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
     app = FastAPI(
         title="UncCoin Node API",
         version="1.0.0",
-        description="HTTP API for local UncCoin node state and authenticated node control.",
+        description="HTTP API for UncCoin node state reads and authenticated control actions.",
     )
 
     @app.middleware("http")
@@ -126,6 +126,7 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
             "name": "UncCoin Node API",
             "version": "1.0.0",
             "api_prefix": API_PREFIX,
+            "control_prefix": CONTROL_API_PREFIX,
             "control_auth_required": normalized_api_token is not None,
             "openapi": "/openapi.json",
             "docs": "/docs",

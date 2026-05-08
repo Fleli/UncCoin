@@ -55,12 +55,12 @@ async def _run_from_cli() -> None:
     parser.add_argument(
         "--api-host",
         default="127.0.0.1",
-        help="Host interface for the optional HTTP API.",
+        help="Host interface for the optional state/control HTTP API.",
     )
     parser.add_argument(
         "--api-port",
         type=int,
-        help="Enable the optional HTTP API on this port.",
+        help="Enable the optional state/control HTTP API on this port.",
     )
     parser.add_argument(
         "--api-token",
@@ -123,7 +123,7 @@ async def _run_from_cli() -> None:
         )
         await api_server.start()
         print(
-            "Node API listening on "
+            "Node state/control API listening on "
             f"http://{args.api_host}:{args.api_port}/api/v1",
             flush=True,
         )

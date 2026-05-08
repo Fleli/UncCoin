@@ -6,7 +6,8 @@ see [Tailscale.md](Tailscale.md).
 UncCoin has two normal ways to run:
 
 - Desktop app: easiest for most users. It creates/selects wallets, starts the Python node,
-  shows chain/network/mining state, and exposes node actions through the local API.
+  shows chain/network/mining state, and exposes node actions through the local state/control
+  API.
 - Terminal node: useful for servers, dedicated miners, and debugging.
 
 ## 1. Prerequisites
@@ -40,15 +41,16 @@ cd UncCoin
 
 ## 3. Install Python API Dependencies
 
-The helper node script starts the local FastAPI node API automatically, so install the API
-dependencies before running nodes:
+The helper node script starts the local FastAPI state/control API automatically, so install
+the API dependencies before running nodes:
 
 ```bash
 python3 -m pip install -r requirements-api.txt
 ```
 
-The node API is local by default and listens on `node_port + 10000`. A node on P2P port
-`9000` exposes its API on `127.0.0.1:19000`.
+The node API is local by default and listens on `node_port + 10000`. It exposes read/state
+endpoints and `/api/v1/control/*` endpoints for wallet-signing node actions. A node on P2P
+port `9000` exposes its API on `127.0.0.1:19000`.
 
 ## 4. Desktop App Setup
 
@@ -73,9 +75,10 @@ From the launch screen you can:
 - disable any bootstrap peer for that launch
 - skip miner warmup if you want the node window to open immediately
 
-The desktop app starts the Python node and API for you. It uses API port `P2P port + 10000`
-unless you choose a different API port in the UI. The desktop app also generates a per-run
-API bearer token and uses it for wallet-signing control actions automatically.
+The desktop app starts the Python node and state/control API for you. It uses API port
+`P2P port + 10000` unless you choose a different API port in the UI. The desktop app also
+generates a per-run API bearer token and uses it for wallet-signing control actions
+automatically.
 
 Multiple desktop instances can run at once. The desktop dev server picks a free local port
 automatically; the node P2P/API ports still need to be different per running node.
@@ -127,7 +130,7 @@ Example second local node connecting to the first:
 ```
 
 `scripts/run.sh` binds the P2P server to `0.0.0.0` so other machines can connect to it.
-The node API stays on `127.0.0.1` by default:
+The node state/control API stays on `127.0.0.1` by default:
 
 ```text
 P2P:  0.0.0.0:<p2p-port>

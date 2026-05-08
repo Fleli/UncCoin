@@ -12,7 +12,7 @@ UncCoin is a toy but fairly complete proof-of-work cryptocurrency built in Pytho
 - orphan block handling
 - canonical-chain persistence
 - interactive node CLI
-- local FastAPI node API
+- local FastAPI node API for state reads and authenticated control actions
 - desktop GUI for wallet/node/mining workflows
 - private automine mode for dedicated miners
 
@@ -39,13 +39,14 @@ python3 -m wallet.cli create --name alice
 ./scripts/run.sh alice 9000
 ```
 
-`scripts/run.sh` starts both the P2P node and the local node API. The API listens on
-`127.0.0.1:<p2p-port + 10000>` by default, so a node on `9000` has API docs at
+`scripts/run.sh` starts both the P2P node and the local state/control API. The API listens
+on `127.0.0.1:<p2p-port + 10000>` by default, so a node on `9000` has API docs at
 `http://127.0.0.1:19000/docs`.
 
-Mutating API routes under `/api/v1/control/*` can be protected with a bearer token by setting
-`UNCCOIN_API_TOKEN`. The desktop app does this automatically for nodes it starts. If you bind
-the API beyond loopback with `UNCCOIN_API_HOST`, a token is required.
+Control routes under `/api/v1/control/*` can sign transactions and change node behavior.
+They can be protected with a bearer token by setting `UNCCOIN_API_TOKEN`. The desktop app
+does this automatically for nodes it starts. If you bind the API beyond loopback with
+`UNCCOIN_API_HOST`, a token is required.
 
 To verify a checkout before sharing or running it:
 

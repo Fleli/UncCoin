@@ -89,7 +89,7 @@ Third node:
 ./scripts/run.sh charlie 9002 <alice-tailscale-ip>:9000
 ```
 
-The node API stays local by default:
+The node state/control API stays local by default:
 
 ```text
 P2P:  0.0.0.0:<p2p-port>
