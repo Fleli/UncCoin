@@ -1,4 +1,5 @@
 import argparse
+import json
 
 from wallet.factory import create_wallet
 from wallet.storage import load_wallet, save_wallet
@@ -15,6 +16,8 @@ def main() -> None:
 
     show_parser = subparsers.add_parser("show", help="Load and display a named wallet.")
     show_parser.add_argument("--name", required=True)
+    show_parser.add_argument("--json", action="store_true")
+    show_parser.add_argument("--include-private", action="store_true")
 
     args = parser.parse_args()
 
@@ -33,6 +36,24 @@ def main() -> None:
 
     if args.command == "show":
         wallet = load_wallet(args.name)
+        if args.json:
+            wallet_payload = {
+                "name": wallet.name,
+                "address": wallet.address,
+                "preferred_port": wallet.preferred_port,
+                "public_key": {
+                    "exponent": str(wallet.public_key[0]),
+                    "modulus": str(wallet.public_key[1]),
+                },
+            }
+            if args.include_private:
+                wallet_payload["private_key"] = {
+                    "exponent": str(wallet.private_key[0]),
+                    "modulus": str(wallet.private_key[1]),
+                }
+            print(json.dumps(wallet_payload, sort_keys=True))
+            return
+
         print(f"Wallet: {wallet.name}")
         print(f"Address: {wallet.address}")
         print(f"Preferred port: {wallet.preferred_port}")

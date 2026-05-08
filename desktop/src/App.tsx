@@ -126,6 +126,13 @@ function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function formatWalletKey(key: WalletKeyDetails["publicKey"]): string {
+  return JSON.stringify({
+    exponent: key.exponent,
+    modulus: key.modulus,
+  }, null, 2);
+}
+
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" ? value.toLocaleString() : "-";
 }
@@ -269,6 +276,8 @@ function App() {
   const [newWalletName, setNewWalletName] = useState("");
   const [newWalletPreferredPort, setNewWalletPreferredPort] = useState(String(DEFAULT_PORT));
   const [walletDeleteCandidate, setWalletDeleteCandidate] = useState("");
+  const [walletKeysVisible, setWalletKeysVisible] = useState(false);
+  const [walletKeys, setWalletKeys] = useState<WalletKeyDetails | null>(null);
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState(String(DEFAULT_PORT));
   const [apiPort, setApiPort] = useState(String(DEFAULT_PORT + 10000));
@@ -518,6 +527,11 @@ function App() {
       cancelled = true;
     };
   }, [desktopStateKey]);
+
+  useEffect(() => {
+    setWalletKeysVisible(false);
+    setWalletKeys(null);
+  }, [walletName]);
 
   useEffect(() => {
     if (
@@ -1535,17 +1549,43 @@ function App() {
   const activeTabLabel = tabs.find((tab) => tab.id === activeTab)?.label ?? "";
   const walletDisplayName = loadedWallet?.name || walletName || "No wallet loaded";
   const walletBalance = loadedWallet ? formatAmount(ownBalance?.balance) : "-";
+  const keyWalletName = selectedWallet?.name || loadedWallet?.name || walletName;
+  const keyWalletAddress = selectedWallet?.address || loadedWallet?.address || "";
 
-  async function handleCopyWalletAddress() {
-    if (!loadedWallet) {
+  async function copyToClipboard(value: string, label: string) {
+    if (!value) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(loadedWallet.address);
+      await navigator.clipboard.writeText(value);
       setError(null);
-      setNotice("Wallet address copied");
+      setNotice(`${label} copied`);
     } catch (copyError) {
-      setError(`Could not copy wallet address: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+      setError(`Could not copy ${label.toLowerCase()}: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+    }
+  }
+
+  async function handleRevealWalletKeys() {
+    if (walletKeysVisible) {
+      setWalletKeysVisible(false);
+      return;
+    }
+    if (!keyWalletName) {
+      setError("Select a wallet before revealing keys.");
+      return;
+    }
+
+    setBusyAction("read-wallet-keys");
+    setError(null);
+    setNotice(null);
+    try {
+      const keys = await window.unccoinDesktop.readWalletKeys(keyWalletName);
+      setWalletKeys(keys);
+      setWalletKeysVisible(true);
+    } catch (keyError) {
+      setError(String(keyError));
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -1686,7 +1726,7 @@ function App() {
                     <button
                       type="button"
                       className="address-copy"
-                      onClick={() => void handleCopyWalletAddress()}
+                      onClick={() => void copyToClipboard(loadedWallet.address, "Wallet address")}
                       title="Copy wallet address"
                       aria-label="Copy wallet address"
                     >
@@ -2062,6 +2102,56 @@ function App() {
                 </form>
               </section>
             </div>
+
+            <section className="panel wallet-key-panel">
+              <div className="panel-title">
+                <h3>Wallet Keys</h3>
+                <span>{walletKeysVisible ? "revealed" : "hidden"}</span>
+              </div>
+              <div className="key-toolbar">
+                <div>
+                  <strong>{keyWalletName || "No wallet selected"}</strong>
+                  <code>{keyWalletAddress || "-"}</code>
+                </div>
+                <button
+                  type="button"
+                  disabled={!keyWalletName || busyAction === "read-wallet-keys"}
+                  onClick={() => void handleRevealWalletKeys()}
+                >
+                  {walletKeysVisible ? "Hide Keys" : "Reveal Keys"}
+                </button>
+              </div>
+
+              {walletKeysVisible && walletKeys ? (
+                <div className="key-grid">
+                  <section className="key-card">
+                    <div className="panel-title compact-title">
+                      <h3>Public Key</h3>
+                      <button
+                        type="button"
+                        onClick={() => void copyToClipboard(formatWalletKey(walletKeys.publicKey), "Public key")}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <pre>{formatWalletKey(walletKeys.publicKey)}</pre>
+                  </section>
+
+                  <section className="key-card private">
+                    <div className="panel-title compact-title">
+                      <h3>Private Key</h3>
+                      <button
+                        type="button"
+                        onClick={() => void copyToClipboard(formatWalletKey(walletKeys.privateKey), "Private key")}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <pre>{formatWalletKey(walletKeys.privateKey)}</pre>
+                  </section>
+                </div>
+              ) : null}
+            </section>
 
             <section className="panel">
               <div className="panel-title">

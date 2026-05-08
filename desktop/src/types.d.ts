@@ -31,6 +31,19 @@ type WalletSummary = {
   preferredPort: number;
 };
 
+type WalletKeyDetails = {
+  name: string;
+  address: string;
+  publicKey: {
+    exponent: string;
+    modulus: string;
+  };
+  privateKey: {
+    exponent: string;
+    modulus: string;
+  };
+};
+
 type DeletedWalletSummary = {
   name: string;
   deletedPath: string;
@@ -51,6 +64,7 @@ interface Window {
     stopNode(): Promise<NodeRuntimeState>;
     getNodeState(): Promise<NodeRuntimeState>;
     listWallets(): Promise<WalletSummary[]>;
+    readWalletKeys(name: string): Promise<WalletKeyDetails>;
     createWallet(name: string, bitLength?: number, preferredPort?: number): Promise<WalletSummary>;
     updateWalletPreferredPort(name: string, preferredPort: number): Promise<WalletSummary>;
     deleteWallet(name: string): Promise<DeletedWalletSummary>;

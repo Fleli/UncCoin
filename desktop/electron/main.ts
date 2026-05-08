@@ -28,6 +28,19 @@ type WalletSummary = {
   preferredPort: number;
 };
 
+type WalletKeyDetails = {
+  name: string;
+  address: string;
+  publicKey: {
+    exponent: string;
+    modulus: string;
+  };
+  privateKey: {
+    exponent: string;
+    modulus: string;
+  };
+};
+
 type CreateWalletRequest = {
   name: string;
   bitLength?: number;
@@ -360,6 +373,52 @@ async function createWallet(request: CreateWalletRequest): Promise<WalletSummary
   return wallet;
 }
 
+async function readWalletKeys(name: string): Promise<WalletKeyDetails> {
+  const walletName = name.trim();
+  if (!walletName) {
+    throw new Error("Wallet name is required.");
+  }
+  const existingWallet = (await listWallets()).find((candidate) => candidate.name === walletName);
+  if (!existingWallet) {
+    throw new Error(`Wallet '${walletName}' was not found.`);
+  }
+
+  const output = await runPython([
+    "-m",
+    "wallet.cli",
+    "show",
+    "--name",
+    walletName,
+    "--json",
+    "--include-private",
+  ]);
+  const walletData = JSON.parse(output) as {
+    name?: string;
+    address?: string;
+    public_key?: {
+      exponent?: unknown;
+      modulus?: unknown;
+    };
+    private_key?: {
+      exponent?: unknown;
+      modulus?: unknown;
+    };
+  };
+
+  return {
+    name: walletData.name || existingWallet.name,
+    address: walletData.address || existingWallet.address,
+    publicKey: {
+      exponent: String(walletData.public_key?.exponent ?? ""),
+      modulus: String(walletData.public_key?.modulus ?? ""),
+    },
+    privateKey: {
+      exponent: String(walletData.private_key?.exponent ?? ""),
+      modulus: String(walletData.private_key?.modulus ?? ""),
+    },
+  };
+}
+
 async function updateWalletPreferredPort(
   request: UpdateWalletPreferredPortRequest,
 ): Promise<WalletSummary> {
@@ -500,6 +559,7 @@ ipcMain.handle("node:stop", () => stopNode());
 ipcMain.handle("node:state", () => runtimeState());
 ipcMain.handle("wallets:list", () => listWallets());
 ipcMain.handle("wallets:create", (_event, request: CreateWalletRequest) => createWallet(request));
+ipcMain.handle("wallets:keys", (_event, name: string) => readWalletKeys(name));
 ipcMain.handle(
   "wallets:update-preferred-port",
   (_event, request: UpdateWalletPreferredPortRequest) => updateWalletPreferredPort(request),

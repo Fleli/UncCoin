@@ -33,6 +33,19 @@ type WalletSummary = {
   preferredPort: number;
 };
 
+type WalletKeyDetails = {
+  name: string;
+  address: string;
+  publicKey: {
+    exponent: string;
+    modulus: string;
+  };
+  privateKey: {
+    exponent: string;
+    modulus: string;
+  };
+};
+
 type DeletedWalletSummary = {
   name: string;
   deletedPath: string;
@@ -54,6 +67,7 @@ contextBridge.exposeInMainWorld("unccoinDesktop", {
   stopNode: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:stop"),
   getNodeState: (): Promise<NodeRuntimeState> => ipcRenderer.invoke("node:state"),
   listWallets: (): Promise<WalletSummary[]> => ipcRenderer.invoke("wallets:list"),
+  readWalletKeys: (name: string): Promise<WalletKeyDetails> => ipcRenderer.invoke("wallets:keys", name),
   createWallet: (
     name: string,
     bitLength?: number,
