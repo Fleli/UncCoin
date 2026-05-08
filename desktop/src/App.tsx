@@ -197,6 +197,14 @@ function normalizePreferredPort(value: unknown): number {
   return DEFAULT_PORT;
 }
 
+function requireUiPort(value: string, label: string): number {
+  const port = Number(value);
+  if (Number.isInteger(port) && port > 0 && port < 65536) {
+    return port;
+  }
+  throw new Error(`${label} must be between 1 and 65535.`);
+}
+
 function App() {
   if (!window.unccoinDesktop) {
     return (
@@ -565,14 +573,16 @@ function App() {
     }
     setBusyAction("create-wallet");
     setError(null);
+    setNotice(null);
     try {
-      const wallet = await window.unccoinDesktop.createWallet(name, undefined, Number(port));
+      const preferredPort = requireUiPort(port, "P2P port");
+      const wallet = await window.unccoinDesktop.createWallet(name, undefined, preferredPort);
       const nextWallets = await window.unccoinDesktop.listWallets();
       setWallets(nextWallets);
       applyWalletSelection(wallet.name, nextWallets);
       setWalletSearch("");
       setNewWalletName("");
-      setNotice(`Created wallet ${wallet.name}`);
+      await launchWalletNode(wallet.name, "create-wallet");
     } catch (walletError) {
       setError(String(walletError));
     } finally {
@@ -589,7 +599,8 @@ function App() {
     setError(null);
     setNotice(null);
     try {
-      const wallet = await window.unccoinDesktop.updateWalletPreferredPort(walletName, Number(port));
+      const preferredPort = requireUiPort(port, "P2P port");
+      const wallet = await window.unccoinDesktop.updateWalletPreferredPort(walletName, preferredPort);
       const nextWallets = await window.unccoinDesktop.listWallets();
       setWallets(nextWallets);
       applyWalletSelection(wallet.name, nextWallets);
@@ -601,26 +612,35 @@ function App() {
     }
   }
 
-  async function handleStart(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusyAction("start-node");
+  async function launchWalletNode(walletNameToLaunch: string, busyLabel: string) {
+    const nodePort = requireUiPort(port, "P2P port");
+    const nodeApiPort = requireUiPort(apiPort, "API port");
+
+    setWalletName(walletNameToLaunch);
+    setBusyAction(busyLabel);
     setStartupPhase("starting-node");
     setStartupComplete(false);
     setBootstrapAttempts([]);
     setSyncStatus(null);
     setError(null);
     setNotice(null);
+
+    const nextState = await window.unccoinDesktop.startNode({
+      walletName: walletNameToLaunch,
+      host,
+      port: nodePort,
+      apiPort: nodeApiPort,
+      peers: launchPeerList,
+    });
+    setNodeState(nextState);
+    const startupApiPort = nextState.config?.apiPort ?? nodeApiPort;
+    await finishStartup(startupApiPort, nextState.config);
+  }
+
+  async function handleStart(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     try {
-      const nextState = await window.unccoinDesktop.startNode({
-        walletName,
-        host,
-        port: Number(port),
-        apiPort: Number(apiPort),
-        peers: launchPeerList,
-      });
-      setNodeState(nextState);
-      const startupApiPort = nextState.config?.apiPort ?? Number(apiPort);
-      await finishStartup(startupApiPort, nextState.config);
+      await launchWalletNode(walletName, "start-node");
     } catch (startError) {
       setError(String(startError));
     } finally {
@@ -820,6 +840,7 @@ function App() {
 
   const isStartingNode = (
     busyAction === "start-node"
+    || (busyAction === "create-wallet" && startupPhase !== "idle")
     || (nodeState.running && !startupComplete)
   );
   const launchLogs = logs.slice(-5);
@@ -991,25 +1012,6 @@ function App() {
                       </button>
                     </div>
 
-                    <label>
-                      Host
-                      <input
-                        value={host}
-                        onChange={(event) => setHost(event.target.value)}
-                        disabled={busyAction !== null}
-                      />
-                    </label>
-
-                    <label>
-                      Peers
-                      <input
-                        value={launchPeers}
-                        placeholder="127.0.0.1:9001, 127.0.0.1:9002"
-                        onChange={(event) => setLaunchPeers(event.target.value)}
-                        disabled={busyAction !== null}
-                      />
-                    </label>
-
                     <button type="submit" disabled={!walletName || busyAction !== null}>
                       Start Node
                     </button>
@@ -1042,11 +1044,38 @@ function App() {
                       </div>
                     </dl>
                     <button type="submit" disabled={!newWalletName.trim() || busyAction !== null}>
-                      Create Wallet
+                      Create and Start
                     </button>
                   </form>
                 </section>
               </div>
+
+              <section className="bootstrap-panel shared-launch-settings">
+                <div className="secondary-title">
+                  <h3>Node Settings</h3>
+                  <p>Used when launching an existing wallet or creating a new one.</p>
+                </div>
+                <div className="field-row">
+                  <label>
+                    Host
+                    <input
+                      value={host}
+                      onChange={(event) => setHost(event.target.value)}
+                      disabled={busyAction !== null}
+                    />
+                  </label>
+
+                  <label>
+                    Peers
+                    <input
+                      value={launchPeers}
+                      placeholder="127.0.0.1:9001, 127.0.0.1:9002"
+                      onChange={(event) => setLaunchPeers(event.target.value)}
+                      disabled={busyAction !== null}
+                    />
+                  </label>
+                </div>
+              </section>
 
               <section className="bootstrap-panel bootstrap-secondary">
                 <div className="secondary-title">
