@@ -23,6 +23,10 @@ if [[ "${UNCCOIN_PRIVATE_AUTOMINE:-0}" == "1" ]]; then
   ARGS+=(--private-automine)
 fi
 
+if [[ -n "${UNCCOIN_API_PORT:-}" ]]; then
+  ARGS+=(--api-host "${UNCCOIN_API_HOST:-127.0.0.1}" --api-port "$UNCCOIN_API_PORT")
+fi
+
 for PEER in "$@"; do
   ARGS+=(--peer "$PEER")
 done
