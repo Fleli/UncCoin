@@ -862,121 +862,146 @@ function App() {
               <div className="launch-header">
                 <div>
                   <h1>UncCoin Desktop</h1>
-                  <p>Choose a wallet to start a local node.</p>
+                  <p>Start a node from an existing wallet or create a new one.</p>
                 </div>
                 <span className="status-pill">offline</span>
               </div>
-              <div className="bootstrap-panel">
-                <h3>Bootstrap Peers</h3>
-                <div className="bootstrap-list">
-                  {BOOTSTRAP_PEERS.map((peer) => (
-                    <div
-                      className={`peer-status ${isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "skipped" : ""}`}
-                      key={peer}
-                    >
-                      <code>{peer}</code>
-                      <span>{isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "self" : "auto"}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
 
-              <form className="launch-form" onSubmit={handleStart}>
-                <label>
-                  Search Wallets
-                  <input
-                    value={walletSearch}
-                    placeholder="Filter by wallet name, address, or port"
-                    onChange={(event) => setWalletSearch(event.target.value)}
-                    disabled={busyAction !== null}
-                  />
-                </label>
-
-                <div className="wallet-picker">
-                  {wallets.length === 0 ? (
-                    <p className="empty">No stored wallets found.</p>
-                  ) : filteredWallets.length === 0 ? (
-                    <p className="empty">No wallets match this filter.</p>
-                  ) : (
-                    filteredWallets.map((wallet) => (
-                      <button
-                        type="button"
-                        className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
-                        key={wallet.name}
-                        onClick={() => applyWalletSelection(wallet.name)}
+              <div className="launch-split">
+                <section className="launch-pane">
+                  <div className="pane-title">
+                    <h2>Launch Existing Wallet</h2>
+                    <p>{walletName || "No wallet selected"}</p>
+                  </div>
+                  <form className="launch-form" onSubmit={handleStart}>
+                    <label>
+                      Search Wallets
+                      <input
+                        value={walletSearch}
+                        placeholder="Filter by wallet name, address, or port"
+                        onChange={(event) => setWalletSearch(event.target.value)}
                         disabled={busyAction !== null}
-                      >
-                        <span>{wallet.name}</span>
-                        <code>{shortHash(wallet.address, 18)}</code>
-                        <small>port {wallet.preferredPort}</small>
-                      </button>
-                    ))
-                  )}
-                </div>
+                      />
+                    </label>
 
-                <div className="field-row">
-                  <label>
-                    P2P Port
-                    <input
-                      value={port}
-                      inputMode="numeric"
-                      onChange={(event) => {
-                        setPort(event.target.value);
-                        const nextPort = Number(event.target.value || DEFAULT_PORT);
-                        setApiPort(String(nextPort + 10000));
-                      }}
-                      disabled={busyAction !== null}
-                    />
-                  </label>
-                  <label>
-                    API Port
-                    <input
-                      value={apiPort}
-                      inputMode="numeric"
-                      onChange={(event) => setApiPort(event.target.value)}
-                      disabled={busyAction !== null}
-                    />
-                  </label>
-                </div>
+                    <div className="wallet-picker">
+                      {wallets.length === 0 ? (
+                        <p className="empty">No stored wallets found.</p>
+                      ) : filteredWallets.length === 0 ? (
+                        <p className="empty">No wallets match this filter.</p>
+                      ) : (
+                        filteredWallets.map((wallet) => (
+                          <button
+                            type="button"
+                            className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
+                            key={wallet.name}
+                            onClick={() => applyWalletSelection(wallet.name)}
+                            disabled={busyAction !== null}
+                          >
+                            <span>{wallet.name}</span>
+                            <code>{shortHash(wallet.address, 18)}</code>
+                            <small>port {wallet.preferredPort}</small>
+                          </button>
+                        ))
+                      )}
+                    </div>
 
-                <label>
-                  Host
-                  <input
-                    value={host}
-                    onChange={(event) => setHost(event.target.value)}
-                    disabled={busyAction !== null}
-                  />
-                </label>
+                    <div className="field-row">
+                      <label>
+                        P2P Port
+                        <input
+                          value={port}
+                          inputMode="numeric"
+                          onChange={(event) => {
+                            setPort(event.target.value);
+                            const nextPort = Number(event.target.value || DEFAULT_PORT);
+                            setApiPort(String(nextPort + 10000));
+                          }}
+                          disabled={busyAction !== null}
+                        />
+                      </label>
+                      <label>
+                        API Port
+                        <input
+                          value={apiPort}
+                          inputMode="numeric"
+                          onChange={(event) => setApiPort(event.target.value)}
+                          disabled={busyAction !== null}
+                        />
+                      </label>
+                    </div>
 
-                <label>
-                  Peers
-                  <input
-                    value={launchPeers}
-                    placeholder="127.0.0.1:9001, 127.0.0.1:9002"
-                    onChange={(event) => setLaunchPeers(event.target.value)}
-                    disabled={busyAction !== null}
-                  />
-                </label>
+                    <label>
+                      Host
+                      <input
+                        value={host}
+                        onChange={(event) => setHost(event.target.value)}
+                        disabled={busyAction !== null}
+                      />
+                    </label>
 
-                <button type="submit" disabled={!walletName || busyAction !== null}>
-                  Start Node
-                </button>
-              </form>
+                    <label>
+                      Peers
+                      <input
+                        value={launchPeers}
+                        placeholder="127.0.0.1:9001, 127.0.0.1:9002"
+                        onChange={(event) => setLaunchPeers(event.target.value)}
+                        disabled={busyAction !== null}
+                      />
+                    </label>
 
-              <form className="launch-create" onSubmit={handleCreateWallet}>
-                <label>
-                  New Wallet
-                  <input
-                    value={newWalletName}
-                    placeholder="Wallet name"
-                    onChange={(event) => setNewWalletName(event.target.value)}
-                    disabled={busyAction !== null}
-                  />
-                </label>
-                <button type="submit" disabled={!newWalletName.trim() || busyAction !== null}>
-                  Create Wallet
-                </button>
-              </form>
+                    <div className="bootstrap-panel">
+                      <h3>Bootstrap Peers</h3>
+                      <div className="bootstrap-list">
+                        {BOOTSTRAP_PEERS.map((peer) => (
+                          <div
+                            className={`peer-status ${isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "skipped" : ""}`}
+                            key={peer}
+                          >
+                            <code>{peer}</code>
+                            <span>{isLocalBootstrapPeer(peer, previewNodeConfig, localAddresses) ? "self" : "auto"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button type="submit" disabled={!walletName || busyAction !== null}>
+                      Start Node
+                    </button>
+                  </form>
+                </section>
+
+                <section className="launch-pane create-pane">
+                  <div className="pane-title">
+                    <h2>Create New Wallet</h2>
+                    <p>Uses the selected P2P port as the wallet default.</p>
+                  </div>
+                  <form className="launch-create" onSubmit={handleCreateWallet}>
+                    <label>
+                      Wallet Name
+                      <input
+                        value={newWalletName}
+                        placeholder="Wallet name"
+                        onChange={(event) => setNewWalletName(event.target.value)}
+                        disabled={busyAction !== null}
+                      />
+                    </label>
+                    <dl className="create-summary">
+                      <div>
+                        <dt>Preferred Port</dt>
+                        <dd>{port}</dd>
+                      </div>
+                      <div>
+                        <dt>API Port</dt>
+                        <dd>{apiPort}</dd>
+                      </div>
+                    </dl>
+                    <button type="submit" disabled={!newWalletName.trim() || busyAction !== null}>
+                      Create Wallet
+                    </button>
+                  </form>
+                </section>
+              </div>
 
               {notice ? <p className="launch-notice">{notice}</p> : null}
               {error ? <p className="launch-error">{error}</p> : null}

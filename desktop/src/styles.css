@@ -150,7 +150,7 @@ pre {
 }
 
 .launch-card {
-  width: min(760px, calc(100vw - 80px));
+  width: min(1120px, calc(100vw - 80px));
   max-height: calc(100vh - 80px);
   overflow: auto;
   border: 1px solid #303b43;
@@ -178,16 +178,33 @@ pre {
   gap: 14px;
 }
 
-.launch-form {
-  margin-top: 16px;
+.launch-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.75fr);
+  gap: 18px;
 }
 
-.launch-create {
-  margin-top: 18px;
-  border-top: 1px solid #29333a;
-  padding-top: 18px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+.launch-pane {
+  min-width: 0;
+  border: 1px solid #29333a;
+  border-radius: 8px;
+  padding: 16px;
+  background: #151a1d;
+}
+
+.create-pane {
+  border-left-color: #52616a;
+  background: #171d20;
+}
+
+.pane-title {
+  margin-bottom: 14px;
+}
+
+.pane-title p {
+  margin-top: 4px;
+  color: #98a4ab;
+  font-size: 13px;
 }
 
 .wallet-picker {
@@ -223,6 +240,22 @@ pre {
   color: #9aa5ac;
   font-size: 12px;
   font-weight: 720;
+}
+
+.create-summary {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.create-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #29333a;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #101416;
 }
 
 .launch-details {
