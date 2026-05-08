@@ -136,6 +136,21 @@ pre {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
+.reference-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+code.reference-text {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
@@ -316,7 +331,6 @@ pre {
 }
 
 .wallet-choice span,
-.wallet-choice code,
 .wallet-choice small {
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -542,7 +556,6 @@ pre {
 
 .peer-status code {
   color: #9fc3d3;
-  overflow-wrap: anywhere;
 }
 
 .peer-status span {
@@ -671,12 +684,20 @@ pre {
   background: #211d12;
 }
 
+.notice,
+.error-banner {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .error-banner {
   max-width: 520px;
   border-color: #815046;
   color: #ffb7aa;
   background: #261615;
-  overflow-wrap: anywhere;
 }
 
 .side-section,
@@ -1033,7 +1054,7 @@ dd {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(720px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
   align-items: stretch;
   justify-content: space-between;
   position: sticky;
@@ -1139,7 +1160,6 @@ dd {
 
 .key-toolbar code {
   color: #9fc3d3;
-  overflow-wrap: anywhere;
 }
 
 .key-grid {
@@ -1196,6 +1216,7 @@ dd {
 }
 
 .topbar-actions {
+  min-width: 0;
   align-content: flex-start;
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -1236,7 +1257,6 @@ dd {
   color: #9fc3d3;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-  overflow-wrap: anywhere;
 }
 
 .blockchain-toolbar p {
@@ -1306,7 +1326,6 @@ dd {
 .transaction-heading span {
   min-width: 0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  overflow-wrap: anywhere;
   text-align: right;
 }
 
@@ -1314,11 +1333,11 @@ dd {
   min-width: 0;
   color: #f2f5f7;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: clamp(9px, 0.72vw, 12px);
+  font-size: 12px;
   line-height: 1.2;
   overflow: hidden;
   text-align: right;
-  text-overflow: clip;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1357,7 +1376,6 @@ dd {
   color: #eef2f4;
   font-size: 12px;
   font-weight: 680;
-  overflow-wrap: anywhere;
 }
 
 .block-transactions {
@@ -1452,7 +1470,6 @@ dd {
 
 .traffic-peer-row code {
   color: #9fc3d3;
-  overflow-wrap: anywhere;
 }
 
 .traffic-peer-row dd {
@@ -1490,7 +1507,6 @@ dd {
   color: #f2f5f7;
   font-size: 22px;
   line-height: 1.15;
-  overflow-wrap: anywhere;
 }
 
 .panel-grid {
@@ -1550,7 +1566,6 @@ dd {
 .select-row span,
 .table-row span {
   min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 .list-row strong,
@@ -1586,7 +1601,6 @@ dd {
 .list-row code,
 .select-row code {
   color: #9fc3d3;
-  overflow-wrap: anywhere;
 }
 
 .code-input {
@@ -1613,7 +1627,6 @@ dd {
 .details-row summary {
   cursor: pointer;
   color: #9fc3d3;
-  overflow-wrap: anywhere;
 }
 
 .details-row pre,

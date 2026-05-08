@@ -338,14 +338,89 @@ function payloadValue(transaction: TransactionPayload, key: string): string | nu
   return JSON.stringify(value);
 }
 
-function displayReference(value: string | null | undefined, length = 16): { value: string; title?: string } {
+function displayReference(value: string | null | undefined, _length = 16): { value: string; title?: string } {
   if (!value) {
     return { value: "-" };
   }
   return {
     value,
-    title: value.length > length ? value : undefined,
+    title: value,
   };
+}
+
+function referenceDisplay(
+  value: string | number | null | undefined,
+  prefix = "",
+  suffix = "",
+): string {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return `${prefix}${String(value)}${suffix}`;
+}
+
+function referenceTitle(value: string | number | null | undefined, title?: string): string | undefined {
+  if (title !== undefined) {
+    return title;
+  }
+  if (value === null || value === undefined || value === "") {
+    return undefined;
+  }
+  return String(value);
+}
+
+function ReferenceText({
+  value,
+  title,
+  prefix,
+  suffix,
+}: {
+  value: string | number | null | undefined;
+  title?: string;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <span className="reference-text" title={referenceTitle(value, title)}>
+      {referenceDisplay(value, prefix, suffix)}
+    </span>
+  );
+}
+
+function ReferenceCode({
+  value,
+  title,
+  prefix,
+  suffix,
+}: {
+  value: string | number | null | undefined;
+  title?: string;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <code className="reference-text" title={referenceTitle(value, title)}>
+      {referenceDisplay(value, prefix, suffix)}
+    </code>
+  );
+}
+
+function ReferenceStrong({
+  value,
+  title,
+  prefix,
+  suffix,
+}: {
+  value: string | number | null | undefined;
+  title?: string;
+  prefix?: string;
+  suffix?: string;
+}) {
+  return (
+    <strong className="reference-text" title={referenceTitle(value, title)}>
+      {referenceDisplay(value, prefix, suffix)}
+    </strong>
+  );
 }
 
 function isMiningRewardTransaction(transaction: TransactionPayload): boolean {
@@ -1740,7 +1815,7 @@ function App() {
                     : bootstrapAttempts
                   ).map((attempt) => (
                     <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
-                      <code>{attempt.peer}</code>
+                      <ReferenceCode value={attempt.peer} />
                       <span>{attempt.status}</span>
                     </div>
                   ))}
@@ -1755,7 +1830,7 @@ function App() {
                     <div className="bootstrap-list">
                       {activeSyncPeers.map((peer) => (
                         <div className="peer-status connected" key={peer.peer}>
-                          <code>{peer.peer}</code>
+                          <ReferenceCode value={peer.peer} />
                           <span>height {peer.expected_start_height}</span>
                         </div>
                       ))}
@@ -1820,7 +1895,7 @@ function App() {
                             disabled={busyAction !== null}
                           >
                             <span>{wallet.name}</span>
-                            <code>{wallet.address}</code>
+                            <ReferenceCode value={wallet.address} />
                             <small>port {wallet.preferredPort}</small>
                           </button>
                         ))
@@ -2017,7 +2092,7 @@ function App() {
                           disabled={busyAction !== null}
                           onChange={() => toggleBootstrapPeer(peer)}
                         />
-                        <code>{peer}</code>
+                        <ReferenceCode value={peer} />
                         <span>{isDisabled ? "off" : isSelf ? "self" : "auto"}</span>
                       </label>
                     );
@@ -2141,13 +2216,13 @@ function App() {
             <div>
               <dt>P2P</dt>
               <dd>
-                <code>{Number.isInteger(runningNodePort) ? `${runningNodeHost}:${runningNodePort}` : "-"}</code>
+                <ReferenceCode value={Number.isInteger(runningNodePort) ? `${runningNodeHost}:${runningNodePort}` : null} />
               </dd>
             </div>
             <div>
               <dt>API</dt>
               <dd>
-                <code>{Number.isInteger(runningNodeApiPort) ? runningNodeApiPort : "-"}</code>
+                <ReferenceCode value={Number.isInteger(runningNodeApiPort) ? runningNodeApiPort : null} />
               </dd>
             </div>
             <div>
@@ -2215,10 +2290,10 @@ function App() {
                       type="button"
                       className="address-copy"
                       onClick={() => void copyToClipboard(loadedWallet.address, "Wallet address")}
-                      title="Copy wallet address"
+                      title={loadedWallet.address}
                       aria-label="Copy wallet address"
                     >
-                      <code>{loadedWallet.address}</code>
+                      <ReferenceCode value={loadedWallet.address} />
                     </button>
                   ) : (
                     "-"
@@ -2228,8 +2303,8 @@ function App() {
             </dl>
           </div>
           <div className="topbar-actions">
-            {notice ? <span className="notice">{notice}</span> : null}
-            {error ? <span className="error-banner">{error}</span> : null}
+            {notice ? <span className="notice" title={notice}>{notice}</span> : null}
+            {error ? <span className="error-banner" title={error}>{error}</span> : null}
             <button type="button" onClick={() => void handleRefresh()} disabled={!isApiAvailable}>
               Refresh
             </button>
@@ -2263,7 +2338,7 @@ function App() {
               </article>
               <article className="metric wide">
                 <span>Tip</span>
-                <strong>{snapshot.chainHead?.tip_hash ?? "-"}</strong>
+                <ReferenceStrong value={snapshot.chainHead?.tip_hash} />
               </article>
             </div>
 
@@ -2279,7 +2354,7 @@ function App() {
                   ) : (
                     snapshot.balances.map((balance) => (
                       <div className="list-row" key={balance.address}>
-                        <span>{balance.alias || balance.address}</span>
+                        <ReferenceText value={balance.alias || balance.address} title={balance.address} />
                         <strong>{balance.balance}</strong>
                       </div>
                     ))
@@ -2298,8 +2373,8 @@ function App() {
                   ) : (
                     snapshot.pendingTransactions.map((transaction) => (
                       <div className="list-row stacked" key={transaction.transaction_id}>
-                        <span>{transactionSummary(transaction)}</span>
-                        <code>{transaction.transaction_id}</code>
+                        <ReferenceText value={transactionSummary(transaction)} />
+                        <ReferenceCode value={transaction.transaction_id} />
                       </div>
                     ))
                   )}
@@ -2318,7 +2393,7 @@ function App() {
                 ) : (
                   latestBlocks.map((block) => (
                     <div className="list-row" key={block.block_hash}>
-                      <span>#{block.height} {block.block_hash}</span>
+                      <ReferenceText value={block.block_hash} title={block.block_hash} prefix={`#${block.height} `} />
                       <strong>{block.transaction_count} tx</strong>
                     </div>
                   ))
@@ -2333,7 +2408,7 @@ function App() {
             <section className="panel blockchain-toolbar">
               <div>
                 <strong>{blockchainWindowLabel}</strong>
-                <span>{blockchainWindow ? blockchainWindow.targetHash : snapshot.chainHead?.tip_hash ?? "-"}</span>
+                <ReferenceText value={blockchainWindow ? blockchainWindow.targetHash : snapshot.chainHead?.tip_hash} />
               </div>
               <form className="block-search-form" onSubmit={handleBlockchainSearch}>
                 <input
@@ -2426,7 +2501,7 @@ function App() {
                         key={balance.address}
                         onClick={() => setTxReceiver(balance.alias || balance.address)}
                       >
-                        <span>{balance.alias || balance.address}</span>
+                        <ReferenceText value={balance.alias || balance.address} title={balance.address} />
                         <strong>{balance.balance}</strong>
                       </button>
                     ))
@@ -2446,8 +2521,8 @@ function App() {
                 ) : (
                   snapshot.pendingTransactions.map((transaction) => (
                     <div className="list-row stacked" key={transaction.transaction_id}>
-                      <span>{transactionSummary(transaction)}</span>
-                      <code>{transaction.transaction_id}</code>
+                      <ReferenceText value={transactionSummary(transaction)} />
+                      <ReferenceCode value={transaction.transaction_id} />
                     </div>
                   ))
                 )}
@@ -2492,7 +2567,9 @@ function App() {
                   </div>
                   <div>
                     <dt>Tip</dt>
-                    <dd>{miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash ?? "-"}</dd>
+                    <dd>
+                      <ReferenceText value={miningStatus?.tip_hash ?? snapshot.chainHead?.state_tip_hash} />
+                    </dd>
                   </div>
                 </dl>
 
@@ -2616,7 +2693,7 @@ function App() {
                   {miningStatus?.recent_miners.length ? (
                     miningStatus.recent_miners.map((miner) => (
                       <div className="list-row stacked" key={miner.address}>
-                        <span>{miner.alias || miner.address}</span>
+                        <ReferenceText value={miner.alias || miner.address} title={miner.address} />
                         <code>{miner.blocks} recent block{miner.blocks === 1 ? "" : "s"}</code>
                       </div>
                     ))
@@ -2661,7 +2738,7 @@ function App() {
                         disabled={nodeState.running}
                       >
                         <span>{wallet.name}</span>
-                        <code>{wallet.address}</code>
+                        <ReferenceCode value={wallet.address} />
                       </button>
                     ))
                   )}
@@ -2719,7 +2796,7 @@ function App() {
               <div className="key-toolbar">
                 <div>
                   <strong>{keyWalletName || "No wallet selected"}</strong>
-                  <code>{keyWalletAddress || "-"}</code>
+                  <ReferenceCode value={keyWalletAddress} />
                 </div>
                 <button
                   type="button"
@@ -2769,7 +2846,7 @@ function App() {
               <div className="table">
                 {snapshot.balances.map((balance) => (
                   <div className="table-row" key={balance.address}>
-                    <code>{balance.address}</code>
+                    <ReferenceCode value={balance.address} />
                     <span>{balance.alias || "-"}</span>
                     <strong>{balance.balance}</strong>
                   </div>
@@ -2833,7 +2910,7 @@ function App() {
                     <div className="bootstrap-list">
                       {networkBootstrapAttempts.map((attempt) => (
                         <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
-                          <code>{attempt.peer}</code>
+                          <ReferenceCode value={attempt.peer} />
                           <span title={attempt.detail}>{attempt.detail ?? attempt.status}</span>
                         </div>
                       ))}
@@ -2888,7 +2965,7 @@ function App() {
                   snapshot.networkStats.peers.map((peer) => (
                     <div className="traffic-peer-row" key={peer.peer}>
                       <div>
-                        <code>{peer.peer}</code>
+                        <ReferenceCode value={peer.peer} />
                         <span>{peer.connected ? "connected" : "disconnected"}</span>
                       </div>
                       <dl>
@@ -2949,7 +3026,9 @@ function App() {
                     latestMessages.map((message, index) => (
                       <div className="list-row stacked" key={message.message_id || `${message.timestamp}-${index}`}>
                         <span>{message.content || "-"}</span>
-                        <code>{message.sender || message.peer || "-"}{" -> "}{message.receiver || "-"}</code>
+                        <ReferenceCode
+                          value={`${message.sender || message.peer || "-"} -> ${message.receiver || "-"}`}
+                        />
                       </div>
                     ))
                   )}
@@ -3136,8 +3215,8 @@ function App() {
                           setAuthContractAddress(contract.address);
                         }}
                       >
-                        <span>{contract.address}</span>
-                        <code>{String(contract.contract.code_hash ?? "-")}</code>
+                        <ReferenceText value={contract.address} />
+                        <ReferenceCode value={String(contract.contract.code_hash ?? "-")} />
                       </button>
                     ))
                   )}
@@ -3155,7 +3234,9 @@ function App() {
                   ) : (
                     latestReceipts.map((receipt) => (
                       <details className="details-row" key={receipt.transaction_id}>
-                        <summary>{receipt.transaction_id}</summary>
+                        <summary>
+                          <ReferenceText value={receipt.transaction_id} />
+                        </summary>
                         <pre>{formatJson(receipt.receipt)}</pre>
                       </details>
                     ))
@@ -3204,13 +3285,15 @@ function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload |
     <section className={`block-card ${focused ? "focused-block" : ""}`}>
       <header>
         <span>Block #{block.height}</span>
-        <strong title={block.block_hash}>{block.block_hash}</strong>
+        <ReferenceStrong value={block.block_hash} />
       </header>
 
       <dl className="block-meta">
         <div>
           <dt>Previous</dt>
-          <dd title={block.previous_hash}>{block.previous_hash}</dd>
+          <dd>
+            <ReferenceText value={block.previous_hash} />
+          </dd>
         </div>
         <div>
           <dt>Nonce</dt>
@@ -3256,13 +3339,15 @@ function BlockchainTransactionCard({ transaction }: { transaction: TransactionPa
     <article className={`chain-transaction ${transactionClass}`}>
       <div className="transaction-heading">
         <strong>{transactionKindLabel(transaction)}</strong>
-        <span title={transaction.transaction_id}>{transaction.transaction_id}</span>
+        <ReferenceText value={transaction.transaction_id} />
       </div>
       <dl>
         {transactionRows(transaction).map((row) => (
           <div key={`${transaction.transaction_id}-${row.label}`}>
             <dt>{row.label}</dt>
-            <dd title={row.title}>{row.value}</dd>
+            <dd title={row.title}>
+              <ReferenceText value={row.value} title={row.title ?? row.value} />
+            </dd>
           </div>
         ))}
       </dl>
@@ -3283,7 +3368,7 @@ function PeerList({ title, peers }: { title: string; peers: string[] }) {
         ) : (
           peers.map((peer) => (
             <div className="list-row" key={peer}>
-              <code>{peer}</code>
+              <ReferenceCode value={peer} />
             </div>
           ))
         )}
