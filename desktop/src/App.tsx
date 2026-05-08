@@ -2706,85 +2706,47 @@ function App() {
 
         {activeTab === "wallet" ? (
           <section className="view">
-            <div className="panel-grid two">
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Local Wallets</h3>
-                  <span>{wallets.length}</span>
-                </div>
-                <form className="inline-form" onSubmit={handleCreateWallet}>
-                  <input
-                    value={newWalletName}
-                    placeholder="New wallet name"
-                    onChange={(event) => setNewWalletName(event.target.value)}
-                    disabled={busyAction === "create-wallet"}
-                  />
-                  <button type="submit" disabled={busyAction === "create-wallet" || newWalletApiPort === "-"}>
-                    Create
-                  </button>
-                </form>
-                <div className="list padded">
-                  {wallets.length === 0 ? (
-                    <p className="empty">No local wallets found.</p>
-                  ) : (
-                    wallets.map((wallet) => (
-                      <button
-                        type="button"
-                        className="select-row"
-                        key={wallet.name}
-                        onClick={() => applyWalletSelection(wallet.name)}
-                        disabled={nodeState.running}
-                      >
-                        <span>{wallet.name}</span>
-                        <ReferenceCode value={wallet.address} />
-                      </button>
-                    ))
-                  )}
-                </div>
-              </section>
-
-              <section className="panel">
-                <div className="panel-title">
-                  <h3>Aliases and Autosend</h3>
-                  <span>{snapshot.nodeInfo?.autosend.enabled ? "autosend on" : "autosend off"}</span>
-                </div>
-                <form className="form-grid" onSubmit={handleAlias}>
-                  <label>
-                    Wallet
-                    <input value={aliasWallet} onChange={(event) => setAliasWallet(event.target.value)} />
-                  </label>
-                  <label>
-                    Alias
-                    <input value={aliasName} onChange={(event) => setAliasName(event.target.value)} />
-                  </label>
+            <section className="panel">
+              <div className="panel-title">
+                <h3>Aliases and Autosend</h3>
+                <span>{snapshot.nodeInfo?.autosend.enabled ? "autosend on" : "autosend off"}</span>
+              </div>
+              <form className="form-grid" onSubmit={handleAlias}>
+                <label>
+                  Wallet
+                  <input value={aliasWallet} onChange={(event) => setAliasWallet(event.target.value)} />
+                </label>
+                <label>
+                  Alias
+                  <input value={aliasName} onChange={(event) => setAliasName(event.target.value)} />
+                </label>
+                <button type="submit" disabled={disableNodeAction}>
+                  Save Alias
+                </button>
+              </form>
+              <form className="form-grid" onSubmit={handleAutosend}>
+                <label>
+                  Autosend Target
+                  <input value={autosendTarget} onChange={(event) => setAutosendTarget(event.target.value)} />
+                </label>
+                <div className="button-row">
                   <button type="submit" disabled={disableNodeAction}>
-                    Save Alias
+                    Enable
                   </button>
-                </form>
-                <form className="form-grid" onSubmit={handleAutosend}>
-                  <label>
-                    Autosend Target
-                    <input value={autosendTarget} onChange={(event) => setAutosendTarget(event.target.value)} />
-                  </label>
-                  <div className="button-row">
-                    <button type="submit" disabled={disableNodeAction}>
-                      Enable
-                    </button>
-                    <button
-                      type="button"
-                      disabled={disableNodeAction}
-                      onClick={() => void runNodeAction("disable-autosend", async () => {
-                        await setAutosend(activeApiPort, null);
-                        setAutosendTarget("");
-                        return { label: "Autosend disabled" };
-                      })}
-                    >
-                      Disable
-                    </button>
-                  </div>
-                </form>
-              </section>
-            </div>
+                  <button
+                    type="button"
+                    disabled={disableNodeAction}
+                    onClick={() => void runNodeAction("disable-autosend", async () => {
+                      await setAutosend(activeApiPort, null);
+                      setAutosendTarget("");
+                      return { label: "Autosend disabled" };
+                    })}
+                  >
+                    Disable
+                  </button>
+                </div>
+              </form>
+            </section>
 
             <section className="panel wallet-key-panel">
               <div className="panel-title">
