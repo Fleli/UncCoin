@@ -2491,44 +2491,65 @@ function App() {
 
         {activeTab === "transfer" ? (
           <section className="view">
-            <div className="panel-grid two">
-              <section className="panel transfer-panel">
-                <div className="panel-title">
-                  <h3>Send Transfer</h3>
-                  <span>{loadedWallet ? `${formatAmount(ownBalance?.balance)} available` : "wallet required"}</span>
-                </div>
-                <form className="form-grid" onSubmit={handleTransaction}>
-                  <label>
-                    Recipient
-                    <input
-                      value={txReceiver}
-                      placeholder="Wallet address or alias"
-                      onChange={(event) => setTxReceiver(event.target.value)}
-                    />
-                  </label>
-                  <div className="field-row">
-                    <label>
-                      Amount
-                      <input
-                        value={txAmount}
-                        inputMode="decimal"
-                        onChange={(event) => setTxAmount(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Fee
-                      <input
-                        value={txFee}
-                        inputMode="decimal"
-                        onChange={(event) => setTxFee(event.target.value)}
-                      />
-                    </label>
+            <div className="transfer-layout">
+              <div className="transfer-main-column">
+                <section className="panel transfer-panel">
+                  <div className="panel-title">
+                    <h3>Send Transfer</h3>
+                    <span>{loadedWallet ? `${formatAmount(ownBalance?.balance)} available` : "wallet required"}</span>
                   </div>
-                  <button type="submit" disabled={disableNodeAction}>
-                    Send Transfer
-                  </button>
-                </form>
-              </section>
+                  <form className="form-grid" onSubmit={handleTransaction}>
+                    <label>
+                      Recipient
+                      <input
+                        value={txReceiver}
+                        placeholder="Wallet address or alias"
+                        onChange={(event) => setTxReceiver(event.target.value)}
+                      />
+                    </label>
+                    <div className="field-row">
+                      <label>
+                        Amount
+                        <input
+                          value={txAmount}
+                          inputMode="decimal"
+                          onChange={(event) => setTxAmount(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Fee
+                        <input
+                          value={txFee}
+                          inputMode="decimal"
+                          onChange={(event) => setTxFee(event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <button type="submit" disabled={disableNodeAction}>
+                      Send Transfer
+                    </button>
+                  </form>
+                </section>
+
+                <section className="panel">
+                  <div className="panel-title">
+                    <h3>Pending Transfers</h3>
+                    <span>{snapshot.pendingTransactions.length}</span>
+                  </div>
+                  <div className="list">
+                    {snapshot.pendingTransactions.length === 0 ? (
+                      <p className="empty">Mempool is empty.</p>
+                    ) : (
+                      snapshot.pendingTransactions.map((transaction) => (
+                        <div className="list-row stacked" key={transaction.transaction_id}>
+                          <ReferenceText value={transactionSummary(transaction)} />
+                          <ReferenceCode value={transaction.transaction_id} />
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+              </div>
 
               <section className="panel">
                 <div className="panel-title">
@@ -2554,25 +2575,6 @@ function App() {
                 </div>
               </section>
             </div>
-
-            <section className="panel">
-              <div className="panel-title">
-                <h3>Pending Transfers</h3>
-                <span>{snapshot.pendingTransactions.length}</span>
-              </div>
-              <div className="list">
-                {snapshot.pendingTransactions.length === 0 ? (
-                  <p className="empty">Mempool is empty.</p>
-                ) : (
-                  snapshot.pendingTransactions.map((transaction) => (
-                    <div className="list-row stacked" key={transaction.transaction_id}>
-                      <ReferenceText value={transactionSummary(transaction)} />
-                      <ReferenceCode value={transaction.transaction_id} />
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
           </section>
         ) : null}
 
