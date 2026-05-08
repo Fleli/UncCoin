@@ -51,8 +51,22 @@ type DeletedWalletSummary = {
   deletedPath: string;
 };
 
+type RandomnessCommitRecord = {
+  id: string;
+  requestId: string;
+  seed: string;
+  salt: string;
+  commitmentHash: string;
+  transactionId: string;
+  createdAt: string;
+  status: "pending" | "revealed";
+  revealTransactionId?: string;
+  revealedAt?: string;
+};
+
 type DesktopState = {
   seenReceivedMessageCount: number;
+  randomnessCommits: RandomnessCommitRecord[];
 };
 
 type ApiRequestOptions = {

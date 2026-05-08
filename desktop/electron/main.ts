@@ -1,7 +1,7 @@
 import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { cpus, networkInterfaces } from "node:os";
 import path from "node:path";
@@ -62,8 +62,22 @@ type DeletedWalletSummary = {
   deletedPath: string;
 };
 
+type RandomnessCommitRecord = {
+  id: string;
+  requestId: string;
+  seed: string;
+  salt: string;
+  commitmentHash: string;
+  transactionId: string;
+  createdAt: string;
+  status: "pending" | "revealed";
+  revealTransactionId?: string;
+  revealedAt?: string;
+};
+
 type DesktopState = {
   seenReceivedMessageCount: number;
+  randomnessCommits: RandomnessCommitRecord[];
 };
 
 type DesktopStateRequest = {
@@ -153,12 +167,37 @@ function desktopStatePath(walletKey: string): string {
 
 function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
   const seenReceivedMessageCount = Number(value.seenReceivedMessageCount);
+  const rawRandomnessCommits: unknown[] = Array.isArray(value.randomnessCommits)
+    ? value.randomnessCommits
+    : [];
   return {
     seenReceivedMessageCount: (
       Number.isInteger(seenReceivedMessageCount) && seenReceivedMessageCount >= 0
         ? seenReceivedMessageCount
         : 0
     ),
+    randomnessCommits: rawRandomnessCommits
+      .filter((record): record is Record<string, unknown> => (
+        typeof record === "object" && record !== null
+      ))
+      .map((record): RandomnessCommitRecord => {
+        const status: RandomnessCommitRecord["status"] = (
+          record.status === "revealed" ? "revealed" : "pending"
+        );
+        return {
+          id: String(record.id || randomUUID()),
+          requestId: String(record.requestId || ""),
+          seed: String(record.seed || ""),
+          salt: String(record.salt || ""),
+          commitmentHash: String(record.commitmentHash || ""),
+          transactionId: String(record.transactionId || ""),
+          createdAt: String(record.createdAt || new Date().toISOString()),
+          status,
+          ...(record.revealTransactionId ? { revealTransactionId: String(record.revealTransactionId) } : {}),
+          ...(record.revealedAt ? { revealedAt: String(record.revealedAt) } : {}),
+        };
+      })
+      .filter((record) => record.requestId && record.seed && record.commitmentHash && record.transactionId),
   };
 }
 
