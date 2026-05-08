@@ -295,9 +295,20 @@ function formatElapsed(startedAt: string | null | undefined): string {
   return minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
-function miningBackendButtonLabel(option: MiningBackendOption, selected: MiningBackendId): string {
+function miningBackendButtonLabel(
+  option: MiningBackendOption,
+  selected: MiningBackendId,
+  needsWarmup: boolean,
+  isWarming: boolean,
+): string {
+  if (isWarming) {
+    return "Warming";
+  }
   if (option.available) {
-    return option.id === selected ? "Selected" : `Use ${option.label}`;
+    if (option.id === selected) {
+      return needsWarmup ? "Warm up" : "Selected";
+    }
+    return needsWarmup ? `Use & warm ${option.label}` : `Use ${option.label}`;
   }
   if (option.can_build) {
     return `Build ${option.label}`;
@@ -309,9 +320,14 @@ function miningBackendIsWarmed(
   option: MiningBackendOption,
   warmup: MiningWarmupStatus | null,
 ): boolean {
+  if (!option.available) {
+    return false;
+  }
+  if (option.id === "python") {
+    return true;
+  }
   return (
-    option.available
-    && warmup?.status === "ready"
+    warmup?.status === "ready"
     && warmup.error === null
     && warmup.backend === option.id
   );
@@ -1538,13 +1554,26 @@ function App() {
   }
 
   async function handleUseMiningBackend(backend: MiningBackendId) {
-    await runNodeAction("set-mining-backend", async () => {
-      const response = await setMiningBackend(activeApiPort, backend);
-      setMiningBackends(response);
-      const status = await readMiningStatus(activeApiPort);
-      setMiningStatus(status);
-      return { label: "Mining backend", detail: response.selected };
-    }, "none");
+    await runNodeAction("warm-miner", async () => {
+      let backendStatus = miningBackends;
+      if (backend !== selectedMiningBackend) {
+        backendStatus = await setMiningBackend(activeApiPort, backend);
+        setMiningBackends(backendStatus);
+      }
+      const warmup = await startMiningWarmup(activeApiPort);
+      setMiningStatus((currentStatus) => (
+        currentStatus === null
+          ? currentStatus
+          : { ...currentStatus, warmup, backend: warmup.backend }
+      ));
+      setMiningBackends((currentBackends) => {
+        const baseBackends = backendStatus ?? currentBackends;
+        return baseBackends === null
+          ? baseBackends
+          : { ...baseBackends, warmup, selected: warmup.backend };
+      });
+      return { label: "Miner warmup started", detail: warmup.backend };
+    }, "mining");
   }
 
   async function handleBuildMiningBackend(backend: MiningBackendId) {
@@ -1553,23 +1582,6 @@ function App() {
       setMiningBackends(response.capabilities);
       return { label: "Built miner", detail: response.path };
     }, "none");
-  }
-
-  async function handleWarmMinerNow() {
-    await runNodeAction("warm-miner", async () => {
-      const warmup = await startMiningWarmup(activeApiPort);
-      setMiningStatus((currentStatus) => (
-        currentStatus === null
-          ? currentStatus
-          : { ...currentStatus, warmup, backend: warmup.backend }
-      ));
-      setMiningBackends((currentBackends) => (
-        currentBackends === null
-          ? currentBackends
-          : { ...currentBackends, warmup, selected: warmup.backend }
-      ));
-      return { label: "Miner warmup started", detail: warmup.backend };
-    }, "mining");
   }
 
   async function handleConnectPeer(event: FormEvent<HTMLFormElement>) {
@@ -2616,13 +2628,6 @@ function App() {
               <section className="miner-backends">
                 <div className="panel-title compact-title">
                   <h3>Miner Backend</h3>
-                  <button
-                    type="button"
-                    onClick={() => void handleWarmMinerNow()}
-                    disabled={!isApiAvailable || busyAction !== null || miningActive || miningWarmupStatus?.active === true}
-                  >
-                    {miningWarmupStatus?.active ? "Warming" : "Warm Up Now"}
-                  </button>
                 </div>
                 <div className="backend-meta">
                   <span>Selected: {selectedMiningBackend}</span>
@@ -2635,7 +2640,13 @@ function App() {
                     miningBackendOptions.map((option) => {
                       const isSelected = option.id === selectedMiningBackend;
                       const canAct = option.available || option.can_build;
-                      const needsWarmup = option.available && !miningBackendIsWarmed(option, miningWarmupStatus);
+                      const isWarmingBackend = (
+                        miningWarmupStatus?.active === true
+                        && miningWarmupStatus.backend === option.id
+                      );
+                      const needsWarmup = option.available
+                        && !isWarmingBackend
+                        && !miningBackendIsWarmed(option, miningWarmupStatus);
                       return (
                         <button
                           type="button"
@@ -2653,7 +2664,7 @@ function App() {
                             || automineRunning
                             || miningWarmupStatus?.active === true
                             || !canAct
-                            || (option.available && isSelected)
+                            || (option.available && isSelected && !needsWarmup)
                           }
                           onClick={() => {
                             if (!option.available && option.can_build) {
@@ -2666,7 +2677,9 @@ function App() {
                           <span className="backend-option-heading">
                             <span className="backend-label">
                               <span>{option.label}</span>
-                              {needsWarmup ? (
+                              {isWarmingBackend ? (
+                                <span className="backend-loading-spinner" title={`${option.label} is warming`} />
+                              ) : needsWarmup ? (
                                 <span
                                   className="backend-warmup-warning"
                                   title={`${option.label} is not warmed up`}
@@ -2683,7 +2696,9 @@ function App() {
                             ) : null}
                           </span>
                           <small>{option.description}</small>
-                          <strong>{miningBackendButtonLabel(option, selectedMiningBackend)}</strong>
+                          <strong>
+                            {miningBackendButtonLabel(option, selectedMiningBackend, needsWarmup, isWarmingBackend)}
+                          </strong>
                         </button>
                       );
                     })

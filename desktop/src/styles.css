@@ -990,11 +990,6 @@ dd {
   background: #151a1d;
 }
 
-.miner-backends .panel-title button {
-  padding: 6px 9px;
-  font-size: 12px;
-}
-
 .backend-meta {
   display: flex;
   flex-wrap: wrap;
@@ -1080,6 +1075,23 @@ dd {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.backend-loading-spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(159, 195, 211, 0.28);
+  border-top-color: #9fc3d3;
+  border-radius: 50%;
+  animation: backend-spin 0.8s linear infinite;
+}
+
+@keyframes backend-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .backend-warning-badge {
