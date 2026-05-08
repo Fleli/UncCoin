@@ -214,8 +214,9 @@ class ProofOfWorkGpuOnlySettingTests(unittest.TestCase):
             gpu_failed=False,
         )
 
-        with mock.patch.dict(os.environ, {"UNCCOIN_MINING_CPU_WORKERS": "0"}, clear=False):
-            proof_of_work(block, difficulty_bits=0)
+        with mock.patch("core.block.native_extension_built", return_value=True):
+            with mock.patch.dict(os.environ, {"UNCCOIN_MINING_CPU_WORKERS": "0"}, clear=False):
+                proof_of_work(block, difficulty_bits=0)
 
         self.assertEqual(run_chunked_mining.call_args.args[3], 0)
         self.assertEqual(run_chunked_mining.call_args.kwargs["gpu_device_ids"], (0, 1))
