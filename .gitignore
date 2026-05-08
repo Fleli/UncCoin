@@ -1,5 +1,16 @@
-.venv
-__pycache__
+.venv/
+.DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Native miner builds are platform/Python-version specific.
+native_pow*.so
+native_pow*.pyd
+native_pow*.dll
+native_pow*.dylib
+
+# Local state snapshots and runtime data.
 __*old_state/
 state/wallets/*
 !state/wallets/.gitkeep
@@ -10,10 +21,17 @@ state/msgs/*
 state/aliases/*
 !state/aliases/.gitkeep
 state/contracts/
+state/deleted/
+state/desktop/
 state/mining_tuning.json
+
+# Local generated scripts.
 scripts/run_auto.sh
 scripts/run_auto_parallel.sh
-/.idea
+
+# IDE/editor files.
+/.idea/
+
+# Runtime scratch files.
 *.txt
 !requirements*.txt
-*.json
