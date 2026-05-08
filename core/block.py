@@ -1,4 +1,5 @@
 import os
+import platform
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -17,6 +18,7 @@ from core.mining_scheduler import get_cpu_chunk_size
 from core.mining_scheduler import get_gpu_device_ids
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available as native_gpu_available
+from core.native_pow import native_extension_built
 from core.python_pow import run_python_mining
 from core.serialization import serialize_block_prefix
 from core.transaction import Transaction
@@ -150,6 +152,8 @@ def proof_of_work(
             progress_interval,
         )
     if backend == MINING_BACKEND_NATIVE:
+        if not native_extension_built():
+            raise ValueError("Native C mining is not built. Build the native miner first.")
         return _native_proof_of_work(
             block,
             difficulty_bits,
@@ -158,12 +162,35 @@ def proof_of_work(
             gpu_mode="disabled",
         )
     if backend == MINING_BACKEND_GPU:
+        if platform.system() != "Linux" and not native_extension_built():
+            raise ValueError("GPU mining is not built. Build the native miner first.")
         return _native_proof_of_work(
             block,
             difficulty_bits,
             progress_callback,
             progress_interval,
             gpu_mode="required",
+        )
+
+    if not native_extension_built():
+        if platform.system() == "Linux":
+            try:
+                return _native_proof_of_work(
+                    block,
+                    difficulty_bits,
+                    progress_callback,
+                    progress_interval,
+                    gpu_mode="required",
+                )
+            except ProofOfWorkCancelled:
+                raise
+            except Exception:
+                pass
+        return _python_proof_of_work(
+            block,
+            difficulty_bits,
+            progress_callback,
+            progress_interval,
         )
 
     try:

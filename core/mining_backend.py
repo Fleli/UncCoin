@@ -1,4 +1,5 @@
 import os
+import platform
 from typing import Any
 
 from core.native_pow import build_native_pow_extension
@@ -48,7 +49,8 @@ def mining_backend_capabilities(selected: str = MINING_BACKEND_AUTO) -> dict[str
     selected_backend = normalize_mining_backend(selected)
     native_status = native_extension_status()
     native_available = native_extension_built()
-    gpu_available_now, device_ids, gpu_error = _safe_gpu_status() if native_available else (
+    should_probe_gpu = native_available or platform.system() == "Linux"
+    gpu_available_now, device_ids, gpu_error = _safe_gpu_status() if should_probe_gpu else (
         False,
         (),
         "Native miner is not built.",
