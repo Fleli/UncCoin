@@ -27,6 +27,7 @@ UVM_GAS_COSTS = {
     "GT": 2,
     "AND": 3,
     "OR": 3,
+    "XOR": 3,
     "NOT": 2,
     "SHA256": 20,
     "MEM_LOAD": 3,
@@ -378,7 +379,19 @@ def _execute_instruction(
         stack[-1], stack[-2] = stack[-2], stack[-1]
         return None
 
-    if opcode in {"ADD", "SUB", "MUL", "DIV", "MOD", "EQ", "LT", "GT", "AND", "OR"}:
+    if opcode in {
+        "ADD",
+        "SUB",
+        "MUL",
+        "DIV",
+        "MOD",
+        "EQ",
+        "LT",
+        "GT",
+        "AND",
+        "OR",
+        "XOR",
+    }:
         _require_operand_count(opcode, operands, 0)
         right = _pop(stack)
         left = _pop(stack)
@@ -406,6 +419,8 @@ def _execute_instruction(
             _push(stack, 1 if left != 0 and right != 0 else 0)
         elif opcode == "OR":
             _push(stack, 1 if left != 0 or right != 0 else 0)
+        elif opcode == "XOR":
+            _push(stack, left ^ right)
         return None
 
     if opcode == "NOT":

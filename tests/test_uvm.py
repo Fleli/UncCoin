@@ -71,6 +71,28 @@ class UvmExecutionTests(unittest.TestCase):
             (int(hashlib.sha256(b"123").hexdigest(), 16),),
         )
 
+    def test_xor_mixes_words_bitwise(self) -> None:
+        result = execute_uvm_program(
+            [
+                ["PUSH", 0b1010],
+                ["PUSH", 0b1100],
+                ["XOR"],
+                ["SHA256"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender="caller",
+                contract_address="contract",
+                gas_limit=30,
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(
+            result.stack,
+            (int(hashlib.sha256(b"6").hexdigest(), 16),),
+        )
+
     def test_conditional_jump(self) -> None:
         result = execute_uvm_program(
             [

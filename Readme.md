@@ -150,6 +150,7 @@ LT
 GT
 AND
 OR
+XOR
 NOT
 SHA256
 MEM_LOAD <key>
@@ -178,7 +179,7 @@ DUP/SWAP: 2
 ADD/SUB: 3
 MUL/DIV/MOD: 5
 EQ/LT/GT/NOT: 2
-AND/OR/JUMP: 3
+AND/OR/XOR/JUMP: 3
 JUMPI/MEM_STORE: 5
 MEM_LOAD: 3
 SHA256/HAS_AUTH/REQUIRE_AUTH: 20
@@ -197,6 +198,9 @@ the VM finishes successfully and all source authorization checks pass.
 Fuel economics are represented by the execute transaction fee. If `gas_price` is zero, the fee
 is a flat fee as in earlier transactions. If `gas_price` is positive, the chain requires the
 declared fee to equal `gas_used * gas_price`; that fee is then included in the miner reward.
+
+For simple shared randomness, contracts can read multiple revealed seeds, combine them with
+bitwise `XOR`, then hash the result with `SHA256`.
 
 ## Local Convenience Commands
 
