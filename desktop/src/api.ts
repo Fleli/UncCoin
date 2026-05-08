@@ -51,7 +51,7 @@ export type TransactionPayload = {
   fee: string;
   nonce: number;
   timestamp: string;
-  transaction_type?: string;
+  kind?: string;
   payload?: Record<string, unknown>;
 };
 
