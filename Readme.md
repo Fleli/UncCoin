@@ -96,8 +96,9 @@ deployer, deploy nonce, and code hash. The deploy source can be inline JSON or a
 `state/contracts`. The JSON can be either a program directly or an object with `program` and
 `metadata` fields. Metadata is an object; `metadata.request_ids` is reserved for request ids
 relevant to the contract. Integer metadata values are available to deployed code through
-`READ_METADATA`. For example, `deploy 0 coinflip.uvm` deploys `state/contracts/coinflip.uvm`
-and prints the derived contract address and code hash.
+`READ_METADATA`. `state/contracts` is ignored by git and is intended for local contract files
+you do not want pushed. For example, `deploy 0 coinflip.uvm` deploys
+`state/contracts/coinflip.uvm` and prints the derived contract address and code hash.
 
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
 program by exact address or unique address prefix.
@@ -237,13 +238,13 @@ transfers are applied only after successful execution.
 For simple shared randomness, contracts can read multiple revealed seeds, combine them with
 bitwise `XOR`, then hash the result with `SHA256`.
 
-The repo includes `state/contracts/coinflip.uvm`, a two-wallet example that should be deployed
-with `deploy 0 coinflip.uvm`. It expects both hardcoded wallets to authorize the printed
-contract address and reveal under request id `coinflip`, stakes 100 from each wallet, and pays
-200 to the derived winner. The toy contract reads `reveal_deadline` from deploy metadata:
-before that deadline, a missing reveal no-ops; after it, a single missing revealer forfeits
-100 to the revealer who showed up. It stores `settled = 1` after a payout or timeout close so
-replay execution cannot pay twice.
+A local `state/contracts/coinflip.uvm` file can hold a two-wallet example deployed with
+`deploy 0 coinflip.uvm`. It expects both hardcoded wallets to authorize the printed contract
+address and reveal under request id `coinflip`, stakes 100 from each wallet, and pays 200 to
+the derived winner. The toy contract reads `reveal_deadline` from deploy metadata: before
+that deadline, a missing reveal no-ops; after it, a single missing revealer forfeits 100 to the
+revealer who showed up. It stores `settled = 1` after a payout or timeout close so replay
+execution cannot pay twice.
 
 ## Local Convenience Commands
 

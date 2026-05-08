@@ -1,7 +1,5 @@
-import json
 import unittest
 from decimal import Decimal
-from pathlib import Path
 
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
@@ -12,15 +10,73 @@ PLAYER_B = "7153252bebd059f5210023029130e39a91a656edc334d611800b75245a080630"
 REQUEST_ID = "coinflip"
 CONTRACT_ADDRESS = "coinflip-contract"
 
+COINFLIP_METADATA = {
+    "request_ids": [REQUEST_ID],
+    "reveal_deadline": 10,
+}
+
+COINFLIP_PROGRAM = [
+    ["LOAD", "settled"],
+    ["JUMPI", 51],
+    ["HAS_REVEAL", PLAYER_A, REQUEST_ID],
+    ["MEM_STORE", "a_revealed"],
+    ["HAS_REVEAL", PLAYER_B, REQUEST_ID],
+    ["MEM_STORE", "b_revealed"],
+    ["MEM_LOAD", "a_revealed"],
+    ["MEM_LOAD", "b_revealed"],
+    ["AND"],
+    ["JUMPI", 32],
+    ["BLOCK_HEIGHT"],
+    ["READ_METADATA", "reveal_deadline"],
+    ["GT"],
+    ["JUMPI", 15],
+    ["HALT"],
+    ["MEM_LOAD", "a_revealed"],
+    ["JUMPI", 22],
+    ["MEM_LOAD", "b_revealed"],
+    ["JUMPI", 27],
+    ["PUSH", 1],
+    ["STORE", "settled"],
+    ["HALT"],
+    ["PUSH", 1],
+    ["STORE", "settled"],
+    ["PUSH", 100],
+    ["TRANSFER_FROM", PLAYER_B, PLAYER_A, REQUEST_ID],
+    ["HALT"],
+    ["PUSH", 1],
+    ["STORE", "settled"],
+    ["PUSH", 100],
+    ["TRANSFER_FROM", PLAYER_A, PLAYER_B, REQUEST_ID],
+    ["HALT"],
+    ["PUSH", 1],
+    ["STORE", "settled"],
+    ["PUSH", 100],
+    ["TRANSFER_FROM", PLAYER_A, "$CONTRACT", REQUEST_ID],
+    ["PUSH", 100],
+    ["TRANSFER_FROM", PLAYER_B, "$CONTRACT", REQUEST_ID],
+    ["READ_REVEAL", PLAYER_A, REQUEST_ID],
+    ["READ_REVEAL", PLAYER_B, REQUEST_ID],
+    ["XOR"],
+    ["SHA256"],
+    ["PUSH", 2],
+    ["MOD"],
+    ["JUMPI", 48],
+    ["PUSH", 200],
+    ["TRANSFER_FROM", "$CONTRACT", PLAYER_A, "coinflip:payout"],
+    ["HALT"],
+    ["PUSH", 200],
+    ["TRANSFER_FROM", "$CONTRACT", PLAYER_B, "coinflip:payout"],
+    ["HALT"],
+    ["HALT"],
+]
+
 
 def load_coinflip_program():
-    contract_path = Path(__file__).resolve().parent.parent / "state/contracts/coinflip.uvm"
-    return json.loads(contract_path.read_text(encoding="utf-8"))["program"]
+    return COINFLIP_PROGRAM
 
 
 def load_coinflip_metadata():
-    contract_path = Path(__file__).resolve().parent.parent / "state/contracts/coinflip.uvm"
-    return json.loads(contract_path.read_text(encoding="utf-8"))["metadata"]
+    return COINFLIP_METADATA
 
 
 def reveal(seed: int) -> dict[str, str]:

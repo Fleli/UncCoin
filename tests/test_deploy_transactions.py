@@ -2,6 +2,8 @@ import json
 import unittest
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from core.blockchain import Blockchain
 from core.contracts import compute_contract_code_hash
@@ -217,11 +219,34 @@ class NodeDeployTransactionTests(unittest.TestCase):
             wallet=deployer,
             blockchain=blockchain,
         )
+        contract_source = {
+            "metadata": {
+                "request_ids": ["coinflip"],
+                "reveal_deadline": 10,
+            },
+            "program": [
+                ["READ_METADATA", "reveal_deadline"],
+                ["STORE", "deadline"],
+                ["HALT"],
+            ],
+        }
 
-        deploy_transaction = node.create_signed_deploy_from_source(
-            contract_source="coinflip",
-            fee="0",
-        )
+        contracts_parent = Node.REPO_ROOT / "state" / "contracts"
+        contracts_parent.mkdir(parents=True, exist_ok=True)
+        original_contracts_dir = Node.CONTRACTS_DIR
+        with TemporaryDirectory(dir=contracts_parent) as contracts_dir:
+            Node.CONTRACTS_DIR = Path(contracts_dir)
+            try:
+                (Node.CONTRACTS_DIR / "coinflip.uvm").write_text(
+                    json.dumps(contract_source),
+                    encoding="utf-8",
+                )
+                deploy_transaction = node.create_signed_deploy_from_source(
+                    contract_source="coinflip",
+                    fee="0",
+                )
+            finally:
+                Node.CONTRACTS_DIR = original_contracts_dir
 
         accepted, reason = node._handle_incoming_transaction(deploy_transaction)
         self.assertTrue(accepted, reason)
@@ -230,15 +255,12 @@ class NodeDeployTransactionTests(unittest.TestCase):
             description="deploy coinflip contract",
         )
 
-        expected_program = json.loads(
-            (Node.CONTRACTS_DIR / "coinflip.uvm").read_text(encoding="utf-8")
-        )
         contract = blockchain.get_contract(deploy_transaction.receiver)
         self.assertIsNotNone(contract)
         assert contract is not None
         self.assertEqual(contract["code_hash"], deploy_transaction.payload["code_hash"])
-        self.assertEqual(contract["program"], expected_program["program"])
-        self.assertEqual(contract["metadata"], expected_program["metadata"])
+        self.assertEqual(contract["program"], contract_source["program"])
+        self.assertEqual(contract["metadata"], contract_source["metadata"])
 
     def test_node_creates_contract_bound_authorization_receipt(self) -> None:
         blockchain = create_blockchain()
