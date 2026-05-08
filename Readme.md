@@ -99,6 +99,8 @@ relevant to the contract. Integer metadata values are available to deployed code
 `READ_METADATA`. `state/contracts` is ignored by git and is intended for local contract files
 you do not want pushed. For example, `deploy 0 coinflip.uvm` deploys
 `state/contracts/coinflip.uvm` and prints the derived contract address and code hash.
+Readable `.uvm-asm` files can be compiled into deployable `.uvm` JSON with
+`python3 -m assembler <source.uvm-asm> -o <output.uvm>`.
 
 `view-contract` prints a deployed contract's full address, deployer, code hash, metadata, and
 program by exact address or unique address prefix.
