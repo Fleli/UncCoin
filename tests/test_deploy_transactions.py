@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime
 from decimal import Decimal
@@ -215,12 +216,44 @@ class NodeDeployTransactionTests(unittest.TestCase):
         accepted, reason = node._handle_incoming_transaction(deploy_transaction)
         self.assertTrue(accepted, reason)
 
+    def test_node_creates_signed_deploy_transaction_from_contract_file(self) -> None:
+        blockchain = create_blockchain()
+        deployer = create_wallet(name="deployer")
+        node = Node(
+            host="127.0.0.1",
+            port=9501,
+            wallet=deployer,
+            blockchain=blockchain,
+        )
+
+        deploy_transaction = node.create_signed_deploy_from_source(
+            contract_address="coinflip",
+            contract_source="coinflip",
+            fee="0",
+        )
+
+        accepted, reason = node._handle_incoming_transaction(deploy_transaction)
+        self.assertTrue(accepted, reason)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="deploy coinflip contract",
+        )
+
+        expected_program = json.loads(
+            (Node.CONTRACTS_DIR / "coinflip.uvm").read_text(encoding="utf-8")
+        )
+        contract = blockchain.get_contract("coinflip")
+        self.assertIsNotNone(contract)
+        assert contract is not None
+        self.assertEqual(contract["program"], expected_program)
+        self.assertEqual(contract["metadata"], {})
+
     def test_node_creates_signed_execute_transaction_and_formats_receipt(self) -> None:
         blockchain = create_blockchain()
         caller = create_wallet(name="caller")
         node = Node(
             host="127.0.0.1",
-            port=9501,
+            port=9502,
             wallet=caller,
             blockchain=blockchain,
         )

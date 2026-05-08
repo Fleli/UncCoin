@@ -49,7 +49,7 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
-deploy <contract> <fee> <json>
+deploy <contract> <fee> <json-or-file>
 execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
 receipt <txid-prefix>
 msg <wallet> <content>
@@ -89,9 +89,11 @@ sha256("UVM_REVEAL|1|<wallet>|<request_id>|<seed>|<salt>")
 Seeds are normalized as unsigned 256-bit integers. Decimal and `0x` hexadecimal seed strings
 are accepted. Salt is optional.
 
-`deploy` stores UVM code and metadata under a contract address. The deploy JSON can be either
-a program directly or an object with `program` and `metadata` fields. Metadata is an object;
-`metadata.request_ids` is reserved for request ids relevant to the contract.
+`deploy` stores UVM code and metadata under a contract address. The deploy source can be
+inline JSON or a file in `state/contracts`. The JSON can be either a program directly or an
+object with `program` and `metadata` fields. Metadata is an object; `metadata.request_ids` is
+reserved for request ids relevant to the contract. For example,
+`deploy coinflip 0 coinflip.uvm` deploys `state/contracts/coinflip.uvm`.
 
 `execute` runs deployed UVM code, or inline code when no deployed contract exists. The execute
 JSON can be a program directly or an object with `input` and `authorizations` fields.
@@ -212,6 +214,10 @@ transfers are applied only after successful execution.
 
 For simple shared randomness, contracts can read multiple revealed seeds, combine them with
 bitwise `XOR`, then hash the result with `SHA256`.
+
+The repo includes `state/contracts/coinflip.uvm`, a two-wallet example that should be deployed
+under contract address `coinflip`. It expects both hardcoded wallets to authorize and reveal
+under request id `coinflip`, stakes 100 from each wallet, and pays 200 to the derived winner.
 
 ## Local Convenience Commands
 

@@ -59,6 +59,7 @@ class Node:
     autosend_task: asyncio.Task | None = field(default=None, init=False)
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
+    CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
 
     def __post_init__(self) -> None:
         if self.blockchain is None:
@@ -267,6 +268,32 @@ class Node:
         )
         transaction.signature = self.wallet.sign_message(transaction.signing_payload())
         return transaction
+
+    def create_signed_deploy_from_source(
+        self,
+        contract_address: str,
+        contract_source: str,
+        fee: str,
+    ) -> Transaction:
+        program, metadata = self.load_contract_deploy_source(contract_source)
+        return self.create_signed_deploy(
+            contract_address=contract_address,
+            program=program,
+            metadata=metadata,
+            fee=fee,
+        )
+
+    def load_contract_deploy_source(self, contract_source: str) -> tuple[object, dict]:
+        deploy_payload = self._load_contract_deploy_payload(contract_source)
+        if isinstance(deploy_payload, dict) and "program" in deploy_payload:
+            program = deploy_payload["program"]
+            metadata = deploy_payload.get("metadata", {})
+        else:
+            program = deploy_payload
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise ValueError("Deploy metadata must be a JSON object.")
+        return program, metadata
 
     def create_signed_execute(
         self,
@@ -563,8 +590,8 @@ Commands:
                                   Commit a randomness hash for a request
     reveal <request-id> <seed> <fee> [salt]
                                   Reveal a seed for a prior commitment
-    deploy <contract> <fee> <json>
-                                  Deploy UVM code with optional metadata
+    deploy <contract> <fee> <json-or-file>
+                                  Deploy UVM code from JSON or state/contracts
     execute <contract> <gas-limit> <gas-price> <value> <max-fee> <json>
                                   Execute UVM code with optional authorizations
     receipt <txid-prefix>          Show a UVM execution receipt
@@ -822,23 +849,17 @@ Wallet commands accept either a wallet address or a local alias."""
                         " ",
                         maxsplit=2,
                     )
-                    deploy_payload = json.loads(deploy_json)
-                    if isinstance(deploy_payload, dict) and "program" in deploy_payload:
-                        program = deploy_payload["program"]
-                        metadata = deploy_payload.get("metadata", {})
-                    else:
-                        program = deploy_payload
-                        metadata = {}
-                    if not isinstance(metadata, dict):
-                        raise ValueError("Deploy metadata must be a JSON object.")
-                    transaction = self.create_signed_deploy(
+                    transaction = self.create_signed_deploy_from_source(
                         contract_address=contract_address,
-                        program=program,
-                        metadata=metadata,
+                        contract_source=deploy_json,
                         fee=fee,
                     )
                     await self.broadcast_transaction(transaction)
-                except (ValueError, json.JSONDecodeError) as error:
+                    print(
+                        "Deploy transaction broadcast: "
+                        f"{sha256_transaction_hash(transaction)}"
+                    )
+                except ValueError as error:
                     print(f"Invalid deploy command: {error}")
                 continue
 
@@ -1137,6 +1158,62 @@ Wallet commands accept either a wallet address or a local alias."""
 
         path = save_blockchain_state(self.wallet.address, self.blockchain)
         print(f"Saved blockchain state to {path}", flush=True)
+
+    def _load_contract_deploy_payload(self, contract_source: str):
+        try:
+            return json.loads(contract_source)
+        except json.JSONDecodeError:
+            contract_path = self._resolve_contract_source_path(contract_source)
+
+        try:
+            return json.loads(contract_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Contract file {contract_path.relative_to(self.REPO_ROOT)} "
+                f"does not contain valid JSON: {error}"
+            ) from error
+
+    def _resolve_contract_source_path(self, contract_source: str) -> Path:
+        cleaned_source = contract_source.strip()
+        if not cleaned_source:
+            raise ValueError("Contract source must not be empty.")
+
+        source_path = Path(cleaned_source)
+        candidates: list[Path] = []
+        if source_path.is_absolute():
+            candidates.append(source_path)
+            if source_path.suffix == "":
+                candidates.append(source_path.with_suffix(".uvm"))
+        else:
+            candidates.append(self.CONTRACTS_DIR / source_path)
+            if source_path.suffix == "":
+                candidates.append((self.CONTRACTS_DIR / source_path).with_suffix(".uvm"))
+            candidates.append(self.REPO_ROOT / source_path)
+            if source_path.suffix == "":
+                candidates.append((self.REPO_ROOT / source_path).with_suffix(".uvm"))
+
+        for candidate in candidates:
+            resolved_candidate = candidate.resolve()
+            try:
+                resolved_candidate.relative_to(self.REPO_ROOT.resolve())
+            except ValueError:
+                continue
+            if resolved_candidate.is_file():
+                return resolved_candidate
+
+        searched_paths = ", ".join(
+            self._format_contract_source_candidate(candidate)
+            for candidate in candidates
+        )
+        raise ValueError(
+            f"Contract source {cleaned_source} is neither inline JSON nor a readable "
+            f"contract file. Searched: {searched_paths}"
+        )
+
+    def _format_contract_source_candidate(self, candidate: Path) -> str:
+        if candidate.is_absolute() and self.REPO_ROOT in candidate.parents:
+            return str(candidate.relative_to(self.REPO_ROOT))
+        return str(candidate)
 
     def format_canonical_blockchain(self) -> str:
         if self.blockchain is None or not self.blockchain.blocks:

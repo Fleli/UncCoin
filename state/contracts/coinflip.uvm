@@ -1,0 +1,19 @@
+[
+  ["PUSH", 100],
+  ["TRANSFER_FROM", "fe269f427a5ad619ce480192db583a29a7ce4098b22111d9b7216e2fee6bc964", "coinflip", "coinflip"],
+  ["PUSH", 100],
+  ["TRANSFER_FROM", "7153252bebd059f5210023029130e39a91a656edc334d611800b75245a080630", "coinflip", "coinflip"],
+  ["READ_REVEAL", "fe269f427a5ad619ce480192db583a29a7ce4098b22111d9b7216e2fee6bc964", "coinflip"],
+  ["READ_REVEAL", "7153252bebd059f5210023029130e39a91a656edc334d611800b75245a080630", "coinflip"],
+  ["XOR"],
+  ["SHA256"],
+  ["PUSH", 2],
+  ["MOD"],
+  ["JUMPI", 14],
+  ["PUSH", 200],
+  ["TRANSFER_FROM", "coinflip", "fe269f427a5ad619ce480192db583a29a7ce4098b22111d9b7216e2fee6bc964", "coinflip:payout"],
+  ["HALT"],
+  ["PUSH", 200],
+  ["TRANSFER_FROM", "coinflip", "7153252bebd059f5210023029130e39a91a656edc334d611800b75245a080630", "coinflip:payout"],
+  ["HALT"]
+]
