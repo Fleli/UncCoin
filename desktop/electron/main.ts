@@ -78,6 +78,7 @@ type RandomnessCommitRecord = {
 
 type DesktopState = {
   seenReceivedMessageCount: number;
+  seenBlockHeight: number | null;
   randomnessCommits: RandomnessCommitRecord[];
 };
 
@@ -168,6 +169,9 @@ function desktopStatePath(walletKey: string): string {
 
 function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
   const seenReceivedMessageCount = Number(value.seenReceivedMessageCount);
+  const seenBlockHeight = typeof value.seenBlockHeight === "number"
+    ? value.seenBlockHeight
+    : null;
   const rawRandomnessCommits: unknown[] = Array.isArray(value.randomnessCommits)
     ? value.randomnessCommits
     : [];
@@ -176,6 +180,11 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
       Number.isInteger(seenReceivedMessageCount) && seenReceivedMessageCount >= 0
         ? seenReceivedMessageCount
         : 0
+    ),
+    seenBlockHeight: (
+      seenBlockHeight !== null && Number.isInteger(seenBlockHeight) && seenBlockHeight >= -1
+        ? seenBlockHeight
+        : null
     ),
     randomnessCommits: rawRandomnessCommits
       .filter((record): record is Record<string, unknown> => (

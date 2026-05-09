@@ -1005,6 +1005,7 @@ function App() {
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
   const [activeContractSubTab, setActiveContractSubTab] = useState<ContractSubTab>("deploy");
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
+  const [seenBlockHeight, setSeenBlockHeight] = useState<number | null>(null);
   const [randomnessCommits, setRandomnessCommits] = useState<RandomnessCommitRecord[]>([]);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
@@ -1075,6 +1076,14 @@ function App() {
     [snapshot.messages],
   );
   const unreadMessageCount = Math.max(0, receivedMessageCount - seenReceivedMessageCount);
+  const blockchainCurrentHeight = snapshot.chainHead?.height ?? null;
+  const unreadBlockCount = (
+    blockchainCurrentHeight !== null
+    && blockchainCurrentHeight >= 0
+    && seenBlockHeight !== null
+      ? Math.max(0, blockchainCurrentHeight - seenBlockHeight)
+      : 0
+  );
   const pendingRandomnessCommits = useMemo(
     () => randomnessCommits.filter((record) => record.status === "pending").reverse(),
     [randomnessCommits],
@@ -1119,6 +1128,17 @@ function App() {
     setSeenReceivedMessageCount(normalizedMessageCount);
     await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
       seenReceivedMessageCount: normalizedMessageCount,
+    });
+  }, [desktopStateKey]);
+
+  const markBlockchainSeen = useCallback(async (blockHeight: number) => {
+    if (!desktopStateKey) {
+      return;
+    }
+    const normalizedBlockHeight = Math.max(-1, blockHeight);
+    setSeenBlockHeight(normalizedBlockHeight);
+    await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
+      seenBlockHeight: normalizedBlockHeight,
     });
   }, [desktopStateKey]);
 
@@ -1322,6 +1342,7 @@ function App() {
   useEffect(() => {
     if (!desktopStateKey) {
       setSeenReceivedMessageCount(0);
+      setSeenBlockHeight(null);
       randomnessCommitsRef.current = [];
       setRandomnessCommits([]);
       return undefined;
@@ -1332,6 +1353,7 @@ function App() {
       .then((state) => {
         if (!cancelled) {
           setSeenReceivedMessageCount(state.seenReceivedMessageCount);
+          setSeenBlockHeight(state.seenBlockHeight);
           randomnessCommitsRef.current = state.randomnessCommits;
           setRandomnessCommits(state.randomnessCommits);
         }
@@ -1370,6 +1392,37 @@ function App() {
     markReceivedMessagesSeen,
     receivedMessageCount,
     seenReceivedMessageCount,
+  ]);
+
+  useEffect(() => {
+    if (
+      !desktopStateKey
+      || blockchainCurrentHeight === null
+      || blockchainCurrentHeight < 0
+    ) {
+      return;
+    }
+
+    if (seenBlockHeight === null) {
+      void markBlockchainSeen(blockchainCurrentHeight).catch((stateError) => {
+        setError(String(stateError));
+      });
+      return;
+    }
+
+    if (activeTab !== "blockchain" || blockchainCurrentHeight <= seenBlockHeight) {
+      return;
+    }
+
+    void markBlockchainSeen(blockchainCurrentHeight).catch((stateError) => {
+      setError(String(stateError));
+    });
+  }, [
+    activeTab,
+    blockchainCurrentHeight,
+    desktopStateKey,
+    markBlockchainSeen,
+    seenBlockHeight,
   ]);
 
   useEffect(() => {
@@ -2882,6 +2935,9 @@ function App() {
               <span className="tab-label">{tab.label}</span>
               {tab.id === "messages" && unreadMessageCount > 0 ? (
                 <span className="unread-badge">{unreadMessageCount}</span>
+              ) : null}
+              {tab.id === "blockchain" && unreadBlockCount > 0 ? (
+                <span className="unread-badge">{unreadBlockCount}</span>
               ) : null}
             </button>
           ))}

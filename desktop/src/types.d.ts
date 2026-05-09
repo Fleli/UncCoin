@@ -65,6 +65,7 @@ type RandomnessCommitRecord = {
 
 type DesktopState = {
   seenReceivedMessageCount: number;
+  seenBlockHeight: number | null;
   randomnessCommits: RandomnessCommitRecord[];
 };
 
