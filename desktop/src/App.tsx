@@ -75,8 +75,8 @@ const MINING_REWARD_SENDER = "SYSTEM";
 const RANDOMNESS_SEED_MODULUS = 1n << 256n;
 const COINFLIP_REVEAL_DEADLINE_BLOCKS = 20;
 
-type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
-type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabId = "blockchain" | "balances" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabIconName = "blocks" | "balances" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type ContractSubTab = "deploy" | "execute" | "authorization" | "randomness" | "contracts" | "receipts";
 type DeploySubTab = "raw" | "templates";
 type ContractTemplateId = "coinflip";
@@ -126,8 +126,8 @@ type NetworkEvent = {
 type StartupPhase = "idle" | "starting-node" | "waiting-api" | "warming-miner" | "connecting-bootstrap" | "fastsync" | "ready";
 
 const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
-  { id: "overview", label: "Overview", icon: "overview" },
   { id: "blockchain", label: "Blockchain", icon: "blocks" },
+  { id: "balances", label: "Balances", icon: "balances" },
   { id: "transfer", label: "Transfer", icon: "transfer" },
   { id: "mining", label: "Mining", icon: "pickaxe" },
   { id: "wallet", label: "Wallet", icon: "wallet" },
@@ -156,12 +156,12 @@ const contractTemplates: Array<{ id: ContractTemplateId; label: string; descript
 
 function TabIcon({ name }: { name: TabIconName }) {
   switch (name) {
-    case "overview":
+    case "balances":
       return (
         <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M4 11.5h4.5V16H4z" />
-          <path d="M11.5 4H16v12h-4.5z" />
-          <path d="M4 4h4.5v4.5H4z" />
+          <path d="M4 6.5c0-1.1 2.7-2 6-2s6 .9 6 2-2.7 2-6 2-6-.9-6-2Z" />
+          <path d="M4 6.5v3c0 1.1 2.7 2 6 2s6-.9 6-2v-3" />
+          <path d="M4 9.5v3c0 1.1 2.7 2 6 2s6-.9 6-2v-3" />
         </svg>
       );
     case "blocks":
@@ -1150,7 +1150,7 @@ function App() {
     );
   }
 
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("blockchain");
   const [wallets, setWallets] = useState<WalletSummary[]>([]);
   const [walletName, setWalletName] = useState("");
   const [walletSearch, setWalletSearch] = useState("");
@@ -3182,7 +3182,6 @@ function App() {
     && blockchainTipHeight !== null
     && blockchainTargetHeight < blockchainTipHeight
   );
-  const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = [...snapshot.receipts]
     .sort((left, right) => (
@@ -3411,8 +3410,8 @@ function App() {
             </nav>
           ) : null}
 
-        {activeTab === "overview" ? (
-          <section className="view">
+        {activeTab === "blockchain" ? (
+          <section className="view blockchain-view">
             <div className="metric-grid">
               <article className="metric">
                 <span>Height</span>
@@ -3436,49 +3435,6 @@ function App() {
               </article>
             </div>
 
-            <section className="panel">
-              <div className="panel-title">
-                <h3>All Balances</h3>
-                <span>{snapshot.balances.length}</span>
-              </div>
-              <div className="table">
-                {balancesByAmount.length === 0 ? (
-                  <p className="empty">No balances loaded.</p>
-                ) : (
-                  balancesByAmount.map((balance) => (
-                    <div className="table-row" key={balance.address}>
-                      <ReferenceCode value={balance.address} />
-                      <span>{balance.alias || "-"}</span>
-                      <strong>{balance.balance}</strong>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="panel">
-              <div className="panel-title">
-                <h3>Recent Blocks</h3>
-                <span>{latestBlocks.length}</span>
-              </div>
-              <div className="list">
-                {latestBlocks.length === 0 ? (
-                  <p className="empty">No blocks loaded.</p>
-                ) : (
-                  latestBlocks.map((block) => (
-                    <div className="list-row" key={block.block_hash}>
-                      <ReferenceText value={block.block_hash} title={block.block_hash} prefix={`#${block.height} `} />
-                      <strong>{block.transaction_count} tx</strong>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </section>
-        ) : null}
-
-        {activeTab === "blockchain" ? (
-          <section className="view blockchain-view">
             <section className="panel blockchain-toolbar">
               <div className="blockchain-focus">
                 <strong>{blockchainWindowLabel}</strong>
@@ -3543,6 +3499,33 @@ function App() {
                 )}
               </div>
             </div>
+          </section>
+        ) : null}
+
+        {activeTab === "balances" ? (
+          <section className="view balances-view">
+            <section className="panel">
+              <div className="panel-title">
+                <h3>Wallet Balances</h3>
+                <span>{snapshot.balances.length}</span>
+              </div>
+              {balancesByAmount.length === 0 ? (
+                <p className="empty">No balances loaded.</p>
+              ) : (
+                <div className="balance-card-list">
+                  {balancesByAmount.map((balance, index) => (
+                    <article className="balance-card" key={balance.address}>
+                      <span className="balance-rank">{index + 1}</span>
+                      <div className="balance-identity">
+                        <strong>{balance.alias || "Unnamed wallet"}</strong>
+                        <ReferenceCode value={balance.address} />
+                      </div>
+                      <strong className="balance-amount">{balance.balance}</strong>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           </section>
         ) : null}
 

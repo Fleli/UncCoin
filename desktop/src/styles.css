@@ -1897,6 +1897,62 @@ dd {
   line-height: 1.15;
 }
 
+.balance-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.balance-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  border-bottom: 1px solid #242c31;
+  padding: 12px 0;
+}
+
+.balance-card:last-child {
+  border-bottom: 0;
+}
+
+.balance-rank {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2e3940;
+  border-radius: 6px;
+  color: #aeb8bf;
+  background: #101416;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.balance-identity {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.balance-identity strong {
+  color: #f2f5f7;
+  font-size: 14px;
+}
+
+.balance-identity code {
+  min-width: 0;
+  color: #9fc3d3;
+}
+
+.balance-amount {
+  color: #f0d48a;
+  font-size: 16px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .panel-grid {
   display: grid;
   gap: 16px;
