@@ -271,9 +271,9 @@ function BlockchainHashConnector({ active }: { active: boolean }) {
     >
       <svg viewBox="0 0 58 128" aria-hidden="true">
         <circle cx="4" cy="24" r="2.5" />
-        <path d="M6 24 H31 V94 H52" />
-        <path d="M46 88 53 94 46 100" />
-        <circle cx="54" cy="94" r="2.5" />
+        <path d="M6 24 H31 V60 H52" />
+        <path d="M46 54 53 60 46 66" />
+        <circle cx="54" cy="60" r="2.5" />
       </svg>
     </div>
   );
