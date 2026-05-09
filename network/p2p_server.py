@@ -445,6 +445,8 @@ class P2PServer:
                 self._record_ingress(peer, raw_message)
                 message = json.loads(raw_message.decode("utf-8"))
                 peer = await self._handle_message(message, peer)
+        except (ConnectionError, OSError):
+            pass
         finally:
             self.active_connections.pop(peer, None)
             self._complete_fast_sync(peer, remove=True)
@@ -1125,8 +1127,8 @@ class P2PServer:
         writer: asyncio.StreamWriter,
         peer: PeerAddress | None = None,
     ) -> None:
-        writer.close()
         try:
+            writer.close()
             await asyncio.wait_for(
                 writer.wait_closed(),
                 timeout=P2P_CLOSE_TIMEOUT_SECONDS,

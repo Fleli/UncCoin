@@ -27,6 +27,22 @@ class _HangingWriter:
         await asyncio.Future()
 
 
+class _ResettingReader:
+    async def readline(self) -> bytes:
+        raise ConnectionResetError("connection reset by peer")
+
+
+class _ResettingWriter:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        raise ConnectionResetError("connection reset by peer")
+
+
 class P2PServerShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_does_not_hang_on_peer_wait_closed(self) -> None:
         notifications: list[str] = []
@@ -65,6 +81,23 @@ class P2PServerShutdownTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(other_writer.closed)
         self.assertNotIn(peer, server.active_connections)
         self.assertIn(other_peer, server.active_connections)
+
+    async def test_peer_reset_during_read_disconnects_without_traceback(self) -> None:
+        notifications: list[str] = []
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9999,
+            on_notification=notifications.append,
+        )
+        peer = PeerAddress("0.0.0.0", 4001)
+        writer = _ResettingWriter()
+        server.active_connections[peer] = writer
+
+        await server._read_messages(_ResettingReader(), writer, peer)
+
+        self.assertTrue(writer.closed)
+        self.assertNotIn(peer, server.active_connections)
+        self.assertEqual(notifications, ["Disconnected from peer 0.0.0.0:4001"])
 
 
 if __name__ == "__main__":
