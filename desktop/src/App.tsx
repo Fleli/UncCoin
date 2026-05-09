@@ -250,6 +250,22 @@ function TrafficDirectionIcon({ direction }: { direction: "ingress" | "egress" }
   );
 }
 
+function BlockchainHashConnector({ active }: { active: boolean }) {
+  return (
+    <div
+      className={`block-connector ${active ? "" : "muted"}`}
+      aria-label="Block hash links to the next block previous hash"
+    >
+      <svg viewBox="0 0 58 128" aria-hidden="true">
+        <circle cx="4" cy="24" r="2.5" />
+        <path d="M6 24 C22 22 19 54 31 58 C43 62 34 90 52 94" />
+        <path d="M46 89 53 94 46 100" />
+        <circle cx="54" cy="94" r="2.5" />
+      </svg>
+    </div>
+  );
+}
+
 function emptySnapshot(): Snapshot {
   return {
     nodeInfo: null,
@@ -3244,13 +3260,9 @@ function App() {
                   emptyLabel="No previous block."
                 />
               </div>
-              <div className={`block-arrow ${previousBlockchainBlock ? "" : "muted"}`} aria-label="Previous block points to focused block">
-                <span aria-hidden="true">&rarr;</span>
-              </div>
+              <BlockchainHashConnector active={previousBlockchainBlock !== null && focusedBlockchainBlock !== null} />
               <BlockchainBlockCard block={focusedBlockchainBlock} focused emptyLabel="No focused block loaded." />
-              <div className={`block-arrow ${nextBlockchainBlock ? "" : "muted"}`} aria-label="Focused block points to next block">
-                <span aria-hidden="true">&rarr;</span>
-              </div>
+              <BlockchainHashConnector active={focusedBlockchainBlock !== null && nextBlockchainBlock !== null} />
               <div className="block-preview next" aria-label="Next block preview">
                 <BlockchainBlockCard
                   block={nextBlockchainBlock}

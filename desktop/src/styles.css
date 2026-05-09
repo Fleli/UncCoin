@@ -1406,7 +1406,7 @@ dd {
 
 .blockchain-carousel {
   display: grid;
-  grid-template-columns: minmax(120px, 0.34fr) 34px minmax(420px, 1fr) 34px minmax(120px, 0.34fr);
+  grid-template-columns: minmax(120px, 0.34fr) 58px minmax(420px, 1fr) 58px minmax(120px, 0.34fr);
   gap: 10px;
   align-items: start;
   overflow: hidden;
@@ -1453,19 +1453,44 @@ dd {
   gap: 8px;
 }
 
-.block-arrow {
+.block-connector {
   display: grid;
   align-items: start;
   justify-items: center;
   min-width: 0;
-  padding-top: 30px;
+  padding-top: 18px;
   color: #9fc3d3;
-  font-size: 24px;
-  font-weight: 760;
 }
 
-.block-arrow.muted {
+.block-connector.muted {
   opacity: 0.2;
+}
+
+.block-connector svg {
+  width: 58px;
+  height: 128px;
+  overflow: visible;
+}
+
+.block-connector path,
+.block-connector circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.block-connector path:first-of-type {
+  stroke-width: 2.2;
+}
+
+.block-connector path:last-of-type {
+  stroke-width: 2;
+}
+
+.block-connector circle {
+  fill: #101416;
+  stroke-width: 2;
 }
 
 .block-preview {
