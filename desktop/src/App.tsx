@@ -3474,13 +3474,6 @@ function App() {
                               <span>{option.label}</span>
                               {isWarmingBackend ? (
                                 <span className="backend-loading-spinner" title={`${option.label} is warming`} />
-                              ) : needsWarmup ? (
-                                <span
-                                  className="backend-warmup-warning"
-                                  title={`${option.label} is not warmed up`}
-                                >
-                                  <WarningIcon className="backend-warmup-icon" />
-                                </span>
                               ) : null}
                             </span>
                             {!option.available ? (
