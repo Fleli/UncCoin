@@ -1828,6 +1828,82 @@ dd {
   font-size: 12px;
 }
 
+.contract-execute-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.contract-execute-panel + .contract-execute-panel {
+  margin-top: 18px;
+  border-top: 1px solid #283138;
+  padding-top: 16px;
+}
+
+.contract-list {
+  display: grid;
+  gap: 8px;
+}
+
+.contract-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.95fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  border-bottom: 1px solid #242c31;
+  padding: 10px 0;
+}
+
+.contract-card.featured {
+  border: 1px solid #2f4650;
+  border-radius: 6px;
+  padding: 12px;
+  background: #11191c;
+}
+
+.contract-card .contract-card-main {
+  flex: initial;
+}
+
+.contract-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.contract-card-main p {
+  margin: 0;
+  overflow: hidden;
+  color: #8f9aa1;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contract-status,
+.contract-done-label {
+  border: 1px solid #5f5230;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #f0d48a;
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.contract-status.done,
+.contract-done-label {
+  border-color: #367b5c;
+  color: #9de0be;
+}
+
+.contract-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .auth-summary {
   display: flex;
   align-items: center;

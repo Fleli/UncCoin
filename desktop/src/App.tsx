@@ -413,6 +413,63 @@ function contractCodeHash(contract: ContractEntry): string | null {
   return recordString(contract.contract, "code_hash");
 }
 
+function contractDescription(contract: ContractEntry): string | null {
+  return recordString(contractMetadata(contract), "description");
+}
+
+function truthyStorageValue(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized !== "" && normalized !== "0" && normalized !== "false";
+  }
+  return value !== undefined && value !== null;
+}
+
+function contractUsesSettledState(contract: ContractEntry): boolean {
+  const metadata = contractMetadata(contract);
+  return (
+    Object.prototype.hasOwnProperty.call(contract.storage, "settled")
+    || Object.prototype.hasOwnProperty.call(metadata, "request_ids")
+    || Object.prototype.hasOwnProperty.call(metadata, "reveal_deadline")
+    || Object.prototype.hasOwnProperty.call(metadata, "stake")
+  );
+}
+
+function receiptBelongsToContract(receipt: ReceiptEntry, contract: ContractEntry): boolean {
+  return (
+    receipt.contract_address === contract.address
+    || receipt.transaction?.receiver === contract.address
+    || (
+      receipt.transaction !== undefined
+      && payloadValue(receipt.transaction, "contract_address") === contract.address
+    )
+  );
+}
+
+function contractHasExecutionReceipt(contract: ContractEntry, receipts: ReceiptEntry[]): boolean {
+  return receipts.some((receipt) => receiptBelongsToContract(receipt, contract));
+}
+
+function contractIsDone(contract: ContractEntry, receipts: ReceiptEntry[]): boolean {
+  if (contractUsesSettledState(contract)) {
+    return truthyStorageValue(contract.storage.settled);
+  }
+  return contractHasExecutionReceipt(contract, receipts);
+}
+
+function contractExecutionStatus(contract: ContractEntry, receipts: ReceiptEntry[]): string {
+  if (contractIsDone(contract, receipts)) {
+    return "done";
+  }
+  return contractHasExecutionReceipt(contract, receipts) ? "open" : "not executed";
+}
+
 function authorizationScopeLabel(authorization: Record<string, unknown>): string {
   const scope = authorization.scope;
   if (!isRecord(scope) || Object.keys(scope).length === 0) {
@@ -2691,6 +2748,10 @@ function App() {
       || right.transaction_id.localeCompare(left.transaction_id)
     ))
     .slice(0, 8);
+  const executableContracts = useMemo(
+    () => snapshot.contracts.filter((contract) => !contractIsDone(contract, snapshot.receipts)),
+    [snapshot.contracts, snapshot.receipts],
+  );
   const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
@@ -2732,6 +2793,12 @@ function App() {
     } catch (copyError) {
       setError(`Could not copy ${label.toLowerCase()}: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
     }
+  }
+
+  function prepareContractExecution(contract: ContractEntry) {
+    setExecuteContractAddress(contract.address);
+    setAuthContractAddress(contract.address);
+    setActiveContractSubTab("execute");
   }
 
   async function handleRevealWalletKeys() {
@@ -3886,32 +3953,78 @@ function App() {
                   <h3>Contracts</h3>
                   <span>{snapshot.contracts.length}</span>
                 </div>
-                <div className="list">
+                <div className="contract-execute-panel">
+                  <div className="secondary-title">
+                    <strong>Ready to Execute</strong>
+                    <span>{executableContracts.length} open</span>
+                  </div>
+                  <div className="contract-list">
+                    {executableContracts.length === 0 ? (
+                      <p className="empty">No open contracts need execution.</p>
+                    ) : (
+                      executableContracts.map((contract) => (
+                        <article className="contract-card featured" key={`execute-${contract.address}`}>
+                          <div className="contract-card-main">
+                            <div className="contract-title-line">
+                              <strong>{contractDisplayName(contract)}</strong>
+                              <span className="contract-status">{contractExecutionStatus(contract, snapshot.receipts)}</span>
+                            </div>
+                            <ReferenceCode value={contract.address} />
+                            <p>{contractDescription(contract) ?? "No contract description."}</p>
+                          </div>
+                          <div className="contract-row-meta">
+                            <ReferenceCode value={contractCodeHash(contract)} prefix="code " />
+                            <span>{Object.keys(contract.storage).length} storage</span>
+                          </div>
+                          <div className="contract-card-actions">
+                            <button type="button" onClick={() => prepareContractExecution(contract)}>
+                              Execute
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="contract-execute-panel">
+                  <div className="secondary-title">
+                    <strong>All Contracts</strong>
+                    <span>{snapshot.contracts.length} deployed</span>
+                  </div>
+                  <div className="contract-list">
                   {snapshot.contracts.length === 0 ? (
                     <p className="empty">No contracts deployed.</p>
                   ) : (
                     snapshot.contracts.map((contract) => (
-                      <button
-                        type="button"
-                        className="select-row"
-                        key={contract.address}
-                        onClick={() => {
-                          setExecuteContractAddress(contract.address);
-                          setAuthContractAddress(contract.address);
-                          setActiveContractSubTab("execute");
-                        }}
-                      >
-                        <span className="contract-card-main">
-                          <strong>{contractDisplayName(contract)}</strong>
+                      <article className="contract-card" key={contract.address}>
+                        <div className="contract-card-main">
+                          <div className="contract-title-line">
+                            <strong>{contractDisplayName(contract)}</strong>
+                            <span className={contractIsDone(contract, snapshot.receipts) ? "contract-status done" : "contract-status"}>
+                              {contractExecutionStatus(contract, snapshot.receipts)}
+                            </span>
+                          </div>
                           <ReferenceCode value={contract.address} />
-                        </span>
-                        <span className="contract-row-meta">
+                          <p>{contractDescription(contract) ?? "No contract description."}</p>
+                        </div>
+                        <div className="contract-row-meta">
                           <ReferenceCode value={contractCodeHash(contract)} prefix="code " />
                           <span>{Object.keys(contract.storage).length} storage</span>
-                        </span>
-                      </button>
+                        </div>
+                        <div className="contract-card-actions">
+                          {contractIsDone(contract, snapshot.receipts) ? (
+                            <span className="contract-done-label">Done</span>
+                          ) : (
+                            <button type="button" onClick={() => prepareContractExecution(contract)}>
+                              Execute
+                            </button>
+                          )}
+                        </div>
+                      </article>
                     ))
                   )}
+                  </div>
                 </div>
               </section>
             ) : null}
