@@ -77,11 +77,13 @@ class Node:
     autosend_target: str | None = field(default=None, init=False)
     autosend_last_seen_balance: Decimal = field(default=Decimal("0.0"), init=False)
     autosend_task: asyncio.Task | None = field(default=None, init=False)
+    _persist_blockchain_state: bool = field(default=False, init=False)
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
 
     def __post_init__(self) -> None:
+        self._persist_blockchain_state = self.blockchain is None
         if self.blockchain is None:
             self.blockchain = Blockchain(
                 difficulty_bits=self.difficulty_bits,
@@ -137,7 +139,7 @@ class Node:
 
     async def stop(self) -> None:
         await self.stop_automine(wait=True)
-        self._save_persisted_blockchain()
+        self._save_persisted_blockchain("shutdown")
         self._save_persisted_aliases()
         await self.p2p_server.stop()
 
@@ -566,6 +568,7 @@ class Node:
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+        self._save_persisted_blockchain("mined block")
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -601,6 +604,7 @@ class Node:
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+        self._save_persisted_blockchain("mined block")
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -663,6 +667,7 @@ class Node:
                 self._record_mined_block_progress(block)
                 self._record_local_mining_tip(block.block_hash)
                 self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+                self._save_persisted_blockchain("mined block")
                 await self.broadcast_block(block)
                 self._maybe_schedule_autosend()
                 print(
@@ -1322,6 +1327,7 @@ Wallet commands accept either a wallet address or a local alias."""
         except ValueError as error:
             return False, str(error)
 
+        self._save_persisted_blockchain("accepted transaction")
         return True, None
 
     def _handle_incoming_block(self, block: Block) -> tuple[str, str | None]:
@@ -1387,6 +1393,7 @@ Wallet commands accept either a wallet address or a local alias."""
                 previous_head,
                 previous_state_tip_hash,
             )
+            self._save_persisted_blockchain("chain sync")
             self._maybe_schedule_autosend()
 
         sync_label = (
@@ -1503,12 +1510,22 @@ Wallet commands accept either a wallet address or a local alias."""
             flush=True,
         )
 
-    def _save_persisted_blockchain(self) -> None:
-        if self.wallet is None or self.blockchain is None:
+    def _save_persisted_blockchain(self, reason: str | None = None) -> None:
+        if (
+            not self._persist_blockchain_state
+            or self.wallet is None
+            or self.blockchain is None
+        ):
             return
 
-        path = save_blockchain_state(self.wallet.address, self.blockchain)
-        print(f"Saved blockchain state to {path}", flush=True)
+        try:
+            path = save_blockchain_state(self.wallet.address, self.blockchain)
+        except OSError as error:
+            print(f"Failed to save blockchain state: {error}", flush=True)
+            return
+
+        reason_suffix = f" ({reason})" if reason else ""
+        print(f"Saved blockchain state to {path}{reason_suffix}", flush=True)
 
     def _load_contract_deploy_payload(self, contract_source: str):
         try:
@@ -1917,6 +1934,7 @@ Wallet commands accept either a wallet address or a local alias."""
             self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
             self._resolve_orphan_descendants(block.block_hash)
             self._maybe_schedule_autosend()
+            self._save_persisted_blockchain("accepted block")
             return "accepted", None
 
         if status == "duplicate":

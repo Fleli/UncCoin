@@ -42,10 +42,13 @@ def _blockchain_state_data(wallet_address: str, blockchain: Blockchain) -> dict:
 
 
 def write_blockchain_state(path: Path, wallet_address: str, blockchain: Blockchain) -> Path:
-    path.write_text(
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_text(
         json.dumps(_blockchain_state_data(wallet_address, blockchain), indent=2),
         encoding="utf-8",
     )
+    temp_path.replace(path)
     return path
 
 
