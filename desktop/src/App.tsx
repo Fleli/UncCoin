@@ -833,6 +833,7 @@ function App() {
   const [executeValue, setExecuteValue] = useState("0");
   const [executeFee, setExecuteFee] = useState("0");
   const [executeInputJson, setExecuteInputJson] = useState(DEFAULT_EXECUTE_JSON);
+  const [showExecuteInputJson, setShowExecuteInputJson] = useState(false);
   const [authContractAddress, setAuthContractAddress] = useState("");
   const [authRequestId, setAuthRequestId] = useState("");
   const [authValidBlocks, setAuthValidBlocks] = useState("");
@@ -1992,7 +1993,9 @@ function App() {
   async function handleExecute(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("execute-contract", async () => {
-      const parsedInput = parseJsonField(executeInputJson, "Execute input JSON");
+      const parsedInput = showExecuteInputJson
+        ? parseJsonField(executeInputJson, "Execute input JSON")
+        : null;
       const response = await executeContract(activeApiPort, {
         contract_address: executeContractAddress,
         gas_limit: executeGasLimit,
@@ -3408,10 +3411,21 @@ function App() {
                       <input value={executeFee} onChange={(event) => setExecuteFee(event.target.value)} />
                     </label>
                   </div>
-                  <label>
-                    Input JSON
-                    <textarea className="code-input" value={executeInputJson} onChange={(event) => setExecuteInputJson(event.target.value)} />
-                  </label>
+                  <div className="optional-json-header">
+                    <span>Input JSON</span>
+                    {showExecuteInputJson ? null : <code>null</code>}
+                    <button type="button" onClick={() => setShowExecuteInputJson((current) => !current)}>
+                      {showExecuteInputJson ? "Remove" : "Add"}
+                    </button>
+                  </div>
+                  {showExecuteInputJson ? (
+                    <textarea
+                      aria-label="Execute input JSON"
+                      className="code-input"
+                      value={executeInputJson}
+                      onChange={(event) => setExecuteInputJson(event.target.value)}
+                    />
+                  ) : null}
                   <button type="submit" disabled={disableNodeAction}>
                     Execute
                   </button>

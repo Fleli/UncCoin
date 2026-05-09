@@ -806,6 +806,24 @@ code.reference-text {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.optional-json-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: #a9b3ba;
+  font-weight: 720;
+}
+
+.optional-json-header code {
+  min-width: 0;
+  border: 1px solid #28343b;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #9fc3d3;
+  background: #0b0f11;
+}
+
 .button-row,
 .topbar-actions,
 .inline-form {
