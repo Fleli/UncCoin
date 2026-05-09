@@ -1806,12 +1806,12 @@ function App() {
 
     let cancelled = false;
     const reattachRunningNode = async () => {
-      setStartupPhase("waiting-api");
+      setStartupPhase(startupPhaseForReattach());
       setApiStatus("starting");
 
       while (!cancelled) {
         try {
-          await waitForNodeApi(apiPortToUse);
+          await waitForNodeApi(apiPortToUse, startupPhaseForReattach());
           if (cancelled) {
             return;
           }
@@ -1837,11 +1837,13 @@ function App() {
     };
   }, [
     apiPort,
+    bootstrapAttempts,
     busyAction,
     loadSnapshot,
     nodeState.config?.apiPort,
     nodeState.running,
     startupComplete,
+    syncStatus?.fastsync.active,
   ]);
 
   useEffect(() => {
@@ -1914,8 +1916,26 @@ function App() {
     });
   }, [isApiAvailable, refreshMiningBackends, startupComplete]);
 
-  async function waitForNodeApi(apiPortToCheck: number) {
-    setStartupPhase("waiting-api");
+  function startupPhaseForReattach(): StartupPhase {
+    if (syncStatus?.fastsync.active) {
+      return "fastsync";
+    }
+    if (bootstrapAttempts.some((attempt) => attempt.status === "connected")) {
+      return "fastsync";
+    }
+    if (bootstrapAttempts.length > 0) {
+      return "connecting-bootstrap";
+    }
+    return "waiting-api";
+  }
+
+  async function waitForNodeApi(
+    apiPortToCheck: number,
+    phase: StartupPhase | null = "waiting-api",
+  ) {
+    if (phase !== null) {
+      setStartupPhase(phase);
+    }
     setApiStatus("starting");
     for (let attempt = 0; attempt < 60; attempt += 1) {
       try {
@@ -2026,7 +2046,14 @@ function App() {
     let sawActiveFastSync = false;
 
     for (let attempt = 0; attempt < 240; attempt += 1) {
-      const status = await readSyncStatus(apiPortToUse);
+      let status: SyncStatus;
+      try {
+        status = await readSyncStatus(apiPortToUse);
+      } catch {
+        setApiStatus("busy");
+        await delay(1000);
+        continue;
+      }
       setSyncStatus(status);
 
       if (status.fastsync.active) {
@@ -2051,6 +2078,7 @@ function App() {
     const skippedBootstrapPeers = attempts.filter((attempt) => attempt.status === "skipped");
 
     if (connectedBootstrapPeers.length > 0) {
+      setStartupPhase("fastsync");
       const syncResponse = await syncChain(apiPortToUse, true);
       setNotice(`Connected ${connectedBootstrapPeers.length} bootstrap peer(s); fastsync requested from ${syncResponse.requested_peers} peer(s).`);
       await waitForFastSyncToFinish(apiPortToUse);

@@ -78,6 +78,7 @@ class Node:
     autosend_last_seen_balance: Decimal = field(default=Decimal("0.0"), init=False)
     autosend_task: asyncio.Task | None = field(default=None, init=False)
     _persist_blockchain_state: bool = field(default=False, init=False)
+    _deferred_chain_sync_save_pending: bool = field(default=False, init=False)
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
@@ -102,6 +103,7 @@ class Node:
             on_chain_summary=self._handle_chain_summary,
             on_chain_request=self._handle_chain_request,
             on_chain_response=self._handle_chain_response,
+            on_chain_sync_complete=self._handle_chain_sync_complete,
             on_pending_transactions=self._handle_pending_transactions,
             on_notification=self._print_network_notification,
         )
@@ -1366,6 +1368,10 @@ Wallet commands accept either a wallet address or a local alias."""
         rejected_blocks = 0
         previous_head = self.blockchain.main_tip_hash
         previous_state_tip_hash = self._state_tip_hash()
+        active_fast_sync = any(
+            state.active
+            for state in self.p2p_server.fast_sync_states.values()
+        )
         for block in blocks:
             if block.block_hash in self.blockchain.blocks_by_hash:
                 duplicate_blocks += 1
@@ -1393,12 +1399,15 @@ Wallet commands accept either a wallet address or a local alias."""
                 previous_head,
                 previous_state_tip_hash,
             )
-            self._save_persisted_blockchain("chain sync")
+            if active_fast_sync:
+                self._deferred_chain_sync_save_pending = True
+            else:
+                self._save_persisted_blockchain("chain sync")
             self._maybe_schedule_autosend()
 
         sync_label = (
             "Fast sync chunk processed"
-            if any(state.active for state in self.p2p_server.fast_sync_states.values())
+            if active_fast_sync
             else "Chain sync chunk processed"
         )
         self._print_network_notification(
@@ -1413,6 +1422,13 @@ Wallet commands accept either a wallet address or a local alias."""
             "orphans": orphaned_blocks,
             "rejected": rejected_blocks,
         }
+
+    def _handle_chain_sync_complete(self) -> None:
+        if not self._deferred_chain_sync_save_pending:
+            return
+
+        self._deferred_chain_sync_save_pending = False
+        self._save_persisted_blockchain("chain sync")
 
     def _handle_wallet_message(self, wallet_message: dict) -> bool:
         sender_public_key_data = wallet_message.get("sender_public_key")

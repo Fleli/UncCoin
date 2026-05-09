@@ -54,6 +54,7 @@ class P2PServer:
     on_chain_summary: Callable[[], tuple[str | None, int]] | None = None
     on_chain_request: Callable[[], list[Block]] | None = None
     on_chain_response: Callable[[list[Block]], dict[str, int] | None] | None = None
+    on_chain_sync_complete: Callable[[], None] | None = None
     on_pending_transactions: Callable[[], list[Transaction]] | None = None
     on_notification: Callable[[str], None] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
@@ -141,7 +142,7 @@ class P2PServer:
         if writer is None:
             raise ValueError(f"Peer {host}:{port} is not connected.")
 
-        self.fast_sync_states.pop(peer, None)
+        self._complete_fast_sync(peer, remove=True)
         await self._close_writer(writer, peer)
         self._notify(f"Disconnected from peer {host}:{port}")
 
@@ -334,7 +335,7 @@ class P2PServer:
                     start_height,
                 )
             else:
-                self.fast_sync_states.pop(peer, None)
+                self._complete_fast_sync(peer, remove=True)
                 await self.request_chain(peer.host, peer.port, start_height=start_height)
         return len(peers)
 
@@ -446,7 +447,7 @@ class P2PServer:
                 peer = await self._handle_message(message, peer)
         finally:
             self.active_connections.pop(peer, None)
-            self.fast_sync_states.pop(peer, None)
+            self._complete_fast_sync(peer, remove=True)
             await self._close_writer(writer, peer)
             self._notify(f"Disconnected from peer {peer.host}:{peer.port}")
 
@@ -922,8 +923,7 @@ class P2PServer:
                 return
 
             if accepted_blocks == 0 and rejected_blocks > 0 and orphaned_blocks == 0:
-                fast_sync_state.pending_chunks.clear()
-                fast_sync_state.active = False
+                self._complete_fast_sync(peer)
                 self._notify(
                     f"Fast sync from {peer.host}:{peer.port} made no progress at "
                     f"height {start_height}. Stopping fast sync."
@@ -933,10 +933,24 @@ class P2PServer:
             fast_sync_state.expected_start_height = max(next_start_height, 0)
 
             if done:
-                fast_sync_state.pending_chunks.clear()
-                fast_sync_state.active = False
+                self._complete_fast_sync(peer)
                 await self._sync_mempool_with_peer(peer)
                 return
+
+    def _complete_fast_sync(self, peer: PeerAddress, remove: bool = False) -> None:
+        fast_sync_state = (
+            self.fast_sync_states.pop(peer, None)
+            if remove
+            else self.fast_sync_states.get(peer)
+        )
+        if fast_sync_state is None:
+            return
+
+        was_active = fast_sync_state.active
+        fast_sync_state.pending_chunks.clear()
+        fast_sync_state.active = False
+        if was_active and self.on_chain_sync_complete is not None:
+            self.on_chain_sync_complete()
 
     def _get_pending_transactions(self) -> list[Transaction]:
         if self.on_pending_transactions is None:

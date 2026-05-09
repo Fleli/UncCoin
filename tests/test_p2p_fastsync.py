@@ -1,5 +1,6 @@
 import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from core.blockchain import Blockchain
@@ -10,6 +11,7 @@ from network.p2p_server import FASTSYNC_INITIAL_BATCH_CHUNKS
 from network.p2p_server import FastSyncState
 from network.p2p_server import P2PServer
 from network.p2p_server import PeerAddress
+from wallet import create_wallet
 
 
 def create_blockchain(*, block_count: int) -> Blockchain:
@@ -148,6 +150,7 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_fastsync_processes_consecutive_chunks_until_done(self) -> None:
         peer = PeerAddress(host="127.0.0.1", port=9106)
         processed_starts: list[int] = []
+        completed_syncs: list[bool] = []
         blockchain = create_blockchain(block_count=45)
         server = P2PServer(
             host="127.0.0.1",
@@ -158,6 +161,7 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
                 "orphans": 0,
                 "rejected": 0,
             },
+            on_chain_sync_complete=lambda: completed_syncs.append(True),
         )
         server.fast_sync_states[peer] = FastSyncState(
             expected_start_height=1,
@@ -202,6 +206,7 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processed_starts, [1, 21, 41])
         self.assertEqual(server.fast_sync_states[peer].expected_start_height, 42)
         self.assertFalse(server.fast_sync_states[peer].active)
+        self.assertEqual(completed_syncs, [True])
 
     async def test_fastsync_buffers_ahead_chunk_until_missing_chunk_arrives(self) -> None:
         peer = PeerAddress(host="127.0.0.1", port=9107)
@@ -373,3 +378,40 @@ class NodeFastSyncImportTests(unittest.TestCase):
 
         self.assertEqual(result["accepted"], 3)
         reconcile_pending_transactions.assert_called_once()
+
+    def test_fastsync_defers_persistence_until_sync_completes(self) -> None:
+        source_chain = create_blockchain(block_count=45)
+        wallet = create_wallet(name="persisted-sync")
+        node = Node(
+            host="127.0.0.1",
+            port=9201,
+            wallet=wallet,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        peer = PeerAddress(host="127.0.0.1", port=9202)
+        node.p2p_server.fast_sync_states[peer] = FastSyncState(
+            expected_start_height=1,
+            batch_end_start_height=41,
+            batch_chunk_count=FASTSYNC_INITIAL_BATCH_CHUNKS,
+        )
+        chunks = [
+            source_chain.blocks[1:21],
+            source_chain.blocks[21:41],
+            source_chain.blocks[41:46],
+        ]
+
+        with mock.patch(
+            "node.node.save_blockchain_state",
+            return_value=Path("state/blockchains/test.json"),
+        ) as save_state:
+            for chunk in chunks:
+                result = node._handle_chain_response(chunk)
+                self.assertGreater(result["accepted"], 0)
+
+            save_state.assert_not_called()
+
+            node.p2p_server._complete_fast_sync(peer)
+
+        save_state.assert_called_once_with(wallet.address, node.blockchain)

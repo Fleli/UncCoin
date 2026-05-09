@@ -369,7 +369,13 @@ export function discoverPeers(apiPort: number): Promise<PeersResponse> {
 }
 
 export function syncChain(apiPort: number, fast = true): Promise<{ requested_peers: number }> {
-  return requestApi(apiPort, "/control/sync", "POST", { fast });
+  return requestApi(
+    apiPort,
+    "/control/sync",
+    "POST",
+    { fast },
+    { timeoutMs: 30000 },
+  );
 }
 
 export function sendTransaction(
