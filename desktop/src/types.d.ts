@@ -57,13 +57,15 @@ type RandomnessCommitRecord = {
   commitmentHash: string;
   transactionId: string;
   createdAt: string;
-  status: "pending" | "revealed";
+  status: "pending" | "revealed" | "stale";
   revealTransactionId?: string;
   revealedAt?: string;
+  staleReason?: string;
 };
 
 type DesktopState = {
   seenReceivedMessageCount: number;
+  seenBlockHeight: number | null;
   randomnessCommits: RandomnessCommitRecord[];
 };
 

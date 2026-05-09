@@ -203,6 +203,13 @@ export type ContractsResponse = {
 export type ReceiptEntry = {
   transaction_id: string;
   receipt: Record<string, unknown>;
+  transaction?: TransactionPayload;
+  contract_address?: string;
+  contract_name?: string | null;
+  contract_description?: string | null;
+  block_height?: number;
+  block_hash?: string;
+  block_description?: string;
 };
 
 export type ReceiptsResponse = {
@@ -214,6 +221,26 @@ export type ReceiptsResponse = {
 export type AuthorizationsResponse = {
   count: number;
   authorizations: Record<string, unknown>[];
+};
+
+export type CommitmentsResponse = {
+  request_id: string;
+  tip_hash: string | null;
+  height: number;
+  commitments: Record<string, string>;
+};
+
+export type RevealEntry = {
+  seed?: string;
+  salt?: string;
+  commitment_hash?: string;
+};
+
+export type RevealsResponse = {
+  request_id: string;
+  tip_hash: string | null;
+  height: number;
+  reveals: Record<string, RevealEntry>;
 };
 
 export type BroadcastTransactionResponse = {
@@ -310,6 +337,14 @@ export function readAuthorizations(apiPort: number): Promise<AuthorizationsRespo
   return requestApi<AuthorizationsResponse>(apiPort, "/authorizations");
 }
 
+export function readCommitments(apiPort: number, requestId: string): Promise<CommitmentsResponse> {
+  return requestApi<CommitmentsResponse>(apiPort, `/commitments/${encodeURIComponent(requestId)}`);
+}
+
+export function readReveals(apiPort: number, requestId: string): Promise<RevealsResponse> {
+  return requestApi<RevealsResponse>(apiPort, `/reveals/${encodeURIComponent(requestId)}`);
+}
+
 export function connectPeer(apiPort: number, peer: string): Promise<PeersResponse> {
   return requestApi<PeersResponse>(
     apiPort,
@@ -317,6 +352,15 @@ export function connectPeer(apiPort: number, peer: string): Promise<PeersRespons
     "POST",
     { peer },
     { timeoutMs: 25000 },
+  );
+}
+
+export function disconnectPeer(apiPort: number, peer: string): Promise<PeersResponse> {
+  return requestApi<PeersResponse>(
+    apiPort,
+    "/control/peers/disconnect",
+    "POST",
+    { peer },
   );
 }
 

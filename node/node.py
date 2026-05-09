@@ -149,6 +149,9 @@ class Node:
         except OSError as error:
             raise ValueError(f"Could not connect to peer {host}:{port}: {error.strerror or error}") from error
 
+    async def disconnect_peer(self, host: str, port: int) -> None:
+        await self.p2p_server.disconnect_peer(host, port)
+
     async def broadcast(self, message: dict) -> None:
         await self.p2p_server.broadcast(message)
 

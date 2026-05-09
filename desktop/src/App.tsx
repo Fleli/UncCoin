@@ -1,10 +1,11 @@
-import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
   buildMiningBackend,
   connectPeer,
   createCommitment,
   deployContract,
+  disconnectPeer,
   discoverPeers,
   executeContract,
   mineBlock,
@@ -13,6 +14,7 @@ import {
   readBlock,
   readBlocks,
   readChainHead,
+  readCommitments,
   readContracts,
   readMiningBackends,
   readMiningStatus,
@@ -22,6 +24,7 @@ import {
   readPeers,
   readPendingTransactions,
   readReceipts,
+  readReveals,
   readSyncStatus,
   rebroadcastPendingTransactions,
   revealCommitment,
@@ -42,6 +45,7 @@ import {
   type MiningBackendId,
   type MiningBackendOption,
   type MiningBackendsResponse,
+  type MiningWarmupStatus,
   type MiningStatus,
   type NetworkStatsResponse,
   type NodeInfo,
@@ -66,12 +70,16 @@ const DEFAULT_DEPLOY_JSON = `{
 }`;
 const DEFAULT_EXECUTE_JSON = "null";
 const RECENT_BLOCK_LIMIT = 12;
-const BLOCKCHAIN_VIEW_BLOCKS = 2;
+const BLOCKCHAIN_CONTEXT_BLOCKS = 3;
 const MINING_REWARD_SENDER = "SYSTEM";
 const RANDOMNESS_SEED_MODULUS = 1n << 256n;
+const COINFLIP_REVEAL_DEADLINE_BLOCKS = 20;
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type ContractSubTab = "deploy" | "execute" | "authorization" | "randomness" | "contracts" | "receipts";
+type DeploySubTab = "raw" | "templates";
+type ContractTemplateId = "coinflip";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -105,6 +113,14 @@ type BootstrapAttempt = {
   peer: string;
   status: "pending" | "connected" | "failed" | "skipped";
   detail?: string;
+  rawDetail?: string;
+};
+
+type NetworkEvent = {
+  id: string;
+  type: "connected" | "disconnected";
+  peer: string;
+  timestamp: string;
 };
 
 type StartupPhase = "idle" | "starting-node" | "waiting-api" | "warming-miner" | "connecting-bootstrap" | "fastsync" | "ready";
@@ -119,6 +135,23 @@ const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
   { id: "messages", label: "Messages", icon: "messages" },
   { id: "contracts", label: "Contracts", icon: "contracts" },
   { id: "logs", label: "Logs", icon: "logs" },
+];
+
+const contractSubTabs: Array<{ id: ContractSubTab; label: string }> = [
+  { id: "deploy", label: "Deploy" },
+  { id: "execute", label: "Execute" },
+  { id: "authorization", label: "Authorization" },
+  { id: "randomness", label: "Randomness" },
+  { id: "contracts", label: "Contracts" },
+  { id: "receipts", label: "Receipts" },
+];
+
+const contractTemplates: Array<{ id: ContractTemplateId; label: string; description: string }> = [
+  {
+    id: "coinflip",
+    label: "Coinflip",
+    description: "Two-wallet commit-reveal coinflip.",
+  },
 ];
 
 function TabIcon({ name }: { name: TabIconName }) {
@@ -210,6 +243,42 @@ function WarningIcon({ className }: { className?: string }) {
   );
 }
 
+function TrafficDirectionIcon({ direction }: { direction: "ingress" | "egress" }) {
+  return (
+    <span className={`traffic-direction-icon ${direction}`} aria-hidden="true">
+      <svg viewBox="0 0 20 20">
+        {direction === "ingress" ? (
+          <>
+            <path d="M14.5 5.5 5.5 14.5" />
+            <path d="M5.5 8.5v6h6" />
+          </>
+        ) : (
+          <>
+            <path d="M5.5 14.5 14.5 5.5" />
+            <path d="M8.5 5.5h6v6" />
+          </>
+        )}
+      </svg>
+    </span>
+  );
+}
+
+function BlockchainHashConnector({ active }: { active: boolean }) {
+  return (
+    <div
+      className={`block-connector ${active ? "" : "muted"}`}
+      aria-label="Block hash links to the next block previous hash"
+    >
+      <svg viewBox="0 0 58 128" aria-hidden="true">
+        <circle cx="4" cy="24" r="2.5" />
+        <path d="M6 24 H31 V60 H52" />
+        <path d="M46 54 53 60 46 66" />
+        <circle cx="54" cy="60" r="2.5" />
+      </svg>
+    </div>
+  );
+}
+
 function emptySnapshot(): Snapshot {
   return {
     nodeInfo: null,
@@ -251,6 +320,134 @@ function sortBalancesDescending(balances: BalanceRow[]): BalanceRow[] {
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function randomHex(bytes: number): string {
+  const fallback = () => Array.from({ length: bytes }, () => (
+    Math.floor(Math.random() * 256).toString(16).padStart(2, "0")
+  )).join("");
+
+  if (globalThis.crypto?.getRandomValues === undefined) {
+    return fallback();
+  }
+
+  const buffer = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buffer);
+  return Array.from(buffer, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function createCoinflipRequestId(): string {
+  const suffix = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+    : randomHex(8);
+  return `coinflip-${suffix}`;
+}
+
+function parsePositiveIntegerField(value: string, label: string): number {
+  const trimmedValue = value.trim();
+  if (!/^[0-9]+$/.test(trimmedValue)) {
+    throw new Error(`${label} must be a positive whole number.`);
+  }
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${label} must be a positive whole number below ${Number.MAX_SAFE_INTEGER}.`);
+  }
+  return parsedValue;
+}
+
+function parseWholeNumberField(value: string, label: string): number {
+  const trimmedValue = value.trim();
+  if (!/^[0-9]+$/.test(trimmedValue)) {
+    throw new Error(`${label} must be a whole number.`);
+  }
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isSafeInteger(parsedValue)) {
+    throw new Error(`${label} must be a whole number below ${Number.MAX_SAFE_INTEGER}.`);
+  }
+  return parsedValue;
+}
+
+function buildCoinflipContract({
+  walletOne,
+  walletTwo,
+  amount,
+  revealDeadline,
+  requestId,
+}: {
+  walletOne: string;
+  walletTwo: string;
+  amount: number;
+  revealDeadline: number;
+  requestId: string;
+}): { program: unknown[]; metadata: Record<string, unknown> } {
+  const payout = amount * 2;
+  return {
+    program: [
+      ["LOAD", "settled"],
+      ["JUMPI", 51],
+      ["HAS_REVEAL", walletOne, requestId],
+      ["MEM_STORE", "a_revealed"],
+      ["HAS_REVEAL", walletTwo, requestId],
+      ["MEM_STORE", "b_revealed"],
+      ["MEM_LOAD", "a_revealed"],
+      ["MEM_LOAD", "b_revealed"],
+      ["AND"],
+      ["JUMPI", 32],
+      ["BLOCK_HEIGHT"],
+      ["READ_METADATA", "reveal_deadline"],
+      ["GT"],
+      ["JUMPI", 15],
+      ["HALT"],
+      ["MEM_LOAD", "a_revealed"],
+      ["JUMPI", 22],
+      ["MEM_LOAD", "b_revealed"],
+      ["JUMPI", 27],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletTwo, walletOne, requestId],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletOne, walletTwo, requestId],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletOne, "$CONTRACT", requestId],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletTwo, "$CONTRACT", requestId],
+      ["READ_REVEAL", walletOne, requestId],
+      ["READ_REVEAL", walletTwo, requestId],
+      ["XOR"],
+      ["SHA256"],
+      ["PUSH", 2],
+      ["MOD"],
+      ["JUMPI", 48],
+      ["PUSH", payout],
+      ["TRANSFER_FROM", "$CONTRACT", walletOne, "coinflip:payout"],
+      ["HALT"],
+      ["PUSH", payout],
+      ["TRANSFER_FROM", "$CONTRACT", walletTwo, "coinflip:payout"],
+      ["HALT"],
+      ["HALT"],
+    ],
+    metadata: {
+      name: "coinflip",
+      description: `Coinflip between ${walletOne} and ${walletTwo}.`,
+      template: "coinflip",
+      request_id: requestId,
+      request_ids: [requestId],
+      participants: [walletOne, walletTwo],
+      amount,
+      stake: amount,
+      reveal_deadline: revealDeadline,
+    },
+  };
 }
 
 function normalizeRandomnessSeed(seed: string): string {
@@ -400,6 +597,63 @@ function contractCodeHash(contract: ContractEntry): string | null {
   return recordString(contract.contract, "code_hash");
 }
 
+function contractDescription(contract: ContractEntry): string | null {
+  return recordString(contractMetadata(contract), "description");
+}
+
+function truthyStorageValue(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized !== "" && normalized !== "0" && normalized !== "false";
+  }
+  return value !== undefined && value !== null;
+}
+
+function contractUsesSettledState(contract: ContractEntry): boolean {
+  const metadata = contractMetadata(contract);
+  return (
+    Object.prototype.hasOwnProperty.call(contract.storage, "settled")
+    || Object.prototype.hasOwnProperty.call(metadata, "request_ids")
+    || Object.prototype.hasOwnProperty.call(metadata, "reveal_deadline")
+    || Object.prototype.hasOwnProperty.call(metadata, "stake")
+  );
+}
+
+function receiptBelongsToContract(receipt: ReceiptEntry, contract: ContractEntry): boolean {
+  return (
+    receipt.contract_address === contract.address
+    || receipt.transaction?.receiver === contract.address
+    || (
+      receipt.transaction !== undefined
+      && payloadValue(receipt.transaction, "contract_address") === contract.address
+    )
+  );
+}
+
+function contractHasExecutionReceipt(contract: ContractEntry, receipts: ReceiptEntry[]): boolean {
+  return receipts.some((receipt) => receiptBelongsToContract(receipt, contract));
+}
+
+function contractIsDone(contract: ContractEntry, receipts: ReceiptEntry[]): boolean {
+  if (contractUsesSettledState(contract)) {
+    return truthyStorageValue(contract.storage.settled);
+  }
+  return contractHasExecutionReceipt(contract, receipts);
+}
+
+function contractExecutionStatus(contract: ContractEntry, receipts: ReceiptEntry[]): string {
+  if (contractIsDone(contract, receipts)) {
+    return "done";
+  }
+  return contractHasExecutionReceipt(contract, receipts) ? "open" : "not executed";
+}
+
 function authorizationScopeLabel(authorization: Record<string, unknown>): string {
   const scope = authorization.scope;
   if (!isRecord(scope) || Object.keys(scope).length === 0) {
@@ -478,6 +732,141 @@ function payloadValue(transaction: TransactionPayload, key: string): string | nu
     return String(value);
   }
   return JSON.stringify(value);
+}
+
+function receiptSuccess(receipt: ReceiptEntry): boolean | null {
+  const success = receipt.receipt.success;
+  return typeof success === "boolean" ? success : null;
+}
+
+function receiptBlockSortValue(receipt: ReceiptEntry): number {
+  return typeof receipt.block_height === "number" ? receipt.block_height : -1;
+}
+
+function pendingTransactionMatchesCommit(
+  transaction: TransactionPayload,
+  record: RandomnessCommitRecord,
+  walletAddress: string,
+): boolean {
+  return (
+    transaction.sender === walletAddress
+    && payloadValue(transaction, "request_id") === record.requestId
+    && payloadValue(transaction, "commitment_hash")?.toLowerCase() === record.commitmentHash.toLowerCase()
+  );
+}
+
+function pendingTransactionMatchesReveal(
+  transaction: TransactionPayload,
+  record: RandomnessCommitRecord,
+  walletAddress: string,
+): boolean {
+  return (
+    transaction.sender === walletAddress
+    && payloadValue(transaction, "request_id") === record.requestId
+    && payloadValue(transaction, "seed") === record.seed
+    && (payloadValue(transaction, "salt") ?? "") === record.salt
+  );
+}
+
+function randomnessRecordsChanged(
+  previousRecords: RandomnessCommitRecord[],
+  nextRecords: RandomnessCommitRecord[],
+): boolean {
+  return JSON.stringify(previousRecords) !== JSON.stringify(nextRecords);
+}
+
+function markRandomnessRecordPending(record: RandomnessCommitRecord): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "pending",
+    staleReason: undefined,
+  };
+}
+
+function markRandomnessRecordRevealed(record: RandomnessCommitRecord): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "revealed",
+    revealedAt: record.revealedAt ?? new Date().toISOString(),
+    staleReason: undefined,
+  };
+}
+
+function markRandomnessRecordStale(record: RandomnessCommitRecord, staleReason: string): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "stale",
+    staleReason,
+  };
+}
+
+async function reconcileRandomnessCommitRecords(
+  apiPort: number,
+  records: RandomnessCommitRecord[],
+  walletAddress: string | null | undefined,
+  pendingTransactions: TransactionPayload[],
+): Promise<RandomnessCommitRecord[]> {
+  if (!walletAddress || records.length === 0) {
+    return records;
+  }
+
+  const requestIds = [...new Set(records.map((record) => record.requestId).filter(Boolean))];
+  if (requestIds.length === 0) {
+    return records;
+  }
+
+  const chainStateEntries = await Promise.all(
+    requestIds.map(async (requestId) => {
+      const [commitments, reveals] = await Promise.all([
+        readCommitments(apiPort, requestId),
+        readReveals(apiPort, requestId),
+      ]);
+      return [requestId, { commitments: commitments.commitments, reveals: reveals.reveals }] as const;
+    }),
+  );
+  const chainStateByRequestId = new Map(chainStateEntries);
+
+  return records.map((record) => {
+    const chainState = chainStateByRequestId.get(record.requestId);
+    const canonicalCommitmentHash = chainState?.commitments[walletAddress]?.toLowerCase();
+    const canonicalReveal = chainState?.reveals[walletAddress];
+    const canonicalRevealCommitmentHash = canonicalReveal?.commitment_hash?.toLowerCase();
+    const localCommitmentHash = record.commitmentHash.toLowerCase();
+
+    if (canonicalReveal !== undefined) {
+      if (canonicalRevealCommitmentHash === undefined || canonicalRevealCommitmentHash === localCommitmentHash) {
+        return markRandomnessRecordRevealed(record);
+      }
+      return markRandomnessRecordStale(record, "On-chain reveal exists for a different commitment.");
+    }
+
+    if (pendingTransactions.some((transaction) => pendingTransactionMatchesReveal(transaction, record, walletAddress))) {
+      return markRandomnessRecordRevealed(record);
+    }
+
+    if (canonicalCommitmentHash === localCommitmentHash) {
+      return markRandomnessRecordPending(record);
+    }
+
+    if (pendingTransactions.some((transaction) => pendingTransactionMatchesCommit(transaction, record, walletAddress))) {
+      return markRandomnessRecordPending(record);
+    }
+
+    if (canonicalCommitmentHash === undefined) {
+      return markRandomnessRecordStale(record, "Commitment is not on the canonical chain.");
+    }
+
+    return markRandomnessRecordStale(record, "Canonical commitment hash differs from this local record.");
+  });
+}
+
+function isRandomnessChainStateError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /reveal already exists/i.test(message)
+    || /no prior commitment/i.test(message)
+    || /seed does not match prior commitment/i.test(message)
+  );
 }
 
 function displayReference(value: string | null | undefined, _length = 16): { value: string; title?: string } {
@@ -685,6 +1074,46 @@ function isLocalBootstrapPeer(
   return localAddressSet.has(parsedPeer.host.toLowerCase());
 }
 
+function peerConnectErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readablePeerConnectError(error: unknown): Pick<BootstrapAttempt, "detail" | "rawDetail"> {
+  const rawDetail = peerConnectErrorMessage(error);
+  const cleaned = rawDetail
+    .replace(/^Error invoking remote method 'node-api:fetch':\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+
+  if (/timed out connecting to peer/i.test(cleaned)) {
+    return { detail: "Timed out", rawDetail };
+  }
+  if (/failed to fetch|fetch failed|node api unavailable/i.test(cleaned)) {
+    return { detail: "Node API unavailable", rawDetail };
+  }
+  if (/connection refused|could not connect|not reachable|network is unreachable/i.test(cleaned)) {
+    return { detail: "Not reachable", rawDetail };
+  }
+  if (/invalid peer|invalid address/i.test(cleaned)) {
+    return { detail: "Invalid address", rawDetail };
+  }
+  if (/rejected|unauthorized|forbidden/i.test(cleaned)) {
+    return { detail: "Rejected", rawDetail };
+  }
+
+  return { detail: "Failed", rawDetail };
+}
+
+function bootstrapAttemptLabel(attempt: BootstrapAttempt): string {
+  if (attempt.detail) {
+    return attempt.detail;
+  }
+  if (attempt.status === "pending") {
+    return "waiting";
+  }
+  return attempt.status;
+}
+
 function normalizePreferredPort(value: unknown): number {
   const port = Number(value);
   if (Number.isInteger(port) && port > 0 && port < 65536) {
@@ -749,6 +1178,8 @@ function App() {
   const [startupComplete, setStartupComplete] = useState(false);
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [networkBootstrapAttempts, setNetworkBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
+  const [networkEvents, setNetworkEvents] = useState<NetworkEvent[]>([]);
+  const [unreadNetworkEventCount, setUnreadNetworkEventCount] = useState(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [miningBackends, setMiningBackends] = useState<MiningBackendsResponse | null>(null);
@@ -758,13 +1189,21 @@ function App() {
   const [blockchainSearch, setBlockchainSearch] = useState("");
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
+  const [activeContractSubTab, setActiveContractSubTab] = useState<ContractSubTab>("deploy");
+  const [activeDeploySubTab, setActiveDeploySubTab] = useState<DeploySubTab>("raw");
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
+  const [seenBlockHeight, setSeenBlockHeight] = useState<number | null>(null);
   const [randomnessCommits, setRandomnessCommits] = useState<RandomnessCommitRecord[]>([]);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
   const latestSnapshotRef = useRef<Snapshot>(snapshot);
+  const randomnessCommitsRef = useRef<RandomnessCommitRecord[]>([]);
+  const lastRandomnessReconcileKeyRef = useRef("");
+  const previousConnectedPeersRef = useRef<string[] | null>(null);
   const snapshotRefreshRef = useRef<Promise<void> | null>(null);
   const snapshotRefreshQueuedRef = useRef(false);
+  const coinflipDeadlineInitializedRef = useRef(false);
+  const previousCoinflipWalletRef = useRef<string | null>(null);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -786,12 +1225,19 @@ function App() {
   const [revealFee, setRevealFee] = useState("0");
   const [deployFee, setDeployFee] = useState("0");
   const [deployJson, setDeployJson] = useState(DEFAULT_DEPLOY_JSON);
+  const [selectedContractTemplate, setSelectedContractTemplate] = useState<ContractTemplateId>("coinflip");
+  const [coinflipWalletOne, setCoinflipWalletOne] = useState("");
+  const [coinflipWalletTwo, setCoinflipWalletTwo] = useState("");
+  const [coinflipAmount, setCoinflipAmount] = useState("100");
+  const [coinflipRevealDeadline, setCoinflipRevealDeadline] = useState("");
+  const [coinflipRequestId, setCoinflipRequestId] = useState(createCoinflipRequestId);
   const [executeContractAddress, setExecuteContractAddress] = useState("");
   const [executeGasLimit, setExecuteGasLimit] = useState("1000");
   const [executeGasPrice, setExecuteGasPrice] = useState("0");
   const [executeValue, setExecuteValue] = useState("0");
   const [executeFee, setExecuteFee] = useState("0");
   const [executeInputJson, setExecuteInputJson] = useState(DEFAULT_EXECUTE_JSON);
+  const [showExecuteInputJson, setShowExecuteInputJson] = useState(false);
   const [authContractAddress, setAuthContractAddress] = useState("");
   const [authRequestId, setAuthRequestId] = useState("");
   const [authValidBlocks, setAuthValidBlocks] = useState("");
@@ -802,6 +1248,25 @@ function App() {
     () => launchPeers.split(",").map((peer) => peer.trim()).filter(Boolean),
     [launchPeers],
   );
+  const coinflipTemplatePreview = useMemo(() => {
+    const walletOne = coinflipWalletOne.trim();
+    const walletTwo = coinflipWalletTwo.trim();
+    const requestId = coinflipRequestId.trim();
+    if (!walletOne || !walletTwo || !coinflipAmount.trim() || !coinflipRevealDeadline.trim() || !requestId) {
+      return null;
+    }
+    try {
+      return formatJson(buildCoinflipContract({
+        walletOne,
+        walletTwo,
+        amount: parsePositiveIntegerField(coinflipAmount, "Amount"),
+        revealDeadline: parseWholeNumberField(coinflipRevealDeadline, "Reveal deadline"),
+        requestId,
+      }));
+    } catch {
+      return null;
+    }
+  }, [coinflipWalletOne, coinflipWalletTwo, coinflipAmount, coinflipRevealDeadline, coinflipRequestId]);
   const filteredWallets = useMemo(() => {
     const query = walletSearch.trim().toLowerCase();
     if (!query) {
@@ -825,13 +1290,27 @@ function App() {
     () => snapshot.messages.filter((message) => message.direction === "received").length,
     [snapshot.messages],
   );
+  const currentConnectedPeers = snapshot.peers.connected;
+  const connectedPeerKey = currentConnectedPeers.slice().sort().join("\n");
   const unreadMessageCount = Math.max(0, receivedMessageCount - seenReceivedMessageCount);
+  const blockchainCurrentHeight = snapshot.chainHead?.height ?? null;
+  const unreadBlockCount = (
+    blockchainCurrentHeight !== null
+    && blockchainCurrentHeight >= 0
+    && seenBlockHeight !== null
+      ? Math.max(0, blockchainCurrentHeight - seenBlockHeight)
+      : 0
+  );
   const pendingRandomnessCommits = useMemo(
     () => randomnessCommits.filter((record) => record.status === "pending").reverse(),
     [randomnessCommits],
   );
   const finishedRandomnessCommits = useMemo(
     () => randomnessCommits.filter((record) => record.status === "revealed").reverse(),
+    [randomnessCommits],
+  );
+  const staleRandomnessCommits = useMemo(
+    () => randomnessCommits.filter((record) => record.status === "stale").reverse(),
     [randomnessCommits],
   );
   const isPreferredPortDirty = (
@@ -869,7 +1348,19 @@ function App() {
     });
   }, [desktopStateKey]);
 
+  const markBlockchainSeen = useCallback(async (blockHeight: number) => {
+    if (!desktopStateKey) {
+      return;
+    }
+    const normalizedBlockHeight = Math.max(-1, blockHeight);
+    setSeenBlockHeight(normalizedBlockHeight);
+    await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
+      seenBlockHeight: normalizedBlockHeight,
+    });
+  }, [desktopStateKey]);
+
   const saveRandomnessCommits = useCallback(async (records: RandomnessCommitRecord[]) => {
+    randomnessCommitsRef.current = records;
     setRandomnessCommits(records);
     if (!desktopStateKey) {
       return;
@@ -877,8 +1368,50 @@ function App() {
     const nextState = await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
       randomnessCommits: records,
     });
+    randomnessCommitsRef.current = nextState.randomnessCommits;
     setRandomnessCommits(nextState.randomnessCommits);
   }, [desktopStateKey]);
+
+  const reconcileRandomnessCommits = useCallback(async (
+    apiPortToUse: number,
+    walletAddress: string | null | undefined,
+    pendingTransactions: TransactionPayload[],
+    chainReference: string | number | null | undefined,
+    force = false,
+  ) => {
+    const currentRecords = randomnessCommitsRef.current;
+    if (!walletAddress || currentRecords.length === 0) {
+      return currentRecords;
+    }
+
+    const reconcileKey = JSON.stringify({
+      walletAddress,
+      records: currentRecords.map((record) => ({
+        id: record.id,
+        requestId: record.requestId,
+        commitmentHash: record.commitmentHash,
+        status: record.status,
+      })),
+      pending: pendingTransactions.map((transaction) => transaction.transaction_id),
+      chainReference,
+      apiPortToUse,
+    });
+    if (!force && reconcileKey === lastRandomnessReconcileKeyRef.current) {
+      return currentRecords;
+    }
+
+    const nextRecords = await reconcileRandomnessCommitRecords(
+      apiPortToUse,
+      currentRecords,
+      walletAddress,
+      pendingTransactions,
+    );
+    lastRandomnessReconcileKeyRef.current = reconcileKey;
+    if (randomnessRecordsChanged(currentRecords, nextRecords)) {
+      await saveRandomnessCommits(nextRecords);
+    }
+    return nextRecords;
+  }, [saveRandomnessCommits]);
 
   const loadSnapshot = useCallback(async (apiPortToUse: number) => {
     const chainHead = await readChainHead(apiPortToUse);
@@ -938,7 +1471,17 @@ function App() {
       setSyncStatus(nodeInfo.sync);
     }
     setApiStatus("live");
-  }, []);
+    try {
+      await reconcileRandomnessCommits(
+        apiPortToUse,
+        nodeInfo.wallet?.address,
+        pendingTransactions.transactions,
+        chainHead.state_tip_hash ?? chainHead.tip_hash ?? chainHead.height,
+      );
+    } catch (reconcileError) {
+      console.warn("Failed to reconcile randomness records", reconcileError);
+    }
+  }, [reconcileRandomnessCommits]);
 
   const refreshSnapshot = useCallback(async () => {
     if (!isApiAvailable) {
@@ -1010,8 +1553,33 @@ function App() {
   }, []);
 
   useEffect(() => {
+    randomnessCommitsRef.current = randomnessCommits;
+  }, [randomnessCommits]);
+
+  useEffect(() => {
+    const walletAddress = snapshot.nodeInfo?.wallet?.address;
+    if (walletAddress && previousCoinflipWalletRef.current !== walletAddress) {
+      setCoinflipWalletOne(walletAddress);
+      previousCoinflipWalletRef.current = walletAddress;
+    }
+  }, [snapshot.nodeInfo?.wallet?.address]);
+
+  useEffect(() => {
+    if (coinflipDeadlineInitializedRef.current || coinflipRevealDeadline.trim()) {
+      return;
+    }
+    if (typeof snapshot.chainHead?.height !== "number" || snapshot.chainHead.height < 0) {
+      return;
+    }
+    setCoinflipRevealDeadline(String(snapshot.chainHead.height + COINFLIP_REVEAL_DEADLINE_BLOCKS));
+    coinflipDeadlineInitializedRef.current = true;
+  }, [coinflipRevealDeadline, snapshot.chainHead?.height]);
+
+  useEffect(() => {
     if (!desktopStateKey) {
       setSeenReceivedMessageCount(0);
+      setSeenBlockHeight(null);
+      randomnessCommitsRef.current = [];
       setRandomnessCommits([]);
       return undefined;
     }
@@ -1021,6 +1589,8 @@ function App() {
       .then((state) => {
         if (!cancelled) {
           setSeenReceivedMessageCount(state.seenReceivedMessageCount);
+          setSeenBlockHeight(state.seenBlockHeight);
+          randomnessCommitsRef.current = state.randomnessCommits;
           setRandomnessCommits(state.randomnessCommits);
         }
       })
@@ -1059,6 +1629,93 @@ function App() {
     receivedMessageCount,
     seenReceivedMessageCount,
   ]);
+
+  useEffect(() => {
+    if (
+      !desktopStateKey
+      || blockchainCurrentHeight === null
+      || blockchainCurrentHeight < 0
+    ) {
+      return;
+    }
+
+    if (seenBlockHeight === null) {
+      void markBlockchainSeen(blockchainCurrentHeight).catch((stateError) => {
+        setError(String(stateError));
+      });
+      return;
+    }
+
+    if (activeTab !== "blockchain" || blockchainCurrentHeight <= seenBlockHeight) {
+      return;
+    }
+
+    void markBlockchainSeen(blockchainCurrentHeight).catch((stateError) => {
+      setError(String(stateError));
+    });
+  }, [
+    activeTab,
+    blockchainCurrentHeight,
+    desktopStateKey,
+    markBlockchainSeen,
+    seenBlockHeight,
+  ]);
+
+  useEffect(() => {
+    if (!nodeState.running || !isApiAvailable) {
+      previousConnectedPeersRef.current = null;
+      return;
+    }
+
+    const nextConnectedPeers = connectedPeerKey ? connectedPeerKey.split("\n") : [];
+    const previousConnectedPeers = previousConnectedPeersRef.current;
+    previousConnectedPeersRef.current = nextConnectedPeers;
+
+    if (previousConnectedPeers === null) {
+      return;
+    }
+
+    const nextConnectedSet = new Set(nextConnectedPeers);
+    const previousConnectedSet = new Set(previousConnectedPeers);
+    const connectedPeers = nextConnectedPeers.filter((peer) => !previousConnectedSet.has(peer));
+    const disconnectedPeers = previousConnectedPeers.filter((peer) => !nextConnectedSet.has(peer));
+    if (connectedPeers.length === 0 && disconnectedPeers.length === 0) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const connectedEvents = connectedPeers.map((peer, index): NetworkEvent => ({
+      id: `${timestamp}-connected-${index}-${peer}`,
+      type: "connected",
+      peer,
+      timestamp,
+    }));
+    const disconnectedEvents = disconnectedPeers.map((peer, index): NetworkEvent => ({
+      id: `${timestamp}-disconnected-${index}-${peer}`,
+      type: "disconnected",
+      peer,
+      timestamp,
+    }));
+    const nextEvents = [...connectedEvents, ...disconnectedEvents];
+
+    setNetworkEvents((currentEvents) => [...nextEvents, ...currentEvents].slice(0, 30));
+    if (activeTab !== "network") {
+      setUnreadNetworkEventCount((currentCount) => currentCount + nextEvents.length);
+    }
+    if (nextEvents.length === 1) {
+      setNotice(nextEvents[0].type === "connected"
+        ? `Peer connected: ${nextEvents[0].peer}`
+        : `Peer disconnected: ${nextEvents[0].peer}`);
+      return;
+    }
+    setNotice(`${connectedEvents.length} connected, ${disconnectedEvents.length} disconnected`);
+  }, [activeTab, connectedPeerKey, isApiAvailable, nodeState.running]);
+
+  useEffect(() => {
+    if (activeTab === "network" && unreadNetworkEventCount > 0) {
+      setUnreadNetworkEventCount(0);
+    }
+  }, [activeTab, unreadNetworkEventCount]);
 
   useEffect(() => {
     void refreshWallets().catch((walletError) => {
@@ -1350,7 +2007,7 @@ function App() {
           return {
             peer: attempt.peer,
             status: "failed",
-            detail: connectError instanceof Error ? connectError.message : String(connectError),
+            ...readablePeerConnectError(connectError),
           };
         }
       }),
@@ -1533,6 +2190,9 @@ function App() {
     setStartupPhase("starting-node");
     setStartupComplete(false);
     setBootstrapAttempts([]);
+    setNetworkEvents([]);
+    setUnreadNetworkEventCount(0);
+    previousConnectedPeersRef.current = null;
     setSyncStatus(null);
     setError(null);
     setNotice(null);
@@ -1560,6 +2220,26 @@ function App() {
     }
   }
 
+  async function handleWalletDoubleClick(wallet: WalletSummary) {
+    if (busyAction !== null) {
+      return;
+    }
+
+    const walletWasAlreadySelected = walletName === wallet.name;
+    const walletPreferredPort = normalizePreferredPort(wallet.preferredPort);
+    const nodePortValue = walletWasAlreadySelected ? port : String(walletPreferredPort);
+    const nodeApiPortValue = walletWasAlreadySelected ? apiPort : String(apiPortForNodePort(walletPreferredPort));
+
+    applyWalletSelection(wallet.name);
+    try {
+      await launchWalletNode(wallet.name, "start-node", nodePortValue, nodeApiPortValue);
+    } catch (startError) {
+      setError(String(startError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleStop() {
     setBusyAction("stop-node");
     setError(null);
@@ -1572,6 +2252,9 @@ function App() {
       setStartupPhase("idle");
       setStartupComplete(false);
       setBootstrapAttempts([]);
+      setNetworkEvents([]);
+      setUnreadNetworkEventCount(0);
+      previousConnectedPeersRef.current = null;
       setSyncStatus(null);
       setMiningStatus(null);
       setNotice("Stopped node");
@@ -1589,6 +2272,31 @@ function App() {
     } catch (refreshError) {
       setError(String(refreshError));
     }
+  }
+
+  async function focusBlockchainBlock(reference: string, updateSearch = false) {
+    if (!isApiAvailable) {
+      setBlockchainSearchError("Start the node before searching blocks.");
+      return null;
+    }
+
+    const targetBlock = await readBlock(activeApiPort, reference);
+    const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
+    const response = await readBlocks(activeApiPort, BLOCKCHAIN_CONTEXT_BLOCKS, fromHeight);
+    const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
+      ? response.blocks
+      : [targetBlock];
+    setBlockchainWindow({
+      reference,
+      targetHash: targetBlock.block_hash,
+      targetHeight: targetBlock.height,
+      blocks,
+    });
+    setBlockchainSearchError(null);
+    if (updateSearch) {
+      setBlockchainSearch(String(targetBlock.height));
+    }
+    return targetBlock;
   }
 
   async function handleBlockchainSearch(event: FormEvent<HTMLFormElement>) {
@@ -1622,24 +2330,49 @@ function App() {
           movedToTip = true;
         }
       }
-      const targetBlock = await readBlock(activeApiPort, resolvedReference);
-      const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
-      const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
-      const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
-        ? response.blocks
-        : [targetBlock];
-      setBlockchainWindow({
-        reference: resolvedReference,
-        targetHash: targetBlock.block_hash,
-        targetHeight: targetBlock.height,
-        blocks,
-      });
+      const targetBlock = await focusBlockchainBlock(resolvedReference);
       if (movedToTip) {
-        setBlockchainSearch(String(targetBlock.height));
-        setNotice(`Moved to tip with hash ${targetBlock.block_hash.slice(0, 8)}`);
+        setBlockchainSearch(String(targetBlock?.height ?? resolvedReference));
+        setNotice(`Moved to tip with hash ${targetBlock?.block_hash.slice(0, 8) ?? resolvedReference}`);
       }
     } catch (searchError) {
       setBlockchainSearchError(searchError instanceof Error ? searchError.message : String(searchError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleBlockchainStep(direction: -1 | 1) {
+    if (!isApiAvailable) {
+      setBlockchainSearchError("Start the node before navigating blocks.");
+      return;
+    }
+
+    const currentHeight = blockchainWindow?.targetHeight
+      ?? snapshot.chainHead?.height
+      ?? (snapshot.blocks.length > 0 ? snapshot.blocks[snapshot.blocks.length - 1].height : null)
+      ?? null;
+    if (currentHeight === null || currentHeight < 0) {
+      setBlockchainSearchError("No blocks are available.");
+      return;
+    }
+
+    setBusyAction("blockchain-nav");
+    setBlockchainSearchError(null);
+    setNotice(null);
+    try {
+      const chainHead = direction > 0 || snapshot.chainHead === null
+        ? await readChainHead(activeApiPort)
+        : snapshot.chainHead;
+      const nextHeight = direction > 0
+        ? Math.min(chainHead.height, currentHeight + 1)
+        : Math.max(0, currentHeight - 1);
+      if (nextHeight === currentHeight) {
+        return;
+      }
+      await focusBlockchainBlock(String(nextHeight), true);
+    } catch (stepError) {
+      setBlockchainSearchError(stepError instanceof Error ? stepError.message : String(stepError));
     } finally {
       setBusyAction(null);
     }
@@ -1710,6 +2443,13 @@ function App() {
     });
   }
 
+  async function handleDisconnectPeer(peer: string) {
+    await runNodeAction("disconnect-peer", async () => {
+      const response = await disconnectPeer(activeApiPort, peer);
+      return { label: "Disconnected peer", detail: peer || String(response.connected.length) };
+    });
+  }
+
   async function handleConnectBootstrapPeers() {
     if (!isApiAvailable) {
       setError("Start the node before connecting bootstrap peers.");
@@ -1739,7 +2479,7 @@ function App() {
             return {
               peer: attempt.peer,
               status: "failed",
-              detail: connectError instanceof Error ? connectError.message : String(connectError),
+              ...readablePeerConnectError(connectError),
             };
           }
         }),
@@ -1832,19 +2572,41 @@ function App() {
         createdAt: new Date().toISOString(),
         status: "pending",
       };
-      await saveRandomnessCommits([...randomnessCommits, nextRecord]);
+      await saveRandomnessCommits([...randomnessCommitsRef.current, nextRecord]);
       return { label: "Broadcast commitment", detail: response.transaction_id };
     });
   }
 
   async function handleRevealSavedCommit(record: RandomnessCommitRecord) {
     await runNodeAction("reveal-randomness", async () => {
-      const response = await revealCommitment(activeApiPort, {
-        request_id: record.requestId,
-        seed: record.seed,
-        fee: revealFee,
-        salt: record.salt,
-      });
+      let response;
+      try {
+        response = await revealCommitment(activeApiPort, {
+          request_id: record.requestId,
+          seed: record.seed,
+          fee: revealFee,
+          salt: record.salt,
+        });
+      } catch (revealError) {
+        if (isRandomnessChainStateError(revealError)) {
+          const latestSnapshot = latestSnapshotRef.current;
+          const reconciledRecords = await reconcileRandomnessCommits(
+            activeApiPort,
+            latestSnapshot.nodeInfo?.wallet?.address,
+            latestSnapshot.pendingTransactions,
+            latestSnapshot.chainHead?.state_tip_hash ?? latestSnapshot.chainHead?.tip_hash ?? latestSnapshot.chainHead?.height,
+            true,
+          );
+          const reconciledRecord = reconciledRecords.find((currentRecord) => currentRecord.id === record.id);
+          if (reconciledRecord?.status === "revealed") {
+            return { label: "Reveal already on chain", detail: record.requestId };
+          }
+          if (reconciledRecord?.status === "stale") {
+            return { label: "Randomness record stale", detail: reconciledRecord.staleReason };
+          }
+        }
+        throw revealError;
+      }
       const revealedRecord: RandomnessCommitRecord = {
         ...record,
         status: "revealed",
@@ -1852,7 +2614,7 @@ function App() {
         revealedAt: new Date().toISOString(),
       };
       await saveRandomnessCommits(
-        randomnessCommits.map((currentRecord) => (
+        randomnessCommitsRef.current.map((currentRecord) => (
           currentRecord.id === record.id ? revealedRecord : currentRecord
         )),
       );
@@ -1898,10 +2660,61 @@ function App() {
     });
   }
 
+  async function handleDeployTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runNodeAction("deploy-contract", async () => {
+      if (selectedContractTemplate !== "coinflip") {
+        throw new Error("Choose a contract template.");
+      }
+
+      const walletOne = coinflipWalletOne.trim();
+      const walletTwo = coinflipWalletTwo.trim();
+      const requestId = coinflipRequestId.trim() || createCoinflipRequestId();
+      if (!walletOne || !walletTwo) {
+        throw new Error("Wallet 1 and wallet 2 are required.");
+      }
+      if (walletOne === walletTwo) {
+        throw new Error("Wallet 1 and wallet 2 must be different.");
+      }
+
+      const amount = parsePositiveIntegerField(coinflipAmount, "Amount");
+      const revealDeadline = parseWholeNumberField(coinflipRevealDeadline, "Reveal deadline");
+      const currentHeight = snapshot.chainHead?.height;
+      if (typeof currentHeight === "number" && revealDeadline <= currentHeight) {
+        throw new Error(`Reveal deadline must be after current block #${currentHeight}.`);
+      }
+
+      const contract = buildCoinflipContract({
+        walletOne,
+        walletTwo,
+        amount,
+        revealDeadline,
+        requestId,
+      });
+      const response = await deployContract(activeApiPort, {
+        fee: deployFee,
+        program: contract.program,
+        metadata: contract.metadata,
+      });
+      setCoinflipRequestId(requestId);
+      setExecuteContractAddress(response.contract_address ?? "");
+      setAuthContractAddress(response.contract_address ?? "");
+      setAuthRequestId(requestId);
+      setCommitRequestId(requestId);
+      setRevealRequestId(requestId);
+      return {
+        label: "Broadcast coinflip deploy",
+        detail: `${response.contract_address ?? "pending"} request ${requestId}`,
+      };
+    });
+  }
+
   async function handleExecute(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("execute-contract", async () => {
-      const parsedInput = parseJsonField(executeInputJson, "Execute input JSON");
+      const parsedInput = showExecuteInputJson
+        ? parseJsonField(executeInputJson, "Execute input JSON")
+        : null;
       const response = await executeContract(activeApiPort, {
         contract_address: executeContractAddress,
         gas_limit: executeGasLimit,
@@ -2024,12 +2837,12 @@ function App() {
                 <h3>Bootstrap Peers</h3>
                 <div className="bootstrap-list">
                   {(bootstrapAttempts.length === 0
-                    ? BOOTSTRAP_PEERS.map((peer) => ({ peer, status: "pending" as const }))
+                    ? BOOTSTRAP_PEERS.map((peer): BootstrapAttempt => ({ peer, status: "pending" }))
                     : bootstrapAttempts
                   ).map((attempt) => (
                     <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
                       <ReferenceCode value={attempt.peer} />
-                      <span>{attempt.status}</span>
+                      <span title={attempt.rawDetail ?? attempt.detail}>{bootstrapAttemptLabel(attempt)}</span>
                     </div>
                   ))}
                 </div>
@@ -2105,6 +2918,7 @@ function App() {
                             className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
                             key={wallet.name}
                             onClick={() => applyWalletSelection(wallet.name)}
+                            onDoubleClick={() => void handleWalletDoubleClick(wallet)}
                             disabled={busyAction !== null}
                           >
                             <span>{wallet.name}</span>
@@ -2326,18 +3140,57 @@ function App() {
   const ownBalance = loadedWallet
     ? snapshot.balances.find((balance) => balance.address === loadedWallet.address)
     : undefined;
-  const latestBlockchainBlocks = snapshot.blocks.slice(-BLOCKCHAIN_VIEW_BLOCKS);
-  const blockchainBlocks = blockchainWindow?.blocks ?? latestBlockchainBlocks;
-  const blockchainSlots = [
-    ...Array<BlockPayload | null>(Math.max(0, BLOCKCHAIN_VIEW_BLOCKS - blockchainBlocks.length)).fill(null),
-    ...blockchainBlocks,
-  ];
-  const blockchainWindowLabel = blockchainWindow
-    ? `Focused on block #${blockchainWindow.targetHeight}`
-    : "Latest blocks";
+  const blockchainTargetHeight = blockchainWindow?.targetHeight
+    ?? snapshot.chainHead?.height
+    ?? (snapshot.blocks.length > 0 ? snapshot.blocks[snapshot.blocks.length - 1].height : null)
+    ?? null;
+  const blockchainBlocks = blockchainWindow?.blocks ?? snapshot.blocks;
+  const focusedBlockchainBlock = blockchainTargetHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === blockchainTargetHeight)
+      ?? blockchainBlocks.find((block) => block.block_hash === blockchainWindow?.targetHash)
+      ?? null;
+  const focusedBlockchainHeight = focusedBlockchainBlock?.height ?? blockchainTargetHeight;
+  const previousBlockchainBlock = focusedBlockchainHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === focusedBlockchainHeight - 1) ?? null;
+  const nextBlockchainBlock = focusedBlockchainHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === focusedBlockchainHeight + 1) ?? null;
+  const blockchainTipHeight = snapshot.chainHead?.height ?? null;
+  const showGenesisBoundary = previousBlockchainBlock === null && focusedBlockchainHeight === 0;
+  const showTipBoundary = (
+    nextBlockchainBlock === null
+    && focusedBlockchainHeight !== null
+    && blockchainTipHeight !== null
+    && focusedBlockchainHeight >= blockchainTipHeight
+  );
+  const blockchainWindowLabel = focusedBlockchainHeight !== null
+    ? `Focused on block #${focusedBlockchainHeight}`
+    : "No block focused";
+  const blockchainNavBusy = busyAction === "blockchain-search" || busyAction === "blockchain-nav";
+  const canNavigatePrevious = (
+    isApiAvailable
+    && !blockchainNavBusy
+    && blockchainTargetHeight !== null
+    && blockchainTargetHeight > 0
+  );
+  const canNavigateNext = (
+    isApiAvailable
+    && !blockchainNavBusy
+    && blockchainTargetHeight !== null
+    && blockchainTipHeight !== null
+    && blockchainTargetHeight < blockchainTipHeight
+  );
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
-  const latestReceipts = snapshot.receipts.slice(-8).reverse();
+  const latestReceipts = [...snapshot.receipts]
+    .sort((left, right) => (
+      receiptBlockSortValue(right) - receiptBlockSortValue(left)
+      || right.transaction_id.localeCompare(left.transaction_id)
+    ))
+    .slice(0, 8);
+  const executableContracts = snapshot.contracts.filter((contract) => !contractIsDone(contract, snapshot.receipts));
   const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
@@ -2379,6 +3232,12 @@ function App() {
     } catch (copyError) {
       setError(`Could not copy ${label.toLowerCase()}: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
     }
+  }
+
+  function prepareContractExecution(contract: ContractEntry) {
+    setExecuteContractAddress(contract.address);
+    setAuthContractAddress(contract.address);
+    setActiveContractSubTab("execute");
   }
 
   async function handleRevealWalletKeys() {
@@ -2463,6 +3322,12 @@ function App() {
               {tab.id === "messages" && unreadMessageCount > 0 ? (
                 <span className="unread-badge">{unreadMessageCount}</span>
               ) : null}
+              {tab.id === "blockchain" && unreadBlockCount > 0 ? (
+                <span className="unread-badge">{unreadBlockCount}</span>
+              ) : null}
+              {tab.id === "network" && unreadNetworkEventCount > 0 ? (
+                <span className="unread-badge">{unreadNetworkEventCount}</span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -2531,6 +3396,20 @@ function App() {
             <span>Current Tab</span>
             <h2>{activeTabLabel}</h2>
           </header>
+          {activeTab === "contracts" ? (
+            <nav className="subtab-bar" aria-label="Contract workflows">
+              {contractSubTabs.map((contractTab) => (
+                <button
+                  type="button"
+                  className={activeContractSubTab === contractTab.id ? "active" : ""}
+                  key={contractTab.id}
+                  onClick={() => setActiveContractSubTab(contractTab.id)}
+                >
+                  {contractTab.label}
+                </button>
+              ))}
+            </nav>
+          ) : null}
 
         {activeTab === "overview" ? (
           <section className="view">
@@ -2601,40 +3480,68 @@ function App() {
         {activeTab === "blockchain" ? (
           <section className="view blockchain-view">
             <section className="panel blockchain-toolbar">
-              <div>
+              <div className="blockchain-focus">
                 <strong>{blockchainWindowLabel}</strong>
                 <ReferenceText value={blockchainWindow ? blockchainWindow.targetHash : snapshot.chainHead?.tip_hash} />
+              </div>
+              <div className="blockchain-nav-actions">
+                <button
+                  type="button"
+                  disabled={!canNavigatePrevious}
+                  onClick={() => void handleBlockchainStep(-1)}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={!canNavigateNext}
+                  onClick={() => void handleBlockchainStep(1)}
+                >
+                  Next
+                </button>
               </div>
               <form className="block-search-form" onSubmit={handleBlockchainSearch}>
                 <input
                   value={blockchainSearch}
                   placeholder="Block height or hash"
                   onChange={(event) => setBlockchainSearch(event.target.value)}
-                  disabled={busyAction === "blockchain-search"}
+                  disabled={blockchainNavBusy}
                 />
-                <button type="submit" disabled={!isApiAvailable || busyAction === "blockchain-search"}>
+                <button type="submit" disabled={!isApiAvailable || blockchainNavBusy}>
                   Jump
                 </button>
-                <button type="button" onClick={clearBlockchainSearch} disabled={busyAction === "blockchain-search"}>
+                <button type="button" onClick={clearBlockchainSearch} disabled={blockchainNavBusy}>
                   Latest
                 </button>
               </form>
               {blockchainSearchError ? <p>{blockchainSearchError}</p> : null}
             </section>
-            <div className="blockchain-strip">
-              {blockchainSlots.map((block, index) => (
-                <Fragment key={block?.block_hash ?? `empty-${index}`}>
+            <div className="blockchain-carousel">
+              <div className="block-preview previous" aria-label="Previous block preview">
+                {showGenesisBoundary ? (
+                  <BlockchainBoundaryCard kind="genesis" />
+                ) : (
                   <BlockchainBlockCard
-                    block={block}
-                    focused={block !== null && block.block_hash === blockchainWindow?.targetHash}
+                    block={previousBlockchainBlock}
+                    preview
+                    emptyLabel="No previous block loaded."
                   />
-                  {index < BLOCKCHAIN_VIEW_BLOCKS - 1 ? (
-                    <div className="block-arrow" aria-label="Next block">
-                      <span aria-hidden="true">&rarr;</span>
-                    </div>
-                  ) : null}
-                </Fragment>
-              ))}
+                )}
+              </div>
+              <BlockchainHashConnector active={previousBlockchainBlock !== null && focusedBlockchainBlock !== null} />
+              <BlockchainBlockCard block={focusedBlockchainBlock} focused emptyLabel="No focused block loaded." />
+              <BlockchainHashConnector active={focusedBlockchainBlock !== null && nextBlockchainBlock !== null} />
+              <div className="block-preview next" aria-label="Next block preview">
+                {showTipBoundary ? (
+                  <BlockchainBoundaryCard kind="tip" />
+                ) : (
+                  <BlockchainBlockCard
+                    block={nextBlockchainBlock}
+                    preview
+                    emptyLabel="No next block loaded."
+                  />
+                )}
+              </div>
             </div>
           </section>
         ) : null}
@@ -2713,7 +3620,7 @@ function App() {
                     snapshot.balances.map((balance) => (
                       <button
                         type="button"
-                        className="select-row"
+                        className="select-row recipient-row"
                         key={balance.address}
                         onClick={() => setTxReceiver(balance.alias || balance.address)}
                       >
@@ -2839,13 +3746,6 @@ function App() {
                               <span>{option.label}</span>
                               {isWarmingBackend ? (
                                 <span className="backend-loading-spinner" title={`${option.label} is warming`} />
-                              ) : needsWarmup ? (
-                                <span
-                                  className="backend-warmup-warning"
-                                  title={`${option.label} is not warmed up`}
-                                >
-                                  <WarningIcon className="backend-warmup-icon" />
-                                </span>
                               ) : null}
                             </span>
                             {!option.available ? (
@@ -3104,7 +4004,7 @@ function App() {
                       {networkBootstrapAttempts.map((attempt) => (
                         <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
                           <ReferenceCode value={attempt.peer} />
-                          <span title={attempt.detail}>{attempt.detail ?? attempt.status}</span>
+                          <span title={attempt.rawDetail ?? attempt.detail}>{bootstrapAttemptLabel(attempt)}</span>
                         </div>
                       ))}
                     </div>
@@ -3112,65 +4012,47 @@ function App() {
                 ) : null}
               </section>
 
-              <section className="panel">
+              <section className="panel network-traffic-card">
                 <div className="panel-title">
-                  <h3>Node</h3>
-                  <span>{snapshot.nodeInfo?.private_automine ? "private automine" : "canonical"}</span>
+                  <h3>Network Traffic</h3>
+                  <span>{snapshot.networkStats.peers.length} tracked</span>
                 </div>
-                <dl className="detail-list">
-                  <div>
-                    <dt>Host</dt>
-                    <dd>{snapshot.nodeInfo?.host ?? host}</dd>
-                  </div>
-                  <div>
-                    <dt>Port</dt>
-                    <dd>{snapshot.nodeInfo?.port ?? port}</dd>
-                  </div>
-                  <div>
-                    <dt>API Port</dt>
-                    <dd>{activeApiPort || "-"}</dd>
-                  </div>
-                </dl>
+                <div className="traffic-summary vertical">
+                  <article>
+                    <TrafficDirectionIcon direction="ingress" />
+                    <div>
+                      <span>Ingress</span>
+                      <strong>{formatBytes(snapshot.networkStats.ingress.bytes)}</strong>
+                      <small>{formatNumber(snapshot.networkStats.ingress.messages)} messages received</small>
+                    </div>
+                  </article>
+                  <article>
+                    <TrafficDirectionIcon direction="egress" />
+                    <div>
+                      <span>Egress</span>
+                      <strong>{formatBytes(snapshot.networkStats.egress.bytes)}</strong>
+                      <small>{formatNumber(snapshot.networkStats.egress.messages)} messages sent</small>
+                    </div>
+                  </article>
+                </div>
               </section>
             </div>
 
-            <section className="panel network-stats-panel">
+            <section className="panel network-events-panel">
               <div className="panel-title">
-                <h3>Network Traffic</h3>
-                <span>{snapshot.networkStats.peers.length} tracked</span>
+                <h3>Network Events</h3>
+                <span>{networkEvents.length}</span>
               </div>
-              <div className="traffic-summary">
-                <article>
-                  <span>Ingress</span>
-                  <strong>{formatBytes(snapshot.networkStats.ingress.bytes)}</strong>
-                  <small>{formatNumber(snapshot.networkStats.ingress.messages)} messages</small>
-                </article>
-                <article>
-                  <span>Egress</span>
-                  <strong>{formatBytes(snapshot.networkStats.egress.bytes)}</strong>
-                  <small>{formatNumber(snapshot.networkStats.egress.messages)} messages</small>
-                </article>
-              </div>
-              <div className="traffic-peer-list">
-                {snapshot.networkStats.peers.length === 0 ? (
-                  <p className="empty">No P2P traffic recorded yet.</p>
+              <div className="network-event-list">
+                {networkEvents.length === 0 ? (
+                  <p className="empty">No peer connect or disconnect events recorded this session.</p>
                 ) : (
-                  snapshot.networkStats.peers.map((peer) => (
-                    <div className="traffic-peer-row" key={peer.peer}>
-                      <div>
-                        <ReferenceCode value={peer.peer} />
-                        <span>{peer.connected ? "connected" : "disconnected"}</span>
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>In</dt>
-                          <dd>{formatBytes(peer.ingress.bytes)} / {formatNumber(peer.ingress.messages)} msg</dd>
-                        </div>
-                        <div>
-                          <dt>Out</dt>
-                          <dd>{formatBytes(peer.egress.bytes)} / {formatNumber(peer.egress.messages)} msg</dd>
-                        </div>
-                      </dl>
+                  networkEvents.map((event) => (
+                    <div className={`network-event-row ${event.type}`} key={event.id}>
+                      <span className="network-event-dot" aria-hidden="true" />
+                      <strong>{event.type === "connected" ? "Connected" : "Disconnected"}</strong>
+                      <ReferenceCode value={event.peer} />
+                      <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
                     </div>
                   ))
                 )}
@@ -3178,7 +4060,13 @@ function App() {
             </section>
 
             <div className="panel-grid two">
-              <PeerList title="Connected Peers" peers={connectedPeers} />
+              <PeerList
+                title="Connected Peers"
+                peers={connectedPeers}
+                actionLabel="Disconnect"
+                disableAction={disableNodeAction}
+                onPeerAction={(peer) => void handleDisconnectPeer(peer)}
+              />
               <PeerList title="Known Peers" peers={knownPeers} />
             </div>
           </section>
@@ -3232,28 +4120,108 @@ function App() {
         ) : null}
 
         {activeTab === "contracts" ? (
-          <section className="view">
-            <div className="panel-grid two">
+          <section className="view contracts-view">
+            {activeContractSubTab === "deploy" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Deploy</h3>
                   <span>{snapshot.contracts.length} contracts</span>
                 </div>
-                <form className="form-grid" onSubmit={handleDeploy}>
-                  <label>
-                    Fee
-                    <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
-                  </label>
-                  <label>
-                    Deploy JSON
-                    <textarea className="code-input" value={deployJson} onChange={(event) => setDeployJson(event.target.value)} />
-                  </label>
-                  <button type="submit" disabled={disableNodeAction}>
-                    Deploy
+                <div className="subtab-bar nested-subtab-bar" role="tablist" aria-label="Deploy type">
+                  <button
+                    type="button"
+                    className={activeDeploySubTab === "raw" ? "active" : ""}
+                    onClick={() => setActiveDeploySubTab("raw")}
+                  >
+                    Raw JSON
                   </button>
-                </form>
+                  <button
+                    type="button"
+                    className={activeDeploySubTab === "templates" ? "active" : ""}
+                    onClick={() => setActiveDeploySubTab("templates")}
+                  >
+                    Templates
+                  </button>
+                </div>
+                {activeDeploySubTab === "raw" ? (
+                  <form className="form-grid" onSubmit={handleDeploy}>
+                    <label>
+                      Fee
+                      <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
+                    </label>
+                    <label>
+                      Deploy JSON
+                      <textarea className="code-input" value={deployJson} onChange={(event) => setDeployJson(event.target.value)} />
+                    </label>
+                    <button type="submit" disabled={disableNodeAction}>
+                      Deploy
+                    </button>
+                  </form>
+                ) : (
+                  <form className="form-grid contract-template-form" onSubmit={handleDeployTemplate}>
+                    <div className="template-picker">
+                      {contractTemplates.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className={selectedContractTemplate === template.id ? "template-option selected" : "template-option"}
+                          onClick={() => setSelectedContractTemplate(template.id)}
+                        >
+                          <strong>{template.label}</strong>
+                          <span>{template.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="field-row">
+                      <label>
+                        Wallet 1
+                        <input value={coinflipWalletOne} onChange={(event) => setCoinflipWalletOne(event.target.value)} />
+                      </label>
+                      <label>
+                        Wallet 2
+                        <input value={coinflipWalletTwo} onChange={(event) => setCoinflipWalletTwo(event.target.value)} />
+                      </label>
+                    </div>
+                    <div className="field-row four">
+                      <label>
+                        Amount
+                        <input value={coinflipAmount} onChange={(event) => setCoinflipAmount(event.target.value)} />
+                      </label>
+                      <label>
+                        Reveal Deadline
+                        <input value={coinflipRevealDeadline} onChange={(event) => setCoinflipRevealDeadline(event.target.value)} />
+                      </label>
+                      <label>
+                        Fee
+                        <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
+                      </label>
+                      <div className="template-request-id">
+                        <span>Request ID</span>
+                        <ReferenceCode value={coinflipRequestId} />
+                      </div>
+                    </div>
+                    <div className="button-row">
+                      <button type="button" onClick={() => setCoinflipRequestId(createCoinflipRequestId())}>
+                        Regenerate ID
+                      </button>
+                      <button type="submit" disabled={disableNodeAction}>
+                        Deploy Coinflip
+                      </button>
+                    </div>
+                    <details className="template-preview">
+                      <summary>Generated JSON</summary>
+                      {coinflipTemplatePreview === null ? (
+                        <p className="empty">Complete the template fields to preview JSON.</p>
+                      ) : (
+                        <pre>{coinflipTemplatePreview}</pre>
+                      )}
+                    </details>
+                  </form>
+                )}
               </section>
+            ) : null}
 
+            {activeContractSubTab === "execute" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Execute</h3>
@@ -3282,18 +4250,29 @@ function App() {
                       <input value={executeFee} onChange={(event) => setExecuteFee(event.target.value)} />
                     </label>
                   </div>
-                  <label>
-                    Input JSON
-                    <textarea className="code-input" value={executeInputJson} onChange={(event) => setExecuteInputJson(event.target.value)} />
-                  </label>
+                  <div className="optional-json-header">
+                    <span>Input JSON</span>
+                    {showExecuteInputJson ? null : <code>null</code>}
+                    <button type="button" onClick={() => setShowExecuteInputJson((current) => !current)}>
+                      {showExecuteInputJson ? "Remove" : "Add"}
+                    </button>
+                  </div>
+                  {showExecuteInputJson ? (
+                    <textarea
+                      aria-label="Execute input JSON"
+                      className="code-input"
+                      value={executeInputJson}
+                      onChange={(event) => setExecuteInputJson(event.target.value)}
+                    />
+                  ) : null}
                   <button type="submit" disabled={disableNodeAction}>
                     Execute
                   </button>
                 </form>
               </section>
-            </div>
+            ) : null}
 
-            <div className="panel-grid two">
+            {activeContractSubTab === "authorization" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Authorization</h3>
@@ -3335,7 +4314,9 @@ function App() {
                   )}
                 </div>
               </section>
+            ) : null}
 
+            {activeContractSubTab === "randomness" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Randomness</h3>
@@ -3416,7 +4397,34 @@ function App() {
                               <span>{formatTimestamp(record.revealedAt)}</span>
                             </div>
                             <ReferenceCode value={record.transactionId} prefix="commit " />
-                            <ReferenceCode value={record.revealTransactionId} prefix="reveal " />
+                            {record.revealTransactionId ? (
+                              <ReferenceCode value={record.revealTransactionId} prefix="reveal " />
+                            ) : (
+                              <span>reveal detected on chain</span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="randomness-section">
+                    <div className="randomness-section-title">
+                      <h4>Stale</h4>
+                      <span>{staleRandomnessCommits.length}</span>
+                    </div>
+                    <div className="list">
+                      {staleRandomnessCommits.length === 0 ? (
+                        <p className="empty">No stale randomness records.</p>
+                      ) : (
+                        staleRandomnessCommits.map((record) => (
+                          <div className="list-row stacked randomness-record stale-record" key={record.id}>
+                            <div className="auth-summary">
+                              <strong>{record.requestId}</strong>
+                              <span>{record.staleReason ?? "Not usable on current chain"}</span>
+                            </div>
+                            <ReferenceCode value={record.transactionId} prefix="commit " />
+                            <span>{formatTimestamp(record.createdAt)}</span>
                           </div>
                         ))
                       )}
@@ -3453,42 +4461,91 @@ function App() {
                   </button>
                 </form>
               </section>
-            </div>
+            ) : null}
 
-            <div className="panel-grid two">
+            {activeContractSubTab === "contracts" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Contracts</h3>
                   <span>{snapshot.contracts.length}</span>
                 </div>
-                <div className="list">
+                <div className="contract-execute-panel">
+                  <div className="secondary-title">
+                    <strong>Ready to Execute</strong>
+                    <span>{executableContracts.length} open</span>
+                  </div>
+                  <div className="contract-list">
+                    {executableContracts.length === 0 ? (
+                      <p className="empty">No open contracts need execution.</p>
+                    ) : (
+                      executableContracts.map((contract) => (
+                        <article className="contract-card featured" key={`execute-${contract.address}`}>
+                          <div className="contract-card-main">
+                            <div className="contract-title-line">
+                              <strong>{contractDisplayName(contract)}</strong>
+                              <span className="contract-status">{contractExecutionStatus(contract, snapshot.receipts)}</span>
+                            </div>
+                            <ReferenceCode value={contract.address} />
+                            <p>{contractDescription(contract) ?? "No contract description."}</p>
+                          </div>
+                          <div className="contract-row-meta">
+                            <ReferenceCode value={contractCodeHash(contract)} prefix="code " />
+                            <span>{Object.keys(contract.storage).length} storage</span>
+                          </div>
+                          <div className="contract-card-actions">
+                            <button type="button" onClick={() => prepareContractExecution(contract)}>
+                              Execute
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="contract-execute-panel">
+                  <div className="secondary-title">
+                    <strong>All Contracts</strong>
+                    <span>{snapshot.contracts.length} deployed</span>
+                  </div>
+                  <div className="contract-list">
                   {snapshot.contracts.length === 0 ? (
                     <p className="empty">No contracts deployed.</p>
                   ) : (
                     snapshot.contracts.map((contract) => (
-                      <button
-                        type="button"
-                        className="select-row"
-                        key={contract.address}
-                        onClick={() => {
-                          setExecuteContractAddress(contract.address);
-                          setAuthContractAddress(contract.address);
-                        }}
-                      >
-                        <span className="contract-card-main">
-                          <strong>{contractDisplayName(contract)}</strong>
+                      <article className="contract-card" key={contract.address}>
+                        <div className="contract-card-main">
+                          <div className="contract-title-line">
+                            <strong>{contractDisplayName(contract)}</strong>
+                            <span className={contractIsDone(contract, snapshot.receipts) ? "contract-status done" : "contract-status"}>
+                              {contractExecutionStatus(contract, snapshot.receipts)}
+                            </span>
+                          </div>
                           <ReferenceCode value={contract.address} />
-                        </span>
-                        <span className="contract-row-meta">
+                          <p>{contractDescription(contract) ?? "No contract description."}</p>
+                        </div>
+                        <div className="contract-row-meta">
                           <ReferenceCode value={contractCodeHash(contract)} prefix="code " />
                           <span>{Object.keys(contract.storage).length} storage</span>
-                        </span>
-                      </button>
+                        </div>
+                        <div className="contract-card-actions">
+                          {contractIsDone(contract, snapshot.receipts) ? (
+                            <span className="contract-done-label">Done</span>
+                          ) : (
+                            <button type="button" onClick={() => prepareContractExecution(contract)}>
+                              Execute
+                            </button>
+                          )}
+                        </div>
+                      </article>
                     ))
                   )}
+                  </div>
                 </div>
               </section>
+            ) : null}
 
+            {activeContractSubTab === "receipts" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Receipts</h3>
@@ -3498,18 +4555,57 @@ function App() {
                   {latestReceipts.length === 0 ? (
                     <p className="empty">No receipts yet.</p>
                   ) : (
-                    latestReceipts.map((receipt) => (
-                      <details className="details-row" key={receipt.transaction_id}>
-                        <summary>
-                          <ReferenceText value={receipt.transaction_id} />
-                        </summary>
-                        <pre>{formatJson(receipt.receipt)}</pre>
-                      </details>
-                    ))
+                    latestReceipts.map((receipt) => {
+                      const success = receiptSuccess(receipt);
+                      return (
+                        <details className="details-row receipt-row" key={receipt.transaction_id}>
+                          <summary>
+                            <span className="receipt-chevron" aria-hidden="true" />
+                            <span className="receipt-summary">
+                              <span className="receipt-title">
+                                <strong>{receipt.contract_name || "Contract execution"}</strong>
+                                <span className={success === false ? "receipt-status failed" : "receipt-status"}>
+                                  {success === null ? "unknown" : success ? "success" : "failed"}
+                                </span>
+                              </span>
+                              <ReferenceText value={receipt.transaction_id} />
+                              <span className="receipt-description">
+                                {receipt.contract_description || receipt.block_description || "No contract description."}
+                              </span>
+                              <span className="receipt-meta-line">
+                                <span>
+                                  Block {typeof receipt.block_height === "number" ? `#${receipt.block_height}` : "-"}
+                                </span>
+                                <ReferenceCode value={receipt.block_hash} prefix="hash " />
+                              </span>
+                            </span>
+                          </summary>
+                          <div className="receipt-meta-grid">
+                            <div>
+                              <span>Contract</span>
+                              <ReferenceCode value={receipt.contract_address} />
+                            </div>
+                            <div>
+                              <span>Block Description</span>
+                              <strong>{receipt.block_description || "-"}</strong>
+                            </div>
+                            <div>
+                              <span>Gas Used</span>
+                              <strong>{recordString(receipt.receipt, "gas_used") ?? "-"}</strong>
+                            </div>
+                            <div>
+                              <span>Error</span>
+                              <strong>{recordString(receipt.receipt, "error") ?? "-"}</strong>
+                            </div>
+                          </div>
+                          <pre>{formatJson(receipt.receipt)}</pre>
+                        </details>
+                      );
+                    })
                   )}
                 </div>
               </section>
-            </div>
+            ) : null}
           </section>
         ) : null}
 
@@ -3534,21 +4630,50 @@ function App() {
   );
 }
 
-function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload | null; focused?: boolean }) {
+function BlockchainBoundaryCard({ kind }: { kind: "genesis" | "tip" }) {
+  const isGenesis = kind === "genesis";
+  return (
+    <section className="block-card preview-block boundary-block">
+      <header>
+        <span>{isGenesis ? "Chain Start" : "Chain End"}</span>
+        <strong>{isGenesis ? "Genesis" : "Current Tip"}</strong>
+      </header>
+      <p>{isGenesis ? "No canonical block exists before the genesis block." : "No newer canonical block exists yet."}</p>
+    </section>
+  );
+}
+
+function BlockchainBlockCard({
+  block,
+  focused = false,
+  preview = false,
+  emptyLabel = "No canonical block loaded.",
+}: {
+  block: BlockPayload | null;
+  focused?: boolean;
+  preview?: boolean;
+  emptyLabel?: string;
+}) {
+  const cardClassName = [
+    "block-card",
+    focused ? "focused-block" : "",
+    preview ? "preview-block" : "",
+  ].filter(Boolean).join(" ");
+
   if (!block) {
     return (
-      <section className="block-card empty-block">
+      <section className={`${cardClassName} empty-block`}>
         <header>
           <span>Block</span>
           <strong>Waiting</strong>
         </header>
-        <p className="empty">No earlier canonical block loaded.</p>
+        <p className="empty">{emptyLabel}</p>
       </section>
     );
   }
 
   return (
-    <section className={`block-card ${focused ? "focused-block" : ""}`}>
+    <section className={cardClassName}>
       <header>
         <span>Block #{block.height}</span>
         <ReferenceStrong value={block.block_hash} />
@@ -3621,7 +4746,19 @@ function BlockchainTransactionCard({ transaction }: { transaction: TransactionPa
   );
 }
 
-function PeerList({ title, peers }: { title: string; peers: string[] }) {
+function PeerList({
+  title,
+  peers,
+  actionLabel,
+  disableAction = false,
+  onPeerAction,
+}: {
+  title: string;
+  peers: string[];
+  actionLabel?: string;
+  disableAction?: boolean;
+  onPeerAction?: (peer: string) => void;
+}) {
   return (
     <section className="panel">
       <div className="panel-title">
@@ -3635,6 +4772,16 @@ function PeerList({ title, peers }: { title: string; peers: string[] }) {
           peers.map((peer) => (
             <div className="list-row" key={peer}>
               <ReferenceCode value={peer} />
+              {actionLabel && onPeerAction ? (
+                <button
+                  type="button"
+                  className="compact-action"
+                  disabled={disableAction}
+                  onClick={() => onPeerAction(peer)}
+                >
+                  {actionLabel}
+                </button>
+              ) : null}
             </div>
           ))
         )}

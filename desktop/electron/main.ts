@@ -70,13 +70,15 @@ type RandomnessCommitRecord = {
   commitmentHash: string;
   transactionId: string;
   createdAt: string;
-  status: "pending" | "revealed";
+  status: "pending" | "revealed" | "stale";
   revealTransactionId?: string;
   revealedAt?: string;
+  staleReason?: string;
 };
 
 type DesktopState = {
   seenReceivedMessageCount: number;
+  seenBlockHeight: number | null;
   randomnessCommits: RandomnessCommitRecord[];
 };
 
@@ -167,6 +169,9 @@ function desktopStatePath(walletKey: string): string {
 
 function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
   const seenReceivedMessageCount = Number(value.seenReceivedMessageCount);
+  const seenBlockHeight = typeof value.seenBlockHeight === "number"
+    ? value.seenBlockHeight
+    : null;
   const rawRandomnessCommits: unknown[] = Array.isArray(value.randomnessCommits)
     ? value.randomnessCommits
     : [];
@@ -176,13 +181,22 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
         ? seenReceivedMessageCount
         : 0
     ),
+    seenBlockHeight: (
+      seenBlockHeight !== null && Number.isInteger(seenBlockHeight) && seenBlockHeight >= -1
+        ? seenBlockHeight
+        : null
+    ),
     randomnessCommits: rawRandomnessCommits
       .filter((record): record is Record<string, unknown> => (
         typeof record === "object" && record !== null
       ))
       .map((record): RandomnessCommitRecord => {
         const status: RandomnessCommitRecord["status"] = (
-          record.status === "revealed" ? "revealed" : "pending"
+          record.status === "revealed"
+            ? "revealed"
+            : record.status === "stale"
+            ? "stale"
+            : "pending"
         );
         return {
           id: String(record.id || randomUUID()),
@@ -195,6 +209,7 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
           status,
           ...(record.revealTransactionId ? { revealTransactionId: String(record.revealTransactionId) } : {}),
           ...(record.revealedAt ? { revealedAt: String(record.revealedAt) } : {}),
+          ...(record.staleReason ? { staleReason: String(record.staleReason) } : {}),
         };
       })
       .filter((record) => record.requestId && record.seed && record.commitmentHash && record.transactionId),
