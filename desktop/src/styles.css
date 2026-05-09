@@ -1412,9 +1412,10 @@ dd {
 
 .block-arrow {
   display: grid;
-  align-items: center;
+  align-items: start;
   justify-items: center;
   min-width: 0;
+  padding-top: 18px;
   color: #9fc3d3;
   font-size: 24px;
   font-weight: 760;
