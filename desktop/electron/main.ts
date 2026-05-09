@@ -2,7 +2,7 @@ import electron from "electron/main";
 import type { BrowserWindow as BrowserWindowType } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { cpus, networkInterfaces } from "node:os";
 import path from "node:path";
 
@@ -214,6 +214,36 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
       })
       .filter((record) => record.requestId && record.seed && record.commitmentHash && record.transactionId),
   };
+}
+
+function recoverJsonPrefix(value: string): unknown | null {
+  const trimmedValue = value.trimEnd();
+  for (let index = trimmedValue.length - 1; index >= 0; index -= 1) {
+    if (trimmedValue[index] !== "}") {
+      continue;
+    }
+    try {
+      return JSON.parse(trimmedValue.slice(0, index + 1)) as unknown;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function writeDesktopState(statePath: string, state: DesktopState): Promise<void> {
+  await mkdir(path.dirname(statePath), { recursive: true });
+  const tempPath = path.join(
+    path.dirname(statePath),
+    `.${path.basename(statePath)}.${randomUUID()}.tmp`,
+  );
+  try {
+    await writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+    await rename(tempPath, statePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function sendNodeLog(stream: "stdout" | "stderr" | "system", message: string): void {
@@ -551,14 +581,28 @@ async function deleteWallet(request: DeleteWalletRequest): Promise<DeletedWallet
 
 async function readDesktopState(request: DesktopStateRequest): Promise<DesktopState> {
   const statePath = desktopStatePath(request.walletKey);
+  let rawState: string;
   try {
-    const stateData = JSON.parse(await readFile(statePath, "utf-8")) as Partial<DesktopState>;
-    return normalizeDesktopState(stateData);
+    rawState = await readFile(statePath, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return normalizeDesktopState({});
     }
     throw error;
+  }
+
+  try {
+    const stateData = JSON.parse(rawState) as Partial<DesktopState>;
+    return normalizeDesktopState(stateData);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+    const recoveredState = recoverJsonPrefix(rawState);
+    if (recoveredState !== null && typeof recoveredState === "object") {
+      return normalizeDesktopState(recoveredState as Partial<DesktopState>);
+    }
+    return normalizeDesktopState({});
   }
 }
 
@@ -570,8 +614,7 @@ async function updateDesktopState(request: UpdateDesktopStateRequest): Promise<D
     ...request,
   });
 
-  await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+  await writeDesktopState(statePath, nextState);
   return nextState;
 }
 
