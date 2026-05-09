@@ -2828,10 +2828,7 @@ function App() {
       || right.transaction_id.localeCompare(left.transaction_id)
     ))
     .slice(0, 8);
-  const executableContracts = useMemo(
-    () => snapshot.contracts.filter((contract) => !contractIsDone(contract, snapshot.receipts)),
-    [snapshot.contracts, snapshot.receipts],
-  );
+  const executableContracts = snapshot.contracts.filter((contract) => !contractIsDone(contract, snapshot.receipts));
   const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
