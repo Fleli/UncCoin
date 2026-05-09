@@ -2129,8 +2129,35 @@ dd {
 }
 
 .details-row summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   cursor: pointer;
   color: #9fc3d3;
+  list-style: none;
+}
+
+.details-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-row summary::marker {
+  content: "";
+}
+
+.receipt-chevron {
+  width: 0;
+  height: 0;
+  margin-top: 10px;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid #9fc3d3;
+  transition: transform 0.12s ease;
+}
+
+.details-row[open] .receipt-chevron {
+  transform: rotate(90deg);
 }
 
 .receipt-summary {

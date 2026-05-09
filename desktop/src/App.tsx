@@ -4211,6 +4211,7 @@ function App() {
                       return (
                         <details className="details-row receipt-row" key={receipt.transaction_id}>
                           <summary>
+                            <span className="receipt-chevron" aria-hidden="true" />
                             <span className="receipt-summary">
                               <span className="receipt-title">
                                 <strong>{receipt.contract_name || "Contract execution"}</strong>
