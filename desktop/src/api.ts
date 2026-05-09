@@ -335,6 +335,12 @@ export function sendTransaction(
   return requestApi(apiPort, "/control/transactions", "POST", payload);
 }
 
+export function rebroadcastPendingTransactions(
+  apiPort: number,
+): Promise<{ rebroadcast: number }> {
+  return requestApi(apiPort, "/control/transactions/rebroadcast", "POST", {});
+}
+
 export function sendMessage(
   apiPort: number,
   payload: { receiver: string; content: string },

@@ -100,6 +100,7 @@ class Node:
             on_chain_summary=self._handle_chain_summary,
             on_chain_request=self._handle_chain_request,
             on_chain_response=self._handle_chain_response,
+            on_pending_transactions=self._handle_pending_transactions,
             on_notification=self._print_network_notification,
         )
         self.miner_warmup_status = self._default_miner_warmup_status()
@@ -153,6 +154,9 @@ class Node:
 
     async def broadcast_transaction(self, transaction: Transaction) -> None:
         await self.p2p_server.broadcast_transaction(transaction)
+
+    async def rebroadcast_pending_transactions(self) -> int:
+        return await self.p2p_server.broadcast_pending_transactions()
 
     async def broadcast_block(self, block: Block) -> None:
         await self.p2p_server.broadcast_block(block)
@@ -879,6 +883,7 @@ Commands:
                                   Commit a randomness hash for a request
     reveal <request-id> <seed> <fee> [salt]
                                   Reveal a seed for a prior commitment
+    rebroadcast-pending           Rebroadcast local pending transactions
     deploy <fee> <json-or-file>   Deploy UVM code from JSON or state/contracts
     view-contract <contract>      Show deployed UVM contract details
     authorize <contract> <request-id> <fee> [valid-blocks]
@@ -1139,6 +1144,11 @@ Wallet commands accept either a wallet address or a local alias."""
                     print(f"Invalid reveal command: {error}")
                 continue
 
+            if line == "rebroadcast-pending":
+                count = await self.rebroadcast_pending_transactions()
+                print(f"Rebroadcast {count} pending transaction(s).")
+                continue
+
             if line.startswith("deploy "):
                 try:
                     deploy_args = line[len("deploy "):].split(" ", maxsplit=1)
@@ -1321,6 +1331,11 @@ Wallet commands accept either a wallet address or a local alias."""
         if self.blockchain is None:
             return []
         return self.blockchain.blocks
+
+    def _handle_pending_transactions(self) -> list[Transaction]:
+        if self.blockchain is None:
+            return []
+        return list(self.blockchain.pending_transactions)
 
     def _handle_chain_summary(self) -> tuple[str | None, int]:
         if self.blockchain is None or self.blockchain.main_tip_hash is None:

@@ -23,6 +23,7 @@ import {
   readPendingTransactions,
   readReceipts,
   readSyncStatus,
+  rebroadcastPendingTransactions,
   revealCommitment,
   sendMessage,
   sendTransaction,
@@ -3071,6 +3072,19 @@ function App() {
                     })}
                   >
                     Sync
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disableNodeAction}
+                    onClick={() => void runNodeAction("rebroadcast-pending", async () => {
+                      const response = await rebroadcastPendingTransactions(activeApiPort);
+                      return {
+                        label: "Pending transactions rebroadcast",
+                        detail: `${response.rebroadcast} transaction(s)`,
+                      };
+                    })}
+                  >
+                    Rebroadcast
                   </button>
                   <button
                     type="button"

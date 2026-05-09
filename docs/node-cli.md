@@ -54,6 +54,7 @@ unmute
 tx <receiver> <amount> <fee>
 commit <request-id> <commitment-hash> <fee>
 reveal <request-id> <seed> <fee> [salt]
+rebroadcast-pending
 deploy <fee> <json-or-file>
 view-contract <contract>
 authorize <contract> <request-id> <fee> [valid-blocks]

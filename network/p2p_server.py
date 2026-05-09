@@ -54,6 +54,7 @@ class P2PServer:
     on_chain_summary: Callable[[], tuple[str | None, int]] | None = None
     on_chain_request: Callable[[], list[Block]] | None = None
     on_chain_response: Callable[[list[Block]], dict[str, int] | None] | None = None
+    on_pending_transactions: Callable[[], list[Transaction]] | None = None
     on_notification: Callable[[str], None] | None = None
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
@@ -168,6 +169,17 @@ class P2PServer:
         )
         return True, None
 
+    async def broadcast_pending_transactions(self) -> int:
+        transactions = self._get_pending_transactions()
+        for transaction in transactions:
+            transaction_id = sha256_transaction_hash(transaction)
+            self.seen_transaction_ids.add(transaction_id)
+            await self._broadcast_to_peers(self._transaction_message(transaction))
+
+        if transactions:
+            self._notify(f"Rebroadcast {len(transactions)} pending transaction(s).")
+        return len(transactions)
+
     async def broadcast_block(self, block: Block) -> None:
         block_hash = block.block_hash
         if block_hash in self.seen_block_hashes:
@@ -232,6 +244,9 @@ class P2PServer:
 
     async def request_peer_list(self, host: str, port: int) -> None:
         await self.send_to_peer(host, port, {"type": "peer_request"})
+
+    async def request_mempool(self, host: str, port: int) -> None:
+        await self.send_to_peer(host, port, {"type": "mempool_request"})
 
     async def request_chain(
         self,
@@ -452,6 +467,7 @@ class P2PServer:
                 active_fast_sync is not None
                 and active_fast_sync.active
             ):
+                await self._sync_mempool_with_peer(advertised_peer)
                 return advertised_peer
 
             if self._should_request_chain(remote_tip_hash, remote_height):
@@ -469,11 +485,20 @@ class P2PServer:
                     f"Requesting fast chain sync from {advertised_host}:{advertised_port} "
                     f"after handshake starting at height {max(start_height, 0)}"
                 )
+            await self._sync_mempool_with_peer(advertised_peer)
             return advertised_peer
 
         if message_type == "peer_request":
             await self._send_peer_list(peer)
             self._notify(f"Peer list requested by {peer.host}:{peer.port}")
+            return peer
+
+        if message_type == "mempool_request":
+            transaction_count = await self._send_pending_transactions_to_peer(peer)
+            self._notify(
+                f"Mempool requested by {peer.host}:{peer.port}; "
+                f"sent {transaction_count} pending transaction(s)"
+            )
             return peer
 
         if message_type == "peer_list":
@@ -587,6 +612,8 @@ class P2PServer:
                     f"Requesting next chain chunk from {peer.host}:{peer.port} "
                     f"starting at height {max(next_start_height, 0)}"
                 )
+            else:
+                await self._sync_mempool_with_peer(peer)
             return peer
 
         if message_type == "transaction":
@@ -636,6 +663,7 @@ class P2PServer:
                     f"at height {block.block_id}"
                 )
                 await self._broadcast_to_peers(message, exclude_peer=peer)
+                await self._sync_mempool_with_peer(peer)
                 return peer
 
             if block_status == "orphaned":
@@ -692,6 +720,36 @@ class P2PServer:
                 ],
             },
         )
+
+    async def _sync_mempool_with_peer(self, peer: PeerAddress) -> None:
+        writer = self.active_connections.get(peer)
+        if (
+            writer is None
+            or not hasattr(writer, "write")
+            or not hasattr(writer, "drain")
+        ):
+            return
+
+        try:
+            await self.request_mempool(peer.host, peer.port)
+            await self._send_pending_transactions_to_peer(peer)
+        except (ConnectionError, ValueError):
+            self._notify(f"Could not sync mempool with {peer.host}:{peer.port}")
+
+    async def _send_pending_transactions_to_peer(self, peer: PeerAddress) -> int:
+        writer = self.active_connections.get(peer)
+        if writer is None:
+            return 0
+
+        transactions = self._get_pending_transactions()
+        for transaction in transactions:
+            transaction_id = sha256_transaction_hash(transaction)
+            self.seen_transaction_ids.add(transaction_id)
+            message = self._transaction_message(transaction)
+            self._record_egress(peer, self._encode_message(message))
+            await self._send_message(writer, message)
+
+        return len(transactions)
 
     async def _send_chain_chunk(self, peer: PeerAddress, start_height: int) -> None:
         payload = self._build_chain_chunk_payload(start_height)
@@ -867,7 +925,21 @@ class P2PServer:
             if done:
                 fast_sync_state.pending_chunks.clear()
                 fast_sync_state.active = False
+                await self._sync_mempool_with_peer(peer)
                 return
+
+    def _get_pending_transactions(self) -> list[Transaction]:
+        if self.on_pending_transactions is None:
+            return []
+        return self.on_pending_transactions()
+
+    @staticmethod
+    def _transaction_message(transaction: Transaction) -> dict:
+        return {
+            "type": "transaction",
+            "tx_id": sha256_transaction_hash(transaction),
+            "transaction": transaction.to_dict(),
+        }
 
     def _build_chain_chunk_payload(
         self,

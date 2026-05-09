@@ -425,6 +425,11 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return await _broadcast_transaction(node, transaction)
 
+    @app.post(f"{API_PREFIX}/control/transactions/rebroadcast")
+    async def rebroadcast_pending_transactions() -> dict[str, Any]:
+        count = await node.rebroadcast_pending_transactions()
+        return {"rebroadcast": count}
+
     @app.post(f"{API_PREFIX}/control/messages")
     async def create_message(request: MessageRequest) -> dict[str, Any]:
         try:
