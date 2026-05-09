@@ -1742,9 +1742,19 @@ dd {
   box-shadow: 0 0 0 3px rgba(217, 74, 63, 0.12);
 }
 
+.network-event-row.connected .network-event-dot {
+  border-color: #367b5c;
+  background: #51c286;
+  box-shadow: 0 0 0 3px rgba(81, 194, 134, 0.12);
+}
+
 .network-event-row strong {
   color: #ffb7aa;
   font-size: 12px;
+}
+
+.network-event-row.connected strong {
+  color: #9de0be;
 }
 
 .network-event-row code {

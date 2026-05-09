@@ -114,7 +114,7 @@ type BootstrapAttempt = {
 
 type NetworkEvent = {
   id: string;
-  type: "disconnected";
+  type: "connected" | "disconnected";
   peer: string;
   timestamp: string;
 };
@@ -1489,26 +1489,39 @@ function App() {
     }
 
     const nextConnectedSet = new Set(nextConnectedPeers);
+    const previousConnectedSet = new Set(previousConnectedPeers);
+    const connectedPeers = nextConnectedPeers.filter((peer) => !previousConnectedSet.has(peer));
     const disconnectedPeers = previousConnectedPeers.filter((peer) => !nextConnectedSet.has(peer));
-    if (disconnectedPeers.length === 0) {
+    if (connectedPeers.length === 0 && disconnectedPeers.length === 0) {
       return;
     }
 
     const timestamp = new Date().toISOString();
-    const nextEvents = disconnectedPeers.map((peer, index): NetworkEvent => ({
-      id: `${timestamp}-${index}-${peer}`,
+    const connectedEvents = connectedPeers.map((peer, index): NetworkEvent => ({
+      id: `${timestamp}-connected-${index}-${peer}`,
+      type: "connected",
+      peer,
+      timestamp,
+    }));
+    const disconnectedEvents = disconnectedPeers.map((peer, index): NetworkEvent => ({
+      id: `${timestamp}-disconnected-${index}-${peer}`,
       type: "disconnected",
       peer,
       timestamp,
     }));
+    const nextEvents = [...connectedEvents, ...disconnectedEvents];
 
     setNetworkEvents((currentEvents) => [...nextEvents, ...currentEvents].slice(0, 30));
     if (activeTab !== "network") {
       setUnreadNetworkEventCount((currentCount) => currentCount + nextEvents.length);
     }
-    setNotice(nextEvents.length === 1
-      ? `Peer disconnected: ${nextEvents[0].peer}`
-      : `${nextEvents.length} peers disconnected`);
+    if (nextEvents.length === 1) {
+      setNotice(nextEvents[0].type === "connected"
+        ? `Peer connected: ${nextEvents[0].peer}`
+        : `Peer disconnected: ${nextEvents[0].peer}`);
+      return;
+    }
+    setNotice(`${connectedEvents.length} connected, ${disconnectedEvents.length} disconnected`);
   }, [activeTab, connectedPeerKey, isApiAvailable, nodeState.running]);
 
   useEffect(() => {
@@ -3781,12 +3794,12 @@ function App() {
               </div>
               <div className="network-event-list">
                 {networkEvents.length === 0 ? (
-                  <p className="empty">No peer disconnects recorded this session.</p>
+                  <p className="empty">No peer connect or disconnect events recorded this session.</p>
                 ) : (
                   networkEvents.map((event) => (
                     <div className={`network-event-row ${event.type}`} key={event.id}>
                       <span className="network-event-dot" aria-hidden="true" />
-                      <strong>Disconnected</strong>
+                      <strong>{event.type === "connected" ? "Connected" : "Disconnected"}</strong>
                       <ReferenceCode value={event.peer} />
                       <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
                     </div>
