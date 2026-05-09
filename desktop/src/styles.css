@@ -1248,6 +1248,89 @@ dd {
   background: #20353e;
 }
 
+.nested-subtab-bar {
+  margin-top: 0;
+}
+
+.contract-template-form {
+  gap: 16px;
+}
+
+.template-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.template-option {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+  white-space: normal;
+  background: #101416;
+}
+
+.template-option strong {
+  color: #f2f5f7;
+  font-size: 15px;
+}
+
+.template-option span {
+  color: #9aa5ac;
+  font-size: 12px;
+}
+
+.template-option.selected {
+  border-color: #5b879a;
+  background: #152a31;
+}
+
+.template-request-id {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  align-content: start;
+  color: #a9b3ba;
+  font-weight: 720;
+}
+
+.template-request-id code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #344047;
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: #9fc3d3;
+  background: #0e1113;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-preview {
+  border-top: 1px solid #283138;
+  padding-top: 12px;
+}
+
+.template-preview summary {
+  cursor: pointer;
+  color: #aeb8bf;
+  font-weight: 720;
+}
+
+.template-preview pre {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #283138;
+  border-radius: 6px;
+  padding: 12px;
+  color: #dce7ec;
+  background: #0b0f11;
+  font-size: 12px;
+}
+
 .wallet-info {
   display: grid;
   min-width: 0;

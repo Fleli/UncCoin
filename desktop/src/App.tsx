@@ -45,6 +45,7 @@ import {
   type MiningBackendId,
   type MiningBackendOption,
   type MiningBackendsResponse,
+  type MiningWarmupStatus,
   type MiningStatus,
   type NetworkStatsResponse,
   type NodeInfo,
@@ -72,10 +73,13 @@ const RECENT_BLOCK_LIMIT = 12;
 const BLOCKCHAIN_CONTEXT_BLOCKS = 3;
 const MINING_REWARD_SENDER = "SYSTEM";
 const RANDOMNESS_SEED_MODULUS = 1n << 256n;
+const COINFLIP_REVEAL_DEADLINE_BLOCKS = 20;
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type ContractSubTab = "deploy" | "execute" | "authorization" | "randomness" | "contracts" | "receipts";
+type DeploySubTab = "raw" | "templates";
+type ContractTemplateId = "coinflip";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -140,6 +144,14 @@ const contractSubTabs: Array<{ id: ContractSubTab; label: string }> = [
   { id: "randomness", label: "Randomness" },
   { id: "contracts", label: "Contracts" },
   { id: "receipts", label: "Receipts" },
+];
+
+const contractTemplates: Array<{ id: ContractTemplateId; label: string; description: string }> = [
+  {
+    id: "coinflip",
+    label: "Coinflip",
+    description: "Two-wallet commit-reveal coinflip.",
+  },
 ];
 
 function TabIcon({ name }: { name: TabIconName }) {
@@ -308,6 +320,134 @@ function sortBalancesDescending(balances: BalanceRow[]): BalanceRow[] {
 
 function formatJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function randomHex(bytes: number): string {
+  const fallback = () => Array.from({ length: bytes }, () => (
+    Math.floor(Math.random() * 256).toString(16).padStart(2, "0")
+  )).join("");
+
+  if (globalThis.crypto?.getRandomValues === undefined) {
+    return fallback();
+  }
+
+  const buffer = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buffer);
+  return Array.from(buffer, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function createCoinflipRequestId(): string {
+  const suffix = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+    : randomHex(8);
+  return `coinflip-${suffix}`;
+}
+
+function parsePositiveIntegerField(value: string, label: string): number {
+  const trimmedValue = value.trim();
+  if (!/^[0-9]+$/.test(trimmedValue)) {
+    throw new Error(`${label} must be a positive whole number.`);
+  }
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${label} must be a positive whole number below ${Number.MAX_SAFE_INTEGER}.`);
+  }
+  return parsedValue;
+}
+
+function parseWholeNumberField(value: string, label: string): number {
+  const trimmedValue = value.trim();
+  if (!/^[0-9]+$/.test(trimmedValue)) {
+    throw new Error(`${label} must be a whole number.`);
+  }
+  const parsedValue = Number(trimmedValue);
+  if (!Number.isSafeInteger(parsedValue)) {
+    throw new Error(`${label} must be a whole number below ${Number.MAX_SAFE_INTEGER}.`);
+  }
+  return parsedValue;
+}
+
+function buildCoinflipContract({
+  walletOne,
+  walletTwo,
+  amount,
+  revealDeadline,
+  requestId,
+}: {
+  walletOne: string;
+  walletTwo: string;
+  amount: number;
+  revealDeadline: number;
+  requestId: string;
+}): { program: unknown[]; metadata: Record<string, unknown> } {
+  const payout = amount * 2;
+  return {
+    program: [
+      ["LOAD", "settled"],
+      ["JUMPI", 51],
+      ["HAS_REVEAL", walletOne, requestId],
+      ["MEM_STORE", "a_revealed"],
+      ["HAS_REVEAL", walletTwo, requestId],
+      ["MEM_STORE", "b_revealed"],
+      ["MEM_LOAD", "a_revealed"],
+      ["MEM_LOAD", "b_revealed"],
+      ["AND"],
+      ["JUMPI", 32],
+      ["BLOCK_HEIGHT"],
+      ["READ_METADATA", "reveal_deadline"],
+      ["GT"],
+      ["JUMPI", 15],
+      ["HALT"],
+      ["MEM_LOAD", "a_revealed"],
+      ["JUMPI", 22],
+      ["MEM_LOAD", "b_revealed"],
+      ["JUMPI", 27],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletTwo, walletOne, requestId],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletOne, walletTwo, requestId],
+      ["HALT"],
+      ["PUSH", 1],
+      ["STORE", "settled"],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletOne, "$CONTRACT", requestId],
+      ["PUSH", amount],
+      ["TRANSFER_FROM", walletTwo, "$CONTRACT", requestId],
+      ["READ_REVEAL", walletOne, requestId],
+      ["READ_REVEAL", walletTwo, requestId],
+      ["XOR"],
+      ["SHA256"],
+      ["PUSH", 2],
+      ["MOD"],
+      ["JUMPI", 48],
+      ["PUSH", payout],
+      ["TRANSFER_FROM", "$CONTRACT", walletOne, "coinflip:payout"],
+      ["HALT"],
+      ["PUSH", payout],
+      ["TRANSFER_FROM", "$CONTRACT", walletTwo, "coinflip:payout"],
+      ["HALT"],
+      ["HALT"],
+    ],
+    metadata: {
+      name: "coinflip",
+      description: `Coinflip between ${walletOne} and ${walletTwo}.`,
+      template: "coinflip",
+      request_id: requestId,
+      request_ids: [requestId],
+      participants: [walletOne, walletTwo],
+      amount,
+      stake: amount,
+      reveal_deadline: revealDeadline,
+    },
+  };
 }
 
 function normalizeRandomnessSeed(seed: string): string {
@@ -1050,6 +1190,7 @@ function App() {
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
   const [activeContractSubTab, setActiveContractSubTab] = useState<ContractSubTab>("deploy");
+  const [activeDeploySubTab, setActiveDeploySubTab] = useState<DeploySubTab>("raw");
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
   const [seenBlockHeight, setSeenBlockHeight] = useState<number | null>(null);
   const [randomnessCommits, setRandomnessCommits] = useState<RandomnessCommitRecord[]>([]);
@@ -1061,6 +1202,8 @@ function App() {
   const previousConnectedPeersRef = useRef<string[] | null>(null);
   const snapshotRefreshRef = useRef<Promise<void> | null>(null);
   const snapshotRefreshQueuedRef = useRef(false);
+  const coinflipDeadlineInitializedRef = useRef(false);
+  const previousCoinflipWalletRef = useRef<string | null>(null);
 
   const [txReceiver, setTxReceiver] = useState("");
   const [txAmount, setTxAmount] = useState("1");
@@ -1082,6 +1225,12 @@ function App() {
   const [revealFee, setRevealFee] = useState("0");
   const [deployFee, setDeployFee] = useState("0");
   const [deployJson, setDeployJson] = useState(DEFAULT_DEPLOY_JSON);
+  const [selectedContractTemplate, setSelectedContractTemplate] = useState<ContractTemplateId>("coinflip");
+  const [coinflipWalletOne, setCoinflipWalletOne] = useState("");
+  const [coinflipWalletTwo, setCoinflipWalletTwo] = useState("");
+  const [coinflipAmount, setCoinflipAmount] = useState("100");
+  const [coinflipRevealDeadline, setCoinflipRevealDeadline] = useState("");
+  const [coinflipRequestId, setCoinflipRequestId] = useState(createCoinflipRequestId);
   const [executeContractAddress, setExecuteContractAddress] = useState("");
   const [executeGasLimit, setExecuteGasLimit] = useState("1000");
   const [executeGasPrice, setExecuteGasPrice] = useState("0");
@@ -1099,6 +1248,25 @@ function App() {
     () => launchPeers.split(",").map((peer) => peer.trim()).filter(Boolean),
     [launchPeers],
   );
+  const coinflipTemplatePreview = useMemo(() => {
+    const walletOne = coinflipWalletOne.trim();
+    const walletTwo = coinflipWalletTwo.trim();
+    const requestId = coinflipRequestId.trim();
+    if (!walletOne || !walletTwo || !coinflipAmount.trim() || !coinflipRevealDeadline.trim() || !requestId) {
+      return null;
+    }
+    try {
+      return formatJson(buildCoinflipContract({
+        walletOne,
+        walletTwo,
+        amount: parsePositiveIntegerField(coinflipAmount, "Amount"),
+        revealDeadline: parseWholeNumberField(coinflipRevealDeadline, "Reveal deadline"),
+        requestId,
+      }));
+    } catch {
+      return null;
+    }
+  }, [coinflipWalletOne, coinflipWalletTwo, coinflipAmount, coinflipRevealDeadline, coinflipRequestId]);
   const filteredWallets = useMemo(() => {
     const query = walletSearch.trim().toLowerCase();
     if (!query) {
@@ -1387,6 +1555,25 @@ function App() {
   useEffect(() => {
     randomnessCommitsRef.current = randomnessCommits;
   }, [randomnessCommits]);
+
+  useEffect(() => {
+    const walletAddress = snapshot.nodeInfo?.wallet?.address;
+    if (walletAddress && previousCoinflipWalletRef.current !== walletAddress) {
+      setCoinflipWalletOne(walletAddress);
+      previousCoinflipWalletRef.current = walletAddress;
+    }
+  }, [snapshot.nodeInfo?.wallet?.address]);
+
+  useEffect(() => {
+    if (coinflipDeadlineInitializedRef.current || coinflipRevealDeadline.trim()) {
+      return;
+    }
+    if (typeof snapshot.chainHead?.height !== "number" || snapshot.chainHead.height < 0) {
+      return;
+    }
+    setCoinflipRevealDeadline(String(snapshot.chainHead.height + COINFLIP_REVEAL_DEADLINE_BLOCKS));
+    coinflipDeadlineInitializedRef.current = true;
+  }, [coinflipRevealDeadline, snapshot.chainHead?.height]);
 
   useEffect(() => {
     if (!desktopStateKey) {
@@ -2163,7 +2350,7 @@ function App() {
 
     const currentHeight = blockchainWindow?.targetHeight
       ?? snapshot.chainHead?.height
-      ?? snapshot.blocks.at(-1)?.height
+      ?? (snapshot.blocks.length > 0 ? snapshot.blocks[snapshot.blocks.length - 1].height : null)
       ?? null;
     if (currentHeight === null || currentHeight < 0) {
       setBlockchainSearchError("No blocks are available.");
@@ -2473,6 +2660,55 @@ function App() {
     });
   }
 
+  async function handleDeployTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runNodeAction("deploy-contract", async () => {
+      if (selectedContractTemplate !== "coinflip") {
+        throw new Error("Choose a contract template.");
+      }
+
+      const walletOne = coinflipWalletOne.trim();
+      const walletTwo = coinflipWalletTwo.trim();
+      const requestId = coinflipRequestId.trim() || createCoinflipRequestId();
+      if (!walletOne || !walletTwo) {
+        throw new Error("Wallet 1 and wallet 2 are required.");
+      }
+      if (walletOne === walletTwo) {
+        throw new Error("Wallet 1 and wallet 2 must be different.");
+      }
+
+      const amount = parsePositiveIntegerField(coinflipAmount, "Amount");
+      const revealDeadline = parseWholeNumberField(coinflipRevealDeadline, "Reveal deadline");
+      const currentHeight = snapshot.chainHead?.height;
+      if (typeof currentHeight === "number" && revealDeadline <= currentHeight) {
+        throw new Error(`Reveal deadline must be after current block #${currentHeight}.`);
+      }
+
+      const contract = buildCoinflipContract({
+        walletOne,
+        walletTwo,
+        amount,
+        revealDeadline,
+        requestId,
+      });
+      const response = await deployContract(activeApiPort, {
+        fee: deployFee,
+        program: contract.program,
+        metadata: contract.metadata,
+      });
+      setCoinflipRequestId(requestId);
+      setExecuteContractAddress(response.contract_address ?? "");
+      setAuthContractAddress(response.contract_address ?? "");
+      setAuthRequestId(requestId);
+      setCommitRequestId(requestId);
+      setRevealRequestId(requestId);
+      return {
+        label: "Broadcast coinflip deploy",
+        detail: `${response.contract_address ?? "pending"} request ${requestId}`,
+      };
+    });
+  }
+
   async function handleExecute(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("execute-contract", async () => {
@@ -2601,7 +2837,7 @@ function App() {
                 <h3>Bootstrap Peers</h3>
                 <div className="bootstrap-list">
                   {(bootstrapAttempts.length === 0
-                    ? BOOTSTRAP_PEERS.map((peer) => ({ peer, status: "pending" as const }))
+                    ? BOOTSTRAP_PEERS.map((peer): BootstrapAttempt => ({ peer, status: "pending" }))
                     : bootstrapAttempts
                   ).map((attempt) => (
                     <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
@@ -2906,7 +3142,7 @@ function App() {
     : undefined;
   const blockchainTargetHeight = blockchainWindow?.targetHeight
     ?? snapshot.chainHead?.height
-    ?? snapshot.blocks.at(-1)?.height
+    ?? (snapshot.blocks.length > 0 ? snapshot.blocks[snapshot.blocks.length - 1].height : null)
     ?? null;
   const blockchainBlocks = blockchainWindow?.blocks ?? snapshot.blocks;
   const focusedBlockchainBlock = blockchainTargetHeight === null
@@ -3891,19 +4127,97 @@ function App() {
                   <h3>Deploy</h3>
                   <span>{snapshot.contracts.length} contracts</span>
                 </div>
-                <form className="form-grid" onSubmit={handleDeploy}>
-                  <label>
-                    Fee
-                    <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
-                  </label>
-                  <label>
-                    Deploy JSON
-                    <textarea className="code-input" value={deployJson} onChange={(event) => setDeployJson(event.target.value)} />
-                  </label>
-                  <button type="submit" disabled={disableNodeAction}>
-                    Deploy
+                <div className="subtab-bar nested-subtab-bar" role="tablist" aria-label="Deploy type">
+                  <button
+                    type="button"
+                    className={activeDeploySubTab === "raw" ? "active" : ""}
+                    onClick={() => setActiveDeploySubTab("raw")}
+                  >
+                    Raw JSON
                   </button>
-                </form>
+                  <button
+                    type="button"
+                    className={activeDeploySubTab === "templates" ? "active" : ""}
+                    onClick={() => setActiveDeploySubTab("templates")}
+                  >
+                    Templates
+                  </button>
+                </div>
+                {activeDeploySubTab === "raw" ? (
+                  <form className="form-grid" onSubmit={handleDeploy}>
+                    <label>
+                      Fee
+                      <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
+                    </label>
+                    <label>
+                      Deploy JSON
+                      <textarea className="code-input" value={deployJson} onChange={(event) => setDeployJson(event.target.value)} />
+                    </label>
+                    <button type="submit" disabled={disableNodeAction}>
+                      Deploy
+                    </button>
+                  </form>
+                ) : (
+                  <form className="form-grid contract-template-form" onSubmit={handleDeployTemplate}>
+                    <div className="template-picker">
+                      {contractTemplates.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          className={selectedContractTemplate === template.id ? "template-option selected" : "template-option"}
+                          onClick={() => setSelectedContractTemplate(template.id)}
+                        >
+                          <strong>{template.label}</strong>
+                          <span>{template.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="field-row">
+                      <label>
+                        Wallet 1
+                        <input value={coinflipWalletOne} onChange={(event) => setCoinflipWalletOne(event.target.value)} />
+                      </label>
+                      <label>
+                        Wallet 2
+                        <input value={coinflipWalletTwo} onChange={(event) => setCoinflipWalletTwo(event.target.value)} />
+                      </label>
+                    </div>
+                    <div className="field-row four">
+                      <label>
+                        Amount
+                        <input value={coinflipAmount} onChange={(event) => setCoinflipAmount(event.target.value)} />
+                      </label>
+                      <label>
+                        Reveal Deadline
+                        <input value={coinflipRevealDeadline} onChange={(event) => setCoinflipRevealDeadline(event.target.value)} />
+                      </label>
+                      <label>
+                        Fee
+                        <input value={deployFee} onChange={(event) => setDeployFee(event.target.value)} />
+                      </label>
+                      <div className="template-request-id">
+                        <span>Request ID</span>
+                        <ReferenceCode value={coinflipRequestId} />
+                      </div>
+                    </div>
+                    <div className="button-row">
+                      <button type="button" onClick={() => setCoinflipRequestId(createCoinflipRequestId())}>
+                        Regenerate ID
+                      </button>
+                      <button type="submit" disabled={disableNodeAction}>
+                        Deploy Coinflip
+                      </button>
+                    </div>
+                    <details className="template-preview">
+                      <summary>Generated JSON</summary>
+                      {coinflipTemplatePreview === null ? (
+                        <p className="empty">Complete the template fields to preview JSON.</p>
+                      ) : (
+                        <pre>{coinflipTemplatePreview}</pre>
+                      )}
+                    </details>
+                  </form>
+                )}
               </section>
             ) : null}
 
