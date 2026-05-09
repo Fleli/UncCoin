@@ -321,14 +321,12 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
     @app.get(f"{API_PREFIX}/receipts")
     def receipts() -> dict[str, Any]:
         state = _current_state(node)
+        receipt_contexts = _receipt_contexts(node, state)
         return {
             "tip_hash": _state_tip_hash(node),
             "height": state.height,
             "receipts": [
-                {
-                    "transaction_id": transaction_id,
-                    "receipt": receipt.copy(),
-                }
+                _receipt_payload(transaction_id, receipt, receipt_contexts)
                 for transaction_id, receipt in sorted(state.uvm_receipts.items())
             ],
         }
@@ -336,11 +334,11 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
     @app.get(f"{API_PREFIX}/receipts/{{transaction_reference}}")
     def receipt(transaction_reference: str) -> dict[str, Any]:
         transaction_id, receipt_data = _find_receipt(node, transaction_reference)
+        receipt_contexts = _receipt_contexts(node, _current_state(node))
         return {
-            "transaction_id": transaction_id,
             "tip_hash": _state_tip_hash(node),
             "height": _current_state(node).height,
-            "receipt": receipt_data,
+            **_receipt_payload(transaction_id, receipt_data, receipt_contexts),
         }
 
     @app.get(f"{API_PREFIX}/commitments/{{request_id}}")
@@ -782,6 +780,55 @@ def _find_receipt(node: "Node", transaction_reference: str) -> tuple[str, dict]:
     if len(matches) > 1:
         raise HTTPException(status_code=400, detail="transaction id prefix is ambiguous")
     return matches[0]
+
+
+def _receipt_contexts(
+    node: "Node",
+    state: "ChainState",
+) -> dict[str, dict[str, Any]]:
+    receipt_transaction_ids = set(state.uvm_receipts)
+    if not receipt_transaction_ids:
+        return {}
+
+    contexts: dict[str, dict[str, Any]] = {}
+    for block in _current_chain(node):
+        for transaction in block.transactions:
+            transaction_id = sha256_transaction_hash(transaction)
+            if transaction_id not in receipt_transaction_ids:
+                continue
+
+            contract_address = str(
+                transaction.payload.get("contract_address")
+                or transaction.receiver
+                or ""
+            )
+            contract_data = state.contracts.get(contract_address, {})
+            metadata = contract_data.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            contexts[transaction_id] = {
+                "transaction": _transaction_payload(transaction),
+                "contract_address": contract_address,
+                "contract_name": metadata.get("name"),
+                "contract_description": metadata.get("description"),
+                "block_height": block.block_id,
+                "block_hash": block.block_hash,
+                "block_description": block.description,
+            }
+    return contexts
+
+
+def _receipt_payload(
+    transaction_id: str,
+    receipt: dict,
+    receipt_contexts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "transaction_id": transaction_id,
+        "receipt": receipt.copy(),
+        **receipt_contexts.get(transaction_id, {}),
+    }
 
 
 def _parse_peer(peer: str) -> tuple[str, int]:

@@ -493,6 +493,15 @@ function payloadValue(transaction: TransactionPayload, key: string): string | nu
   return JSON.stringify(value);
 }
 
+function receiptSuccess(receipt: ReceiptEntry): boolean | null {
+  const success = receipt.receipt.success;
+  return typeof success === "boolean" ? success : null;
+}
+
+function receiptBlockSortValue(receipt: ReceiptEntry): number {
+  return typeof receipt.block_height === "number" ? receipt.block_height : -1;
+}
+
 function pendingTransactionMatchesCommit(
   transaction: TransactionPayload,
   record: RandomnessCommitRecord,
@@ -2676,7 +2685,12 @@ function App() {
   );
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
-  const latestReceipts = snapshot.receipts.slice(-8).reverse();
+  const latestReceipts = [...snapshot.receipts]
+    .sort((left, right) => (
+      receiptBlockSortValue(right) - receiptBlockSortValue(left)
+      || right.transaction_id.localeCompare(left.transaction_id)
+    ))
+    .slice(0, 8);
   const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
@@ -3912,14 +3926,52 @@ function App() {
                   {latestReceipts.length === 0 ? (
                     <p className="empty">No receipts yet.</p>
                   ) : (
-                    latestReceipts.map((receipt) => (
-                      <details className="details-row" key={receipt.transaction_id}>
-                        <summary>
-                          <ReferenceText value={receipt.transaction_id} />
-                        </summary>
-                        <pre>{formatJson(receipt.receipt)}</pre>
-                      </details>
-                    ))
+                    latestReceipts.map((receipt) => {
+                      const success = receiptSuccess(receipt);
+                      return (
+                        <details className="details-row receipt-row" key={receipt.transaction_id}>
+                          <summary>
+                            <span className="receipt-summary">
+                              <span className="receipt-title">
+                                <strong>{receipt.contract_name || "Contract execution"}</strong>
+                                <span className={success === false ? "receipt-status failed" : "receipt-status"}>
+                                  {success === null ? "unknown" : success ? "success" : "failed"}
+                                </span>
+                              </span>
+                              <ReferenceText value={receipt.transaction_id} />
+                              <span className="receipt-description">
+                                {receipt.contract_description || receipt.block_description || "No contract description."}
+                              </span>
+                              <span className="receipt-meta-line">
+                                <span>
+                                  Block {typeof receipt.block_height === "number" ? `#${receipt.block_height}` : "-"}
+                                </span>
+                                <ReferenceCode value={receipt.block_hash} prefix="hash " />
+                              </span>
+                            </span>
+                          </summary>
+                          <div className="receipt-meta-grid">
+                            <div>
+                              <span>Contract</span>
+                              <ReferenceCode value={receipt.contract_address} />
+                            </div>
+                            <div>
+                              <span>Block Description</span>
+                              <strong>{receipt.block_description || "-"}</strong>
+                            </div>
+                            <div>
+                              <span>Gas Used</span>
+                              <strong>{recordString(receipt.receipt, "gas_used") ?? "-"}</strong>
+                            </div>
+                            <div>
+                              <span>Error</span>
+                              <strong>{recordString(receipt.receipt, "error") ?? "-"}</strong>
+                            </div>
+                          </div>
+                          <pre>{formatJson(receipt.receipt)}</pre>
+                        </details>
+                      );
+                    })
                   )}
                 </div>
               </section>

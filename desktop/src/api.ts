@@ -203,6 +203,13 @@ export type ContractsResponse = {
 export type ReceiptEntry = {
   transaction_id: string;
   receipt: Record<string, unknown>;
+  transaction?: TransactionPayload;
+  contract_address?: string;
+  contract_name?: string | null;
+  contract_description?: string | null;
+  block_height?: number;
+  block_hash?: string;
+  block_description?: string;
 };
 
 export type ReceiptsResponse = {

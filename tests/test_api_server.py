@@ -351,6 +351,61 @@ class NodeApiServerTests(unittest.TestCase):
             ],
         )
 
+    def test_receipts_include_execution_context(self) -> None:
+        deploy_response = self.client.post(
+            "/api/v1/control/contracts/deploy",
+            json={
+                "fee": "0",
+                "program": [["HALT"]],
+                "metadata": {
+                    "name": "noop",
+                    "description": "No-op test contract.",
+                },
+            },
+        )
+        self.assertEqual(deploy_response.status_code, 200)
+        contract_address = deploy_response.json()["contract_address"]
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "deploy contract"},
+        )
+
+        execute_response = self.client.post(
+            "/api/v1/control/contracts/execute",
+            json={
+                "contract_address": contract_address,
+                "gas_limit": "1000",
+                "gas_price": "0",
+                "value": "0",
+                "fee": "0",
+                "input": None,
+            },
+        )
+        self.assertEqual(execute_response.status_code, 200)
+        transaction_id = execute_response.json()["transaction_id"]
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "execute contract"},
+        )
+
+        receipts_response = self.client.get("/api/v1/receipts")
+        self.assertEqual(receipts_response.status_code, 200)
+        receipt_entry = receipts_response.json()["receipts"][0]
+        self.assertEqual(receipt_entry["transaction_id"], transaction_id)
+        self.assertEqual(receipt_entry["contract_address"], contract_address)
+        self.assertEqual(receipt_entry["contract_name"], "noop")
+        self.assertEqual(
+            receipt_entry["contract_description"],
+            "No-op test contract.",
+        )
+        self.assertEqual(receipt_entry["block_height"], 3)
+        self.assertEqual(receipt_entry["block_description"], "execute contract")
+        self.assertEqual(receipt_entry["transaction"]["kind"], "execute")
+
+        single_receipt_response = self.client.get(f"/api/v1/receipts/{transaction_id[:12]}")
+        self.assertEqual(single_receipt_response.status_code, 200)
+        self.assertEqual(single_receipt_response.json()["block_height"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
