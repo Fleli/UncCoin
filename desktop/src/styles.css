@@ -2194,6 +2194,100 @@ dd {
   justify-content: flex-end;
 }
 
+.nft-view {
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.42fr);
+  align-items: start;
+}
+
+.nft-gallery-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.nft-image-preview,
+.nft-card-image {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #28343b;
+  border-radius: 6px;
+  background: #0e1113;
+}
+
+.nft-image-preview {
+  aspect-ratio: 4 / 3;
+  min-height: 180px;
+}
+
+.nft-image-preview img,
+.nft-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.nft-image-preview span,
+.nft-card-image span {
+  color: #7f8b93;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nft-selection-summary,
+.nft-card-body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.nft-selection-summary strong,
+.nft-card-body strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f2f5f7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nft-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.nft-card {
+  display: grid;
+  grid-template-rows: 180px minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #283138;
+  border-radius: 8px;
+  padding: 10px;
+  background: #111619;
+}
+
+.nft-card.selected {
+  border-color: #5a8ca3;
+  background: #111b20;
+}
+
+.nft-card-body p {
+  min-height: 2.8em;
+  overflow: hidden;
+  color: #8f9aa1;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nft-card .contract-card-actions {
+  justify-content: stretch;
+}
+
+.nft-card .contract-card-actions button {
+  width: 100%;
+}
+
 .auth-summary {
   display: flex;
   align-items: center;

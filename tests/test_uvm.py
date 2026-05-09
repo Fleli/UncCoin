@@ -2,6 +2,7 @@ import hashlib
 import unittest
 from decimal import Decimal
 
+from core.contracts import build_nft_contract
 from core.uvm import UvmExecutionContext
 from core.uvm import execute_uvm_program
 from wallet import create_wallet
@@ -54,27 +55,104 @@ class UvmExecutionTests(unittest.TestCase):
         self.assertEqual(result.storage, {"persisted": 9})
 
     def test_read_metadata_pushes_integer_metadata_value(self) -> None:
+        wallet = create_wallet(name="metadata-owner")
         result = execute_uvm_program(
             [
                 ["READ_METADATA", "deadline"],
                 ["STORE", "deadline"],
                 ["READ_METADATA", "hex_value"],
                 ["STORE", "hex_value"],
+                ["READ_METADATA", "owner"],
+                ["STORE", "owner"],
                 ["HALT"],
             ],
             UvmExecutionContext(
                 tx_sender="caller",
                 contract_address="contract",
-                gas_limit=300,
+                gas_limit=400,
                 metadata={
                     "deadline": 10,
                     "hex_value": "0x2a",
+                    "owner": wallet.address,
                 },
             ),
         )
 
         self.assertTrue(result.success, result.error)
-        self.assertEqual(result.storage, {"deadline": 10, "hex_value": 42})
+        self.assertEqual(
+            result.storage,
+            {
+                "deadline": 10,
+                "hex_value": 42,
+                "owner": int(wallet.address, 16),
+            },
+        )
+
+    def test_read_input_and_transaction_sender_push_wallet_words(self) -> None:
+        sender = create_wallet(name="sender")
+        recipient = create_wallet(name="recipient")
+        result = execute_uvm_program(
+            [
+                ["TX_SENDER"],
+                ["STORE", "sender"],
+                ["READ_INPUT", "recipient"],
+                ["STORE", "recipient"],
+                ["HALT"],
+            ],
+            UvmExecutionContext(
+                tx_sender=sender.address,
+                contract_address="contract",
+                gas_limit=300,
+                input_data={"recipient": recipient.address},
+            ),
+        )
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(
+            result.storage,
+            {
+                "sender": int(sender.address, 16),
+                "recipient": int(recipient.address, 16),
+            },
+        )
+
+    def test_nft_template_transfers_only_from_current_owner(self) -> None:
+        owner = create_wallet(name="owner")
+        recipient = create_wallet(name="recipient")
+        intruder = create_wallet(name="intruder")
+        program, metadata = build_nft_contract(
+            name="Photo",
+            description="Test image",
+            image_data_uri="data:image/png;base64,abc",
+            initial_owner=owner.address,
+        )
+
+        transfer_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender=owner.address,
+                contract_address="contract",
+                gas_limit=500,
+                metadata=metadata,
+                input_data={"recipient": recipient.address},
+            ),
+        )
+        intruder_result = execute_uvm_program(
+            program,
+            UvmExecutionContext(
+                tx_sender=intruder.address,
+                contract_address="contract",
+                gas_limit=500,
+                metadata=metadata,
+                storage=transfer_result.storage,
+                input_data={"recipient": owner.address},
+            ),
+        )
+
+        self.assertTrue(transfer_result.success, transfer_result.error)
+        self.assertEqual(transfer_result.storage["owner"], int(recipient.address, 16))
+        self.assertFalse(intruder_result.success)
+        self.assertTrue(intruder_result.reverted)
 
     def test_read_metadata_rejects_missing_or_non_integer_value(self) -> None:
         missing_result = execute_uvm_program(

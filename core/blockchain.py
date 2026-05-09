@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Callable
+from typing import Any, Callable
 
 from core.block import Block, get_block_verification_error, proof_of_work
 from core.contracts import compute_contract_address
@@ -1075,10 +1075,13 @@ class Blockchain:
             )
 
         program = transaction.payload.get("input")
+        input_data: dict[str, Any] = {}
         metadata = {}
         contract = state.contracts.get(contract_address)
         if contract is not None:
             program = contract["program"]
+            raw_input_data = transaction.payload.get("input")
+            input_data = raw_input_data if isinstance(raw_input_data, dict) else {}
             metadata = contract.get("metadata", {})
             code_hash = str(
                 contract.get(
@@ -1119,6 +1122,7 @@ class Blockchain:
                 reveals=state.reveals,
                 authorization_index=authorization_index,
                 metadata=metadata,
+                input_data=input_data,
                 block_height=execution_block_height or 0,
             ),
         )

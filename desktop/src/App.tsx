@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
   buildMiningBackend,
@@ -8,6 +8,7 @@ import {
   disconnectPeer,
   discoverPeers,
   executeContract,
+  mintNft,
   mineBlock,
   readAuthorizations,
   readBalances,
@@ -20,6 +21,7 @@ import {
   readMiningStatus,
   readMessages,
   readNetworkStats,
+  readNfts,
   readNodeInfo,
   readPeers,
   readPendingTransactions,
@@ -37,6 +39,7 @@ import {
   startMiningWarmup,
   stopAutomine,
   syncChain,
+  transferNft,
   type BalanceRow,
   type BlockPayload,
   type ChainHead,
@@ -48,6 +51,7 @@ import {
   type MiningWarmupStatus,
   type MiningStatus,
   type NetworkStatsResponse,
+  type NftEntry,
   type NodeInfo,
   type PeersResponse,
   type ReceiptEntry,
@@ -75,8 +79,8 @@ const MINING_REWARD_SENDER = "SYSTEM";
 const RANDOMNESS_SEED_MODULUS = 1n << 256n;
 const COINFLIP_REVEAL_DEADLINE_BLOCKS = 20;
 
-type TabId = "blockchain" | "balances" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
-type TabIconName = "blocks" | "balances" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type TabId = "blockchain" | "balances" | "transfer" | "mining" | "wallet" | "network" | "messages" | "nfts" | "contracts" | "logs";
+type TabIconName = "blocks" | "balances" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "nfts" | "contracts" | "logs";
 type ContractSubTab = "deploy" | "execute" | "authorization" | "randomness" | "contracts" | "receipts";
 type DeploySubTab = "raw" | "templates";
 type ContractTemplateId = "coinflip";
@@ -90,6 +94,7 @@ type Snapshot = {
   pendingTransactions: TransactionPayload[];
   blocks: BlockPayload[];
   messages: MessageEntry[];
+  nfts: NftEntry[];
   contracts: ContractEntry[];
   receipts: ReceiptEntry[];
   authorizations: Record<string, unknown>[];
@@ -133,6 +138,7 @@ const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
   { id: "wallet", label: "Wallet", icon: "wallet" },
   { id: "network", label: "Network", icon: "network" },
   { id: "messages", label: "Messages", icon: "messages" },
+  { id: "nfts", label: "NFTs", icon: "nfts" },
   { id: "contracts", label: "Contracts", icon: "contracts" },
   { id: "logs", label: "Logs", icon: "logs" },
 ];
@@ -211,6 +217,14 @@ function TabIcon({ name }: { name: TabIconName }) {
       return (
         <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
           <path d="M4 5.5h12v8H9l-3.5 2v-2H4z" />
+        </svg>
+      );
+    case "nfts":
+      return (
+        <svg className="tab-icon" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 14 16h-8a1.5 1.5 0 0 1-1.5-1.5z" />
+          <path d="m6.5 13 2.6-3 2 2.2 1.2-1.4 1.2 2.2" />
+          <path d="M12.6 7.3h.01" />
         </svg>
       );
     case "contracts":
@@ -297,6 +311,7 @@ function emptySnapshot(): Snapshot {
     pendingTransactions: [],
     blocks: [],
     messages: [],
+    nfts: [],
     contracts: [],
     receipts: [],
     authorizations: [],
@@ -1206,6 +1221,7 @@ function App() {
   const previousConnectedPeersRef = useRef<string[] | null>(null);
   const snapshotRefreshRef = useRef<Promise<void> | null>(null);
   const snapshotRefreshQueuedRef = useRef(false);
+  const nftImageInputRef = useRef<HTMLInputElement | null>(null);
   const coinflipDeadlineInitializedRef = useRef(false);
   const previousCoinflipWalletRef = useRef<string | null>(null);
 
@@ -1245,6 +1261,14 @@ function App() {
   const [authContractAddress, setAuthContractAddress] = useState("");
   const [authRequestId, setAuthRequestId] = useState("");
   const [authValidBlocks, setAuthValidBlocks] = useState("");
+  const [nftName, setNftName] = useState("");
+  const [nftDescription, setNftDescription] = useState("");
+  const [nftImageDataUri, setNftImageDataUri] = useState("");
+  const [nftImageFileName, setNftImageFileName] = useState("");
+  const [nftMintFee, setNftMintFee] = useState("0");
+  const [selectedNftAddress, setSelectedNftAddress] = useState("");
+  const [nftTransferRecipient, setNftTransferRecipient] = useState("");
+  const [nftTransferFee, setNftTransferFee] = useState("0");
 
   const activeApiPort = nodeState.config?.apiPort ?? Number(apiPort);
   const isApiAvailable = nodeState.running && Number.isInteger(activeApiPort);
@@ -1428,6 +1452,7 @@ function App() {
       pendingTransactions,
       blocks,
       messages,
+      nfts,
       contracts,
       receipts,
       authorizations,
@@ -1440,6 +1465,7 @@ function App() {
       readPendingTransactions(apiPortToUse),
       readBlocks(apiPortToUse, RECENT_BLOCK_LIMIT, recentBlockStartHeight),
       readMessages(apiPortToUse),
+      readNfts(apiPortToUse),
       readContracts(apiPortToUse),
       readReceipts(apiPortToUse),
       readAuthorizations(apiPortToUse),
@@ -1455,6 +1481,7 @@ function App() {
       pendingTransactions: pendingTransactions.transactions,
       blocks: blocks.blocks,
       messages: messages.messages,
+      nfts: nfts.nfts,
       contracts: contracts.contracts,
       receipts: receipts.receipts,
       authorizations: authorizations.authorizations,
@@ -2759,6 +2786,66 @@ function App() {
     });
   }
 
+  function handleNftImageFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    if (!file) {
+      setNftImageDataUri("");
+      setNftImageFileName("");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setNftImageDataUri(reader.result);
+        setNftImageFileName(file.name);
+        setError(null);
+      } else {
+        setError("Could not read NFT image file.");
+      }
+    };
+    reader.onerror = () => setError("Could not read NFT image file.");
+    reader.readAsDataURL(file);
+  }
+
+  async function handleMintNft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runNodeAction("mint-nft", async () => {
+      const response = await mintNft(activeApiPort, {
+        name: nftName,
+        description: nftDescription,
+        image_data_uri: nftImageDataUri,
+        fee: nftMintFee,
+      });
+      const contractAddress = response.contract_address ?? "";
+      setSelectedNftAddress(contractAddress);
+      setNftName("");
+      setNftDescription("");
+      setNftImageDataUri("");
+      setNftImageFileName("");
+      if (nftImageInputRef.current) {
+        nftImageInputRef.current.value = "";
+      }
+      return { label: "Broadcast NFT mint", detail: contractAddress || response.transaction_id };
+    });
+  }
+
+  async function handleTransferNft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runNodeAction("transfer-nft", async () => {
+      const contractAddress = selectedNftAddress.trim();
+      if (!contractAddress) {
+        throw new Error("Select an NFT to transfer.");
+      }
+      const response = await transferNft(activeApiPort, contractAddress, {
+        recipient: nftTransferRecipient,
+        fee: nftTransferFee,
+      });
+      setNftTransferRecipient("");
+      return { label: "Broadcast NFT transfer", detail: response.transaction_id };
+    });
+  }
+
   async function handleAuthorize(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runNodeAction("authorize-contract", async () => {
@@ -3223,6 +3310,10 @@ function App() {
     .slice(0, 8);
   const executableContracts = snapshot.contracts.filter((contract) => !contractIsDone(contract, snapshot.receipts));
   const latestAuthorizations = snapshot.authorizations.slice(-8).reverse();
+  const selectedNft = snapshot.nfts.find((nft) => nft.address === selectedNftAddress) ?? null;
+  const walletOwnedNftCount = loadedWallet
+    ? snapshot.nfts.filter((nft) => nft.owner === loadedWallet.address).length
+    : 0;
   const balancesByAmount = sortBalancesDescending(snapshot.balances);
   const connectedPeers = snapshot.peers.connected;
   const knownPeers = snapshot.peers.known;
@@ -4148,6 +4239,132 @@ function App() {
                 </div>
               </section>
             </div>
+          </section>
+        ) : null}
+
+        {activeTab === "nfts" ? (
+          <section className="view nft-view">
+            <section className="panel nft-mint-panel">
+              <div className="panel-title">
+                <h3>Mint</h3>
+                <span>{walletOwnedNftCount} owned</span>
+              </div>
+              <form className="form-grid" onSubmit={handleMintNft}>
+                <div className="field-row">
+                  <label>
+                    Name
+                    <input value={nftName} onChange={(event) => setNftName(event.target.value)} />
+                  </label>
+                  <label>
+                    Fee
+                    <input value={nftMintFee} onChange={(event) => setNftMintFee(event.target.value)} />
+                  </label>
+                </div>
+                <label>
+                  Text
+                  <textarea value={nftDescription} onChange={(event) => setNftDescription(event.target.value)} />
+                </label>
+                <label>
+                  Image
+                  <input ref={nftImageInputRef} type="file" accept="image/*" onChange={handleNftImageFile} />
+                </label>
+                <div className="nft-image-preview">
+                  {nftImageDataUri ? (
+                    <img src={nftImageDataUri} alt={nftName || nftImageFileName || "NFT image preview"} />
+                  ) : (
+                    <span>No image selected</span>
+                  )}
+                </div>
+                <button type="submit" disabled={disableNodeAction}>
+                  Mint NFT
+                </button>
+              </form>
+            </section>
+
+            <section className="panel nft-transfer-panel">
+              <div className="panel-title">
+                <h3>Transfer</h3>
+                <span>{selectedNft ? "selected" : "idle"}</span>
+              </div>
+              {selectedNft ? (
+                <div className="nft-selection-summary">
+                  <strong>{selectedNft.name || "NFT"}</strong>
+                  <ReferenceCode value={selectedNft.address} />
+                  <ReferenceCode value={selectedNft.owner} prefix="owner " />
+                </div>
+              ) : (
+                <p className="empty">No NFT selected.</p>
+              )}
+              <form className="form-grid separated" onSubmit={handleTransferNft}>
+                <label>
+                  NFT
+                  <select value={selectedNftAddress} onChange={(event) => setSelectedNftAddress(event.target.value)}>
+                    <option value="">Select NFT</option>
+                    {snapshot.nfts.map((nft) => (
+                      <option value={nft.address} key={nft.address}>
+                        {nft.name || nft.address}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="field-row">
+                  <label>
+                    Recipient
+                    <input value={nftTransferRecipient} onChange={(event) => setNftTransferRecipient(event.target.value)} />
+                  </label>
+                  <label>
+                    Fee
+                    <input value={nftTransferFee} onChange={(event) => setNftTransferFee(event.target.value)} />
+                  </label>
+                </div>
+                <button type="submit" disabled={disableNodeAction || selectedNft === null}>
+                  Transfer NFT
+                </button>
+              </form>
+            </section>
+
+            <section className="panel nft-gallery-panel">
+              <div className="panel-title">
+                <h3>NFTs</h3>
+                <span>{snapshot.nfts.length} minted</span>
+              </div>
+              {snapshot.nfts.length === 0 ? (
+                <p className="empty">No NFTs minted.</p>
+              ) : (
+                <div className="nft-gallery">
+                  {snapshot.nfts.map((nft) => (
+                    <article
+                      className={selectedNftAddress === nft.address ? "nft-card selected" : "nft-card"}
+                      key={nft.address}
+                    >
+                      <div className="nft-card-image">
+                        {nft.image_data_uri ? (
+                          <img src={nft.image_data_uri} alt={nft.name || "NFT image"} />
+                        ) : (
+                          <span>No image</span>
+                        )}
+                      </div>
+                      <div className="nft-card-body">
+                        <div className="contract-title-line">
+                          <strong>{nft.name || "NFT"}</strong>
+                          {nft.owner === loadedWallet?.address ? (
+                            <span className="contract-status done">owned</span>
+                          ) : null}
+                        </div>
+                        <p>{nft.description || "No text."}</p>
+                        <ReferenceCode value={nft.address} />
+                        <ReferenceCode value={nft.owner} prefix="owner " />
+                      </div>
+                      <div className="contract-card-actions">
+                        <button type="button" onClick={() => setSelectedNftAddress(nft.address)}>
+                          Select
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           </section>
         ) : null}
 

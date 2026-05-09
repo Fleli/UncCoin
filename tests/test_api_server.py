@@ -329,6 +329,50 @@ class NodeApiServerTests(unittest.TestCase):
             "noop",
         )
 
+    def test_nft_mint_list_and_transfer(self) -> None:
+        mint_response = self.client.post(
+            "/api/v1/control/nfts/mint",
+            json={
+                "name": "Launch photo",
+                "description": "First NFT",
+                "image_data_uri": "data:image/png;base64,abc",
+                "fee": "0",
+            },
+        )
+        self.assertEqual(mint_response.status_code, 200)
+        contract_address = mint_response.json()["contract_address"]
+
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "mint nft"},
+        )
+        nfts_response = self.client.get("/api/v1/nfts")
+        self.assertEqual(nfts_response.status_code, 200)
+        nfts = nfts_response.json()["nfts"]
+        self.assertEqual(len(nfts), 1)
+        self.assertEqual(nfts[0]["address"], contract_address)
+        self.assertEqual(nfts[0]["name"], "Launch photo")
+        self.assertEqual(nfts[0]["image_data_uri"], "data:image/png;base64,abc")
+        self.assertEqual(nfts[0]["owner"], self.miner_wallet.address)
+        self.assertFalse(nfts[0]["transferred"])
+
+        transfer_response = self.client.post(
+            f"/api/v1/control/nfts/{contract_address}/transfer",
+            json={
+                "recipient": self.receiver_wallet.address,
+                "fee": "0",
+            },
+        )
+        self.assertEqual(transfer_response.status_code, 200)
+        self.client.post(
+            "/api/v1/control/mine",
+            json={"description": "transfer nft"},
+        )
+
+        transferred_nft = self.client.get("/api/v1/nfts").json()["nfts"][0]
+        self.assertEqual(transferred_nft["owner"], self.receiver_wallet.address)
+        self.assertTrue(transferred_nft["transferred"])
+
     def test_control_authorize_records_on_chain_authorization(self) -> None:
         deploy_response = self.client.post(
             "/api/v1/control/contracts/deploy",

@@ -33,6 +33,7 @@ UVM_GAS_COSTS = {
     "MEM_LOAD": 3,
     "MEM_STORE": 5,
     "READ_METADATA": 10,
+    "READ_INPUT": 10,
     "LOAD": 25,
     "STORE": 100,
     "READ_COMMIT": 30,
@@ -42,6 +43,7 @@ UVM_GAS_COSTS = {
     "HAS_AUTH": 20,
     "REQUIRE_AUTH": 20,
     "BLOCK_HEIGHT": 2,
+    "TX_SENDER": 2,
     "JUMP": 3,
     "JUMPI": 5,
     "HALT": 0,
@@ -66,6 +68,7 @@ class UvmExecutionContext:
     reveals: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
     authorization_index: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    input_data: dict[str, Any] = field(default_factory=dict)
     block_height: int = 0
 
 
@@ -450,7 +453,13 @@ def _execute_instruction(
     if opcode == "READ_METADATA":
         _require_operand_count(opcode, operands, 1)
         metadata_key = _require_key_operand(opcode, operands[0])
-        _push(stack, _read_metadata_word(context.metadata, metadata_key))
+        _push(stack, _read_word_mapping(context.metadata, metadata_key, "metadata"))
+        return None
+
+    if opcode == "READ_INPUT":
+        _require_operand_count(opcode, operands, 1)
+        input_key = _require_key_operand(opcode, operands[0])
+        _push(stack, _read_word_mapping(context.input_data, input_key, "input"))
         return None
 
     if opcode == "LOAD":
@@ -551,6 +560,11 @@ def _execute_instruction(
         _push(stack, int(context.block_height))
         return None
 
+    if opcode == "TX_SENDER":
+        _require_operand_count(opcode, operands, 0)
+        _push(stack, _read_word_value(context.tx_sender, "tx_sender"))
+        return None
+
     if opcode == "REQUIRE_AUTH":
         _require_operand_count(opcode, operands, 2)
         wallet = _require_key_operand(opcode, operands[0])
@@ -612,12 +626,18 @@ def _resolve_account_operand(
     return account
 
 
-def _read_metadata_word(metadata: dict[str, Any], key: str) -> int:
-    if key not in metadata:
-        raise _UvmExecutionError(f"missing metadata key {key}")
-    value = metadata[key]
+def _read_word_mapping(values: dict[str, Any], key: str, label: str) -> int:
+    if key not in values:
+        raise _UvmExecutionError(f"missing {label} key {key}")
+    try:
+        return _read_word_value(values[key], f"{label} key {key}")
+    except _UvmExecutionError as error:
+        raise _UvmExecutionError(f"{label} key {key} must be an integer") from error
+
+
+def _read_word_value(value: Any, label: str) -> int:
     if isinstance(value, bool):
-        raise _UvmExecutionError(f"metadata key {key} must be an integer")
+        raise _UvmExecutionError(f"{label} must be an integer")
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -625,12 +645,15 @@ def _read_metadata_word(metadata: dict[str, Any], key: str) -> int:
         try:
             if stripped_value.startswith(("0x", "0X")):
                 return int(stripped_value, 16)
+            if len(stripped_value) == 64 and all(
+                character in "0123456789abcdefABCDEF"
+                for character in stripped_value
+            ):
+                return int(stripped_value, 16)
             return int(stripped_value)
         except ValueError as error:
-            raise _UvmExecutionError(
-                f"metadata key {key} must be an integer"
-            ) from error
-    raise _UvmExecutionError(f"metadata key {key} must be an integer")
+            raise _UvmExecutionError(f"{label} must be an integer") from error
+    raise _UvmExecutionError(f"{label} must be an integer")
 
 
 def _validate_jump_target(target: int, program_length: int) -> int:

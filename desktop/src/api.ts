@@ -200,6 +200,24 @@ export type ContractsResponse = {
   contracts: ContractEntry[];
 };
 
+export type NftEntry = {
+  address: string;
+  name: string;
+  description: string;
+  image_data_uri: string;
+  owner: string | null;
+  initial_owner: string | null;
+  transferred: boolean;
+  contract: Record<string, unknown>;
+  storage: Record<string, unknown>;
+};
+
+export type NftsResponse = {
+  tip_hash: string | null;
+  height: number;
+  nfts: NftEntry[];
+};
+
 export type ReceiptEntry = {
   transaction_id: string;
   receipt: Record<string, unknown>;
@@ -327,6 +345,10 @@ export function readMessages(apiPort: number): Promise<MessagesResponse> {
 
 export function readContracts(apiPort: number): Promise<ContractsResponse> {
   return requestApi<ContractsResponse>(apiPort, "/contracts");
+}
+
+export function readNfts(apiPort: number): Promise<NftsResponse> {
+  return requestApi<NftsResponse>(apiPort, "/nfts");
 }
 
 export function readReceipts(apiPort: number): Promise<ReceiptsResponse> {
@@ -484,6 +506,26 @@ export function executeContract(
   },
 ): Promise<BroadcastTransactionResponse> {
   return requestApi(apiPort, "/control/contracts/execute", "POST", payload);
+}
+
+export function mintNft(
+  apiPort: number,
+  payload: { name: string; description: string; image_data_uri: string; fee: string },
+): Promise<BroadcastTransactionResponse> {
+  return requestApi(apiPort, "/control/nfts/mint", "POST", payload);
+}
+
+export function transferNft(
+  apiPort: number,
+  contractAddress: string,
+  payload: { recipient: string; fee: string; gas_limit?: string; gas_price?: string },
+): Promise<BroadcastTransactionResponse> {
+  return requestApi(
+    apiPort,
+    `/control/nfts/${encodeURIComponent(contractAddress)}/transfer`,
+    "POST",
+    payload,
+  );
 }
 
 export function authorizeContract(

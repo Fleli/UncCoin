@@ -15,7 +15,10 @@ from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
 from core.block import Block, ProofOfWorkCancelled, proof_of_work
 from core.blockchain import Blockchain
+from core.contracts import NFT_TRANSFER_GAS_LIMIT
+from core.contracts import build_nft_contract
 from core.contracts import compute_contract_code_hash
+from core.contracts import normalize_wallet_address
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
@@ -331,6 +334,48 @@ class Node:
         if not isinstance(metadata, dict):
             raise ValueError("Deploy metadata must be a JSON object.")
         return program, metadata
+
+    def create_signed_nft_mint(
+        self,
+        *,
+        name: str,
+        description: str,
+        image_data_uri: str,
+        fee: str,
+    ) -> Transaction:
+        if self.wallet is None:
+            raise ValueError("A loaded wallet is required to mint NFTs.")
+
+        program, metadata = build_nft_contract(
+            name=name,
+            description=description,
+            image_data_uri=image_data_uri,
+            initial_owner=self.wallet.address,
+        )
+        return self.create_signed_deploy(
+            program=program,
+            metadata=metadata,
+            fee=fee,
+        )
+
+    def create_signed_nft_transfer(
+        self,
+        *,
+        contract_address: str,
+        recipient: str,
+        fee: str,
+        gas_limit: str = str(NFT_TRANSFER_GAS_LIMIT),
+        gas_price: str = "0",
+    ) -> Transaction:
+        recipient_address = normalize_wallet_address(recipient, "recipient")
+        return self.create_signed_execute(
+            contract_address=contract_address,
+            input_data={"recipient": recipient_address},
+            gas_limit=gas_limit,
+            gas_price=gas_price,
+            value="0",
+            fee=fee,
+        )
 
     def create_signed_execute(
         self,

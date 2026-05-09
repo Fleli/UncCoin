@@ -130,6 +130,54 @@ class DeployTransactionTests(unittest.TestCase):
             {"number": 7},
         )
 
+    def test_execute_passes_input_to_deployed_program(self) -> None:
+        blockchain = create_blockchain()
+        deployer = create_wallet(name="deployer")
+        caller = create_wallet(name="caller")
+        deploy_transaction = sign_transaction(
+            deployer,
+            Transaction.deploy(
+                sender=deployer.address,
+                program=[
+                    ["READ_INPUT", "value"],
+                    ["STORE", "value"],
+                    ["HALT"],
+                ],
+                fee=Decimal("0"),
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(deployer.address),
+                sender_public_key=deployer.public_key,
+            ),
+        )
+        blockchain.add_transaction(deploy_transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="deploy input contract",
+        )
+        contract_address = deploy_transaction.receiver
+        execute_transaction = sign_transaction(
+            caller,
+            Transaction.execute(
+                sender=caller.address,
+                contract_address=contract_address,
+                input_data={"value": "0x2a"},
+                value=Decimal("0"),
+                fee=Decimal("0"),
+                gas_limit=200,
+                timestamp=datetime.now(),
+                nonce=blockchain.get_next_nonce(caller.address),
+                sender_public_key=caller.public_key,
+            ),
+        )
+
+        blockchain.add_transaction(execute_transaction)
+        blockchain.mine_pending_transactions(
+            miner_address="miner",
+            description="execute input contract",
+        )
+
+        self.assertEqual(blockchain.get_contract_storage(contract_address), {"value": 42})
+
     def test_deploy_rejects_non_deterministic_contract_address(self) -> None:
         blockchain = create_blockchain()
         deployer = create_wallet(name="deployer")

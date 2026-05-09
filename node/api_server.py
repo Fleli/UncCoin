@@ -12,6 +12,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.block import Block
+from core.contracts import NFT_OWNER_STORAGE_KEY
+from core.contracts import NFT_TEMPLATE
+from core.contracts import NFT_TRANSFER_GAS_LIMIT
+from core.contracts import normalize_wallet_address
 from core.hashing import sha256_transaction_hash
 from core.transaction import Transaction
 from core.utils.constants import MINING_REWARD_SENDER
@@ -89,6 +93,20 @@ class ExecuteRequest(BaseModel):
     value: str = "0"
     fee: str = "0"
     input: Any | None = None
+
+
+class NftMintRequest(BaseModel):
+    name: str
+    description: str = ""
+    image_data_uri: str
+    fee: str = "0"
+
+
+class NftTransferRequest(BaseModel):
+    recipient: str
+    fee: str = "0"
+    gas_limit: str = str(NFT_TRANSFER_GAS_LIMIT)
+    gas_price: str = "0"
 
 
 class AuthorizationRequest(BaseModel):
@@ -316,6 +334,23 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
                 contract_address,
                 tip_hash=_state_tip_hash(node),
             ),
+        }
+
+    @app.get(f"{API_PREFIX}/nfts")
+    def nfts() -> dict[str, Any]:
+        state = _current_state(node)
+        return {
+            "tip_hash": _state_tip_hash(node),
+            "height": state.height,
+            "nfts": [
+                _nft_payload(
+                    contract_address,
+                    contract,
+                    state.contract_storage.get(contract_address, {}),
+                )
+                for contract_address, contract in sorted(state.contracts.items())
+                if _is_nft_contract(contract)
+            ],
         }
 
     @app.get(f"{API_PREFIX}/receipts")
@@ -572,6 +607,41 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
                 gas_price=request.gas_price,
                 value=request.value,
                 fee=request.fee,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        result = await _broadcast_transaction(node, transaction)
+        result["contract_address"] = transaction.receiver
+        return result
+
+    @app.post(f"{API_PREFIX}/control/nfts/mint")
+    async def mint_nft(request: NftMintRequest) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_nft_mint(
+                name=request.name,
+                description=request.description,
+                image_data_uri=request.image_data_uri,
+                fee=request.fee,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        result = await _broadcast_transaction(node, transaction)
+        result["contract_address"] = transaction.receiver
+        result["code_hash"] = transaction.payload.get("code_hash")
+        return result
+
+    @app.post(f"{API_PREFIX}/control/nfts/{{contract_address}}/transfer")
+    async def transfer_nft(
+        contract_address: str,
+        request: NftTransferRequest,
+    ) -> dict[str, Any]:
+        try:
+            transaction = node.create_signed_nft_transfer(
+                contract_address=contract_address,
+                recipient=request.recipient,
+                fee=request.fee,
+                gas_limit=request.gas_limit,
+                gas_price=request.gas_price,
             )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
@@ -838,6 +908,64 @@ def _receipt_payload(
         "receipt": receipt.copy(),
         **receipt_contexts.get(transaction_id, {}),
     }
+
+
+def _contract_metadata(contract: dict[str, Any]) -> dict[str, Any]:
+    metadata = contract.get("metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _is_nft_contract(contract: dict[str, Any]) -> bool:
+    return _contract_metadata(contract).get("template") == NFT_TEMPLATE
+
+
+def _nft_payload(
+    contract_address: str,
+    contract: dict[str, Any],
+    storage: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _contract_metadata(contract)
+    stored_owner = _word_to_wallet_address(storage.get(NFT_OWNER_STORAGE_KEY))
+    initial_owner = _word_to_wallet_address(metadata.get("initial_owner"))
+    return {
+        "address": contract_address,
+        "name": str(metadata.get("name") or "NFT"),
+        "description": str(metadata.get("description") or ""),
+        "image_data_uri": str(metadata.get("image_data_uri") or ""),
+        "owner": stored_owner or initial_owner,
+        "initial_owner": initial_owner,
+        "transferred": stored_owner is not None,
+        "contract": _jsonable(contract),
+        "storage": _jsonable(storage),
+    }
+
+
+def _word_to_wallet_address(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if not stripped_value:
+            return None
+        try:
+            return normalize_wallet_address(stripped_value, "wallet")
+        except ValueError:
+            pass
+        try:
+            if stripped_value.startswith(("0x", "0X")):
+                parsed_value = int(stripped_value, 16)
+            else:
+                parsed_value = int(stripped_value)
+        except ValueError:
+            return None
+        return _word_to_wallet_address(parsed_value)
+    try:
+        parsed_integer = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed_integer <= 0:
+        return None
+    return f"{parsed_integer % (2 ** 256):064x}"
 
 
 def _parse_peer(peer: str) -> tuple[str, int]:

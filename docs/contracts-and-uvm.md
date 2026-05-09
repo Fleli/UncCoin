@@ -73,6 +73,10 @@ and `0` otherwise. `BLOCK_HEIGHT` pushes the block height currently executing th
 `READ_METADATA <key>` reads an immutable integer value from deploy metadata and pushes it
 onto the stack. Missing keys and non-integer values fail execution.
 
+`READ_INPUT <key>` reads an integer value from the execute transaction input object and
+pushes it onto the stack. `TX_SENDER` pushes the executing transaction sender as a 256-bit
+integer, which lets contracts compare caller identity against wallet address words.
+
 `TRANSFER_FROM <source> <receiver> <request_id>` pops a positive integer amount and moves
 that amount between balances. The source must be the execute transaction sender, the contract
 itself, or a wallet that provided a valid UVM authorization for the exact request id. Use the
@@ -101,6 +105,7 @@ SHA256
 MEM_LOAD <key>
 MEM_STORE <key>
 READ_METADATA <key>
+READ_INPUT <key>
 LOAD <key>
 STORE <key>
 READ_COMMIT <wallet> <request_id>
@@ -110,6 +115,7 @@ TRANSFER_FROM <source> <receiver> <request_id>
 HAS_AUTH <wallet> <request_id>
 REQUIRE_AUTH <wallet> <request_id>
 BLOCK_HEIGHT
+TX_SENDER
 JUMP <pc>
 JUMPI <pc>
 HALT
@@ -130,8 +136,8 @@ EQ/LT/GT/NOT: 2
 AND/OR/XOR/JUMP: 3
 JUMPI/MEM_STORE: 5
 MEM_LOAD: 3
-BLOCK_HEIGHT: 2
-HAS_REVEAL/READ_METADATA: 10
+BLOCK_HEIGHT/TX_SENDER: 2
+HAS_REVEAL/READ_METADATA/READ_INPUT: 10
 SHA256/HAS_AUTH/REQUIRE_AUTH: 20
 LOAD: 25
 READ_COMMIT: 30
