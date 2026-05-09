@@ -223,6 +223,26 @@ function WarningIcon({ className }: { className?: string }) {
   );
 }
 
+function TrafficDirectionIcon({ direction }: { direction: "ingress" | "egress" }) {
+  return (
+    <span className={`traffic-direction-icon ${direction}`} aria-hidden="true">
+      <svg viewBox="0 0 20 20">
+        {direction === "ingress" ? (
+          <>
+            <path d="M14.5 5.5 5.5 14.5" />
+            <path d="M5.5 8.5v6h6" />
+          </>
+        ) : (
+          <>
+            <path d="M5.5 14.5 14.5 5.5" />
+            <path d="M8.5 5.5h6v6" />
+          </>
+        )}
+      </svg>
+    </span>
+  );
+}
+
 function emptySnapshot(): Snapshot {
   return {
     nodeInfo: null,
@@ -3618,70 +3638,31 @@ function App() {
                 ) : null}
               </section>
 
-              <section className="panel">
+              <section className="panel network-traffic-card">
                 <div className="panel-title">
-                  <h3>Node</h3>
-                  <span>{snapshot.nodeInfo?.private_automine ? "private automine" : "canonical"}</span>
+                  <h3>Network Traffic</h3>
+                  <span>{snapshot.networkStats.peers.length} tracked</span>
                 </div>
-                <dl className="detail-list">
-                  <div>
-                    <dt>Host</dt>
-                    <dd>{snapshot.nodeInfo?.host ?? host}</dd>
-                  </div>
-                  <div>
-                    <dt>Port</dt>
-                    <dd>{snapshot.nodeInfo?.port ?? port}</dd>
-                  </div>
-                  <div>
-                    <dt>API Port</dt>
-                    <dd>{activeApiPort || "-"}</dd>
-                  </div>
-                </dl>
+                <div className="traffic-summary vertical">
+                  <article>
+                    <TrafficDirectionIcon direction="ingress" />
+                    <div>
+                      <span>Ingress</span>
+                      <strong>{formatBytes(snapshot.networkStats.ingress.bytes)}</strong>
+                      <small>{formatNumber(snapshot.networkStats.ingress.messages)} messages received</small>
+                    </div>
+                  </article>
+                  <article>
+                    <TrafficDirectionIcon direction="egress" />
+                    <div>
+                      <span>Egress</span>
+                      <strong>{formatBytes(snapshot.networkStats.egress.bytes)}</strong>
+                      <small>{formatNumber(snapshot.networkStats.egress.messages)} messages sent</small>
+                    </div>
+                  </article>
+                </div>
               </section>
             </div>
-
-            <section className="panel network-stats-panel">
-              <div className="panel-title">
-                <h3>Network Traffic</h3>
-                <span>{snapshot.networkStats.peers.length} tracked</span>
-              </div>
-              <div className="traffic-summary">
-                <article>
-                  <span>Ingress</span>
-                  <strong>{formatBytes(snapshot.networkStats.ingress.bytes)}</strong>
-                  <small>{formatNumber(snapshot.networkStats.ingress.messages)} messages</small>
-                </article>
-                <article>
-                  <span>Egress</span>
-                  <strong>{formatBytes(snapshot.networkStats.egress.bytes)}</strong>
-                  <small>{formatNumber(snapshot.networkStats.egress.messages)} messages</small>
-                </article>
-              </div>
-              <div className="traffic-peer-list">
-                {snapshot.networkStats.peers.length === 0 ? (
-                  <p className="empty">No P2P traffic recorded yet.</p>
-                ) : (
-                  snapshot.networkStats.peers.map((peer) => (
-                    <div className="traffic-peer-row" key={peer.peer}>
-                      <div>
-                        <ReferenceCode value={peer.peer} />
-                        <span>{peer.connected ? "connected" : "disconnected"}</span>
-                      </div>
-                      <dl>
-                        <div>
-                          <dt>In</dt>
-                          <dd>{formatBytes(peer.ingress.bytes)} / {formatNumber(peer.ingress.messages)} msg</dd>
-                        </div>
-                        <div>
-                          <dt>Out</dt>
-                          <dd>{formatBytes(peer.egress.bytes)} / {formatNumber(peer.egress.messages)} msg</dd>
-                        </div>
-                      </dl>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
 
             <div className="panel-grid two">
               <PeerList title="Connected Peers" peers={connectedPeers} />

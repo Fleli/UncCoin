@@ -1592,18 +1592,26 @@ dd {
   font-size: 13px;
 }
 
-.network-stats-panel {
+.network-traffic-card {
   display: grid;
   gap: 14px;
+  align-content: start;
 }
 
 .traffic-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
+.traffic-summary.vertical {
+  grid-template-columns: 1fr;
+}
+
 .traffic-summary article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
   border: 1px solid #2b353c;
   border-radius: 8px;
   padding: 14px;
@@ -1611,8 +1619,7 @@ dd {
 }
 
 .traffic-summary span,
-.traffic-summary small,
-.traffic-peer-row span {
+.traffic-summary small {
   color: #8f9aa1;
   font-size: 12px;
   font-weight: 680;
@@ -1625,38 +1632,34 @@ dd {
   font-size: 22px;
 }
 
-.traffic-peer-list {
-  display: grid;
-  gap: 8px;
-}
-
-.traffic-peer-row {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
-  gap: 14px;
-  border-top: 1px solid #242c31;
-  padding-top: 10px;
-}
-
-.traffic-peer-row > div,
-.traffic-peer-row dl,
-.traffic-peer-row dl div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.traffic-peer-row dl {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0;
-}
-
-.traffic-peer-row code {
+.traffic-direction-icon {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2f4652;
+  border-radius: 8px;
   color: #9fc3d3;
+  background: #0c1113;
 }
 
-.traffic-peer-row dd {
-  font-size: 12px;
+.traffic-direction-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.traffic-direction-icon.ingress {
+  color: #9ed2f0;
+}
+
+.traffic-direction-icon.egress {
+  color: #9de0be;
 }
 
 .metric-grid {
