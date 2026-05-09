@@ -629,6 +629,29 @@ code.reference-text {
   }
 }
 
+.inline-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid #2e3940;
+  border-top-color: #8fc8dc;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+button .inline-spinner {
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
+.status-with-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;

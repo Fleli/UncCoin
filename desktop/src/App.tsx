@@ -243,6 +243,10 @@ function WarningIcon({ className }: { className?: string }) {
   );
 }
 
+function InlineSpinner({ title }: { title?: string }) {
+  return <span className="inline-spinner" aria-hidden="true" title={title} />;
+}
+
 function TrafficDirectionIcon({ direction }: { direction: "ingress" | "egress" }) {
   return (
     <span className={`traffic-direction-icon ${direction}`} aria-hidden="true">
@@ -3934,6 +3938,7 @@ function App() {
                     onChange={(event) => setPeerAddress(event.target.value)}
                   />
                   <button type="submit" disabled={disableNodeAction}>
+                    {busyAction === "connect-peer" ? <InlineSpinner title="Connecting peer" /> : null}
                     Connect
                   </button>
                   <button
@@ -3944,6 +3949,7 @@ function App() {
                       return { label: "Peer discovery sent", detail: `${response.known.length} known` };
                     })}
                   >
+                    {busyAction === "discover-peers" ? <InlineSpinner title="Discovering peers" /> : null}
                     Discover
                   </button>
                   <button
@@ -3954,6 +3960,7 @@ function App() {
                       return { label: "Sync requested", detail: `${response.requested_peers} peers` };
                     })}
                   >
+                    {busyAction === "sync-chain" ? <InlineSpinner title="Syncing chain" /> : null}
                     Sync
                   </button>
                   <button
@@ -3967,6 +3974,7 @@ function App() {
                       };
                     })}
                   >
+                    {busyAction === "rebroadcast-pending" ? <InlineSpinner title="Rebroadcasting pending transactions" /> : null}
                     Rebroadcast
                   </button>
                   <button
@@ -3974,6 +3982,7 @@ function App() {
                     disabled={disableNodeAction || busyAction === "connect-bootstrap-peers"}
                     onClick={() => void handleConnectBootstrapPeers()}
                   >
+                    {busyAction === "connect-bootstrap-peers" ? <InlineSpinner title="Connecting bootstrap peers" /> : null}
                     Bootstrap
                   </button>
                 </form>
@@ -3981,15 +3990,27 @@ function App() {
                   <div className="bootstrap-panel network-bootstrap-panel">
                     <div className="secondary-title">
                       <strong>Bootstrap Peers</strong>
-                      <span>{busyAction === "connect-bootstrap-peers" ? "connecting" : "latest attempt"}</span>
+                      <span className="status-with-spinner">
+                        {busyAction === "connect-bootstrap-peers" ? <InlineSpinner title="Connecting bootstrap peers" /> : null}
+                        {busyAction === "connect-bootstrap-peers" ? "connecting" : "latest attempt"}
+                      </span>
                     </div>
                     <div className="bootstrap-list">
-                      {networkBootstrapAttempts.map((attempt) => (
-                        <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
-                          <ReferenceCode value={attempt.peer} />
-                          <span title={attempt.rawDetail ?? attempt.detail}>{bootstrapAttemptLabel(attempt)}</span>
-                        </div>
-                      ))}
+                      {networkBootstrapAttempts.map((attempt) => {
+                        const attemptIsPending = (
+                          busyAction === "connect-bootstrap-peers"
+                          && attempt.status === "pending"
+                        );
+                        return (
+                          <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
+                            <ReferenceCode value={attempt.peer} />
+                            <span className="status-with-spinner" title={attempt.rawDetail ?? attempt.detail}>
+                              {attemptIsPending ? <InlineSpinner title={`Connecting ${attempt.peer}`} /> : null}
+                              {bootstrapAttemptLabel(attempt)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}
