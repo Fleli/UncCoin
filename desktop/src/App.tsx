@@ -1591,6 +1591,31 @@ function App() {
     }
   }
 
+  async function focusBlockchainBlock(reference: string, updateSearch = false) {
+    if (!isApiAvailable) {
+      setBlockchainSearchError("Start the node before searching blocks.");
+      return null;
+    }
+
+    const targetBlock = await readBlock(activeApiPort, reference);
+    const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
+    const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
+    const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
+      ? response.blocks
+      : [targetBlock];
+    setBlockchainWindow({
+      reference,
+      targetHash: targetBlock.block_hash,
+      targetHeight: targetBlock.height,
+      blocks,
+    });
+    setBlockchainSearchError(null);
+    if (updateSearch) {
+      setBlockchainSearch(String(targetBlock.height));
+    }
+    return targetBlock;
+  }
+
   async function handleBlockchainSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const reference = blockchainSearch.trim();
@@ -1622,24 +1647,49 @@ function App() {
           movedToTip = true;
         }
       }
-      const targetBlock = await readBlock(activeApiPort, resolvedReference);
-      const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
-      const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
-      const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
-        ? response.blocks
-        : [targetBlock];
-      setBlockchainWindow({
-        reference: resolvedReference,
-        targetHash: targetBlock.block_hash,
-        targetHeight: targetBlock.height,
-        blocks,
-      });
+      const targetBlock = await focusBlockchainBlock(resolvedReference);
       if (movedToTip) {
-        setBlockchainSearch(String(targetBlock.height));
-        setNotice(`Moved to tip with hash ${targetBlock.block_hash.slice(0, 8)}`);
+        setBlockchainSearch(String(targetBlock?.height ?? resolvedReference));
+        setNotice(`Moved to tip with hash ${targetBlock?.block_hash.slice(0, 8) ?? resolvedReference}`);
       }
     } catch (searchError) {
       setBlockchainSearchError(searchError instanceof Error ? searchError.message : String(searchError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleBlockchainStep(direction: -1 | 1) {
+    if (!isApiAvailable) {
+      setBlockchainSearchError("Start the node before navigating blocks.");
+      return;
+    }
+
+    const currentHeight = blockchainWindow?.targetHeight
+      ?? snapshot.chainHead?.height
+      ?? snapshot.blocks.at(-1)?.height
+      ?? null;
+    if (currentHeight === null || currentHeight < 0) {
+      setBlockchainSearchError("No blocks are available.");
+      return;
+    }
+
+    setBusyAction("blockchain-nav");
+    setBlockchainSearchError(null);
+    setNotice(null);
+    try {
+      const chainHead = direction > 0 || snapshot.chainHead === null
+        ? await readChainHead(activeApiPort)
+        : snapshot.chainHead;
+      const nextHeight = direction > 0
+        ? Math.min(chainHead.height, currentHeight + 1)
+        : Math.max(0, currentHeight - 1);
+      if (nextHeight === currentHeight) {
+        return;
+      }
+      await focusBlockchainBlock(String(nextHeight), true);
+    } catch (stepError) {
+      setBlockchainSearchError(stepError instanceof Error ? stepError.message : String(stepError));
     } finally {
       setBusyAction(null);
     }
@@ -2335,6 +2385,25 @@ function App() {
   const blockchainWindowLabel = blockchainWindow
     ? `Focused on block #${blockchainWindow.targetHeight}`
     : "Latest blocks";
+  const blockchainTargetHeight = blockchainWindow?.targetHeight
+    ?? snapshot.chainHead?.height
+    ?? latestBlockchainBlocks.at(-1)?.height
+    ?? null;
+  const blockchainTipHeight = snapshot.chainHead?.height ?? null;
+  const blockchainNavBusy = busyAction === "blockchain-search" || busyAction === "blockchain-nav";
+  const canNavigatePrevious = (
+    isApiAvailable
+    && !blockchainNavBusy
+    && blockchainTargetHeight !== null
+    && blockchainTargetHeight > 0
+  );
+  const canNavigateNext = (
+    isApiAvailable
+    && !blockchainNavBusy
+    && blockchainTargetHeight !== null
+    && blockchainTipHeight !== null
+    && blockchainTargetHeight < blockchainTipHeight
+  );
   const latestBlocks = [...snapshot.blocks].reverse().slice(0, 8);
   const latestMessages = newestFirst(snapshot.messages).slice(0, 10);
   const latestReceipts = snapshot.receipts.slice(-8).reverse();
@@ -2601,21 +2670,37 @@ function App() {
         {activeTab === "blockchain" ? (
           <section className="view blockchain-view">
             <section className="panel blockchain-toolbar">
-              <div>
+              <div className="blockchain-focus">
                 <strong>{blockchainWindowLabel}</strong>
                 <ReferenceText value={blockchainWindow ? blockchainWindow.targetHash : snapshot.chainHead?.tip_hash} />
+              </div>
+              <div className="blockchain-nav-actions">
+                <button
+                  type="button"
+                  disabled={!canNavigatePrevious}
+                  onClick={() => void handleBlockchainStep(-1)}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={!canNavigateNext}
+                  onClick={() => void handleBlockchainStep(1)}
+                >
+                  Next
+                </button>
               </div>
               <form className="block-search-form" onSubmit={handleBlockchainSearch}>
                 <input
                   value={blockchainSearch}
                   placeholder="Block height or hash"
                   onChange={(event) => setBlockchainSearch(event.target.value)}
-                  disabled={busyAction === "blockchain-search"}
+                  disabled={blockchainNavBusy}
                 />
-                <button type="submit" disabled={!isApiAvailable || busyAction === "blockchain-search"}>
+                <button type="submit" disabled={!isApiAvailable || blockchainNavBusy}>
                   Jump
                 </button>
-                <button type="button" onClick={clearBlockchainSearch} disabled={busyAction === "blockchain-search"}>
+                <button type="button" onClick={clearBlockchainSearch} disabled={blockchainNavBusy}>
                   Latest
                 </button>
               </form>

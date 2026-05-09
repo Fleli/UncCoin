@@ -1371,12 +1371,12 @@ dd {
 
 .blockchain-toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 0.5fr) minmax(360px, 1fr);
+  grid-template-columns: minmax(180px, 0.5fr) auto minmax(360px, 1fr);
   gap: 12px;
   align-items: center;
 }
 
-.blockchain-toolbar > div {
+.blockchain-focus {
   display: grid;
   min-width: 0;
   gap: 4px;
@@ -1396,6 +1396,12 @@ dd {
 .blockchain-toolbar p {
   grid-column: 1 / -1;
   color: #ffb7aa;
+}
+
+.blockchain-nav-actions {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px;
 }
 
 .block-search-form {
