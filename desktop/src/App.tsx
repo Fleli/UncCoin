@@ -105,6 +105,7 @@ type BootstrapAttempt = {
   peer: string;
   status: "pending" | "connected" | "failed" | "skipped";
   detail?: string;
+  rawDetail?: string;
 };
 
 type StartupPhase = "idle" | "starting-node" | "waiting-api" | "warming-miner" | "connecting-bootstrap" | "fastsync" | "ready";
@@ -683,6 +684,46 @@ function isLocalBootstrapPeer(
     nodeConfig.host,
   ].map((address) => address.toLowerCase()));
   return localAddressSet.has(parsedPeer.host.toLowerCase());
+}
+
+function peerConnectErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readablePeerConnectError(error: unknown): Pick<BootstrapAttempt, "detail" | "rawDetail"> {
+  const rawDetail = peerConnectErrorMessage(error);
+  const cleaned = rawDetail
+    .replace(/^Error invoking remote method 'node-api:fetch':\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .trim();
+
+  if (/timed out connecting to peer/i.test(cleaned)) {
+    return { detail: "Timed out", rawDetail };
+  }
+  if (/failed to fetch|fetch failed|node api unavailable/i.test(cleaned)) {
+    return { detail: "Node API unavailable", rawDetail };
+  }
+  if (/connection refused|could not connect|not reachable|network is unreachable/i.test(cleaned)) {
+    return { detail: "Not reachable", rawDetail };
+  }
+  if (/invalid peer|invalid address/i.test(cleaned)) {
+    return { detail: "Invalid address", rawDetail };
+  }
+  if (/rejected|unauthorized|forbidden/i.test(cleaned)) {
+    return { detail: "Rejected", rawDetail };
+  }
+
+  return { detail: "Failed", rawDetail };
+}
+
+function bootstrapAttemptLabel(attempt: BootstrapAttempt): string {
+  if (attempt.detail) {
+    return attempt.detail;
+  }
+  if (attempt.status === "pending") {
+    return "waiting";
+  }
+  return attempt.status;
 }
 
 function normalizePreferredPort(value: unknown): number {
@@ -1350,7 +1391,7 @@ function App() {
           return {
             peer: attempt.peer,
             status: "failed",
-            detail: connectError instanceof Error ? connectError.message : String(connectError),
+            ...readablePeerConnectError(connectError),
           };
         }
       }),
@@ -1789,7 +1830,7 @@ function App() {
             return {
               peer: attempt.peer,
               status: "failed",
-              detail: connectError instanceof Error ? connectError.message : String(connectError),
+              ...readablePeerConnectError(connectError),
             };
           }
         }),
@@ -2079,7 +2120,7 @@ function App() {
                   ).map((attempt) => (
                     <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
                       <ReferenceCode value={attempt.peer} />
-                      <span>{attempt.status}</span>
+                      <span title={attempt.rawDetail ?? attempt.detail}>{bootstrapAttemptLabel(attempt)}</span>
                     </div>
                   ))}
                 </div>
@@ -3189,7 +3230,7 @@ function App() {
                       {networkBootstrapAttempts.map((attempt) => (
                         <div className={`peer-status ${attempt.status}`} key={attempt.peer}>
                           <ReferenceCode value={attempt.peer} />
-                          <span title={attempt.detail}>{attempt.detail ?? attempt.status}</span>
+                          <span title={attempt.rawDetail ?? attempt.detail}>{bootstrapAttemptLabel(attempt)}</span>
                         </div>
                       ))}
                     </div>
