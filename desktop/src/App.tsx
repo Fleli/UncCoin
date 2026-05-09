@@ -2798,7 +2798,7 @@ function App() {
                     snapshot.balances.map((balance) => (
                       <button
                         type="button"
-                        className="select-row"
+                        className="select-row recipient-row"
                         key={balance.address}
                         onClick={() => setTxReceiver(balance.alias || balance.address)}
                       >

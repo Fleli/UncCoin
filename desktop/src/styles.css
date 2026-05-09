@@ -1206,7 +1206,8 @@ dd {
 .workspace-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 4px;
 }
 
@@ -1359,6 +1360,7 @@ dd {
 
 .view {
   display: grid;
+  min-width: 0;
   gap: 16px;
 }
 
@@ -1661,7 +1663,8 @@ dd {
 
 .transfer-layout {
   display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+  min-width: 0;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   gap: 16px;
   align-items: start;
 }
@@ -1691,6 +1694,7 @@ dd {
 
 .list {
   display: grid;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -1730,6 +1734,8 @@ dd {
 
 .select-row {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border-top: 0;
   border-right: 0;
   border-left: 0;
@@ -1740,6 +1746,24 @@ dd {
 
 .select-row:hover:not(:disabled) {
   background: #20282d;
+}
+
+.recipient-row {
+  overflow: hidden;
+}
+
+.recipient-row .reference-text {
+  flex: 1 1 auto;
+}
+
+.recipient-row strong {
+  flex: 0 1 auto;
+  min-width: 64px;
+  max-width: 150px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contract-card-main,
