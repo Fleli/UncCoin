@@ -1711,6 +1711,52 @@ dd {
   color: #9de0be;
 }
 
+.network-events-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.network-event-list {
+  display: grid;
+  max-height: 170px;
+  overflow: auto;
+}
+
+.network-event-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border-bottom: 1px solid #242c31;
+  padding: 8px 0;
+}
+
+.network-event-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #98463d;
+  border-radius: 50%;
+  background: #d94a3f;
+  box-shadow: 0 0 0 3px rgba(217, 74, 63, 0.12);
+}
+
+.network-event-row strong {
+  color: #ffb7aa;
+  font-size: 12px;
+}
+
+.network-event-row code {
+  min-width: 0;
+}
+
+.network-event-row time {
+  color: #8f9aa1;
+  font-size: 12px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

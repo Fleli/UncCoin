@@ -111,6 +111,13 @@ type BootstrapAttempt = {
   rawDetail?: string;
 };
 
+type NetworkEvent = {
+  id: string;
+  type: "disconnected";
+  peer: string;
+  timestamp: string;
+};
+
 type StartupPhase = "idle" | "starting-node" | "waiting-api" | "warming-miner" | "connecting-bootstrap" | "fastsync" | "ready";
 
 const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
@@ -1014,6 +1021,8 @@ function App() {
   const [startupComplete, setStartupComplete] = useState(false);
   const [bootstrapAttempts, setBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
   const [networkBootstrapAttempts, setNetworkBootstrapAttempts] = useState<BootstrapAttempt[]>([]);
+  const [networkEvents, setNetworkEvents] = useState<NetworkEvent[]>([]);
+  const [unreadNetworkEventCount, setUnreadNetworkEventCount] = useState(0);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [miningStatus, setMiningStatus] = useState<MiningStatus | null>(null);
   const [miningBackends, setMiningBackends] = useState<MiningBackendsResponse | null>(null);
@@ -1032,6 +1041,7 @@ function App() {
   const latestSnapshotRef = useRef<Snapshot>(snapshot);
   const randomnessCommitsRef = useRef<RandomnessCommitRecord[]>([]);
   const lastRandomnessReconcileKeyRef = useRef("");
+  const previousConnectedPeersRef = useRef<string[] | null>(null);
   const snapshotRefreshRef = useRef<Promise<void> | null>(null);
   const snapshotRefreshQueuedRef = useRef(false);
 
@@ -1095,6 +1105,8 @@ function App() {
     () => snapshot.messages.filter((message) => message.direction === "received").length,
     [snapshot.messages],
   );
+  const currentConnectedPeers = snapshot.peers.connected;
+  const connectedPeerKey = currentConnectedPeers.slice().sort().join("\n");
   const unreadMessageCount = Math.max(0, receivedMessageCount - seenReceivedMessageCount);
   const blockchainCurrentHeight = snapshot.chainHead?.height ?? null;
   const unreadBlockCount = (
@@ -1444,6 +1456,49 @@ function App() {
     markBlockchainSeen,
     seenBlockHeight,
   ]);
+
+  useEffect(() => {
+    if (!nodeState.running || !isApiAvailable) {
+      previousConnectedPeersRef.current = null;
+      return;
+    }
+
+    const nextConnectedPeers = connectedPeerKey ? connectedPeerKey.split("\n") : [];
+    const previousConnectedPeers = previousConnectedPeersRef.current;
+    previousConnectedPeersRef.current = nextConnectedPeers;
+
+    if (previousConnectedPeers === null) {
+      return;
+    }
+
+    const nextConnectedSet = new Set(nextConnectedPeers);
+    const disconnectedPeers = previousConnectedPeers.filter((peer) => !nextConnectedSet.has(peer));
+    if (disconnectedPeers.length === 0) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const nextEvents = disconnectedPeers.map((peer, index): NetworkEvent => ({
+      id: `${timestamp}-${index}-${peer}`,
+      type: "disconnected",
+      peer,
+      timestamp,
+    }));
+
+    setNetworkEvents((currentEvents) => [...nextEvents, ...currentEvents].slice(0, 30));
+    if (activeTab !== "network") {
+      setUnreadNetworkEventCount((currentCount) => currentCount + nextEvents.length);
+    }
+    setNotice(nextEvents.length === 1
+      ? `Peer disconnected: ${nextEvents[0].peer}`
+      : `${nextEvents.length} peers disconnected`);
+  }, [activeTab, connectedPeerKey, isApiAvailable, nodeState.running]);
+
+  useEffect(() => {
+    if (activeTab === "network" && unreadNetworkEventCount > 0) {
+      setUnreadNetworkEventCount(0);
+    }
+  }, [activeTab, unreadNetworkEventCount]);
 
   useEffect(() => {
     void refreshWallets().catch((walletError) => {
@@ -1918,6 +1973,9 @@ function App() {
     setStartupPhase("starting-node");
     setStartupComplete(false);
     setBootstrapAttempts([]);
+    setNetworkEvents([]);
+    setUnreadNetworkEventCount(0);
+    previousConnectedPeersRef.current = null;
     setSyncStatus(null);
     setError(null);
     setNotice(null);
@@ -1957,6 +2015,9 @@ function App() {
       setStartupPhase("idle");
       setStartupComplete(false);
       setBootstrapAttempts([]);
+      setNetworkEvents([]);
+      setUnreadNetworkEventCount(0);
+      previousConnectedPeersRef.current = null;
       setSyncStatus(null);
       setMiningStatus(null);
       setNotice("Stopped node");
@@ -2963,6 +3024,9 @@ function App() {
               {tab.id === "blockchain" && unreadBlockCount > 0 ? (
                 <span className="unread-badge">{unreadBlockCount}</span>
               ) : null}
+              {tab.id === "network" && unreadNetworkEventCount > 0 ? (
+                <span className="unread-badge">{unreadNetworkEventCount}</span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -3675,6 +3739,27 @@ function App() {
                 </div>
               </section>
             </div>
+
+            <section className="panel network-events-panel">
+              <div className="panel-title">
+                <h3>Network Events</h3>
+                <span>{networkEvents.length}</span>
+              </div>
+              <div className="network-event-list">
+                {networkEvents.length === 0 ? (
+                  <p className="empty">No peer disconnects recorded this session.</p>
+                ) : (
+                  networkEvents.map((event) => (
+                    <div className={`network-event-row ${event.type}`} key={event.id}>
+                      <span className="network-event-dot" aria-hidden="true" />
+                      <strong>Disconnected</strong>
+                      <ReferenceCode value={event.peer} />
+                      <time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
 
             <div className="panel-grid two">
               <PeerList title="Connected Peers" peers={connectedPeers} />
