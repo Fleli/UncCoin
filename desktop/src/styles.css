@@ -1250,6 +1250,28 @@ dd {
   text-transform: uppercase;
 }
 
+.subtab-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #252e34;
+  padding-bottom: 12px;
+  margin: -4px 0 16px;
+  overflow-x: auto;
+}
+
+.subtab-bar button {
+  border-color: #2e3940;
+  color: #aeb8bf;
+  background: #121719;
+}
+
+.subtab-bar button.active {
+  border-color: #5b879a;
+  color: #f3f8fa;
+  background: #20353e;
+}
+
 .wallet-info {
   display: grid;
   min-width: 0;

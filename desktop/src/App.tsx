@@ -72,6 +72,7 @@ const RANDOMNESS_SEED_MODULUS = 1n << 256n;
 
 type TabId = "overview" | "blockchain" | "transfer" | "mining" | "wallet" | "network" | "messages" | "contracts" | "logs";
 type TabIconName = "overview" | "blocks" | "transfer" | "pickaxe" | "wallet" | "network" | "messages" | "contracts" | "logs";
+type ContractSubTab = "deploy" | "execute" | "authorization" | "randomness" | "contracts" | "receipts";
 
 type Snapshot = {
   nodeInfo: NodeInfo | null;
@@ -120,6 +121,15 @@ const tabs: Array<{ id: TabId; label: string; icon: TabIconName }> = [
   { id: "messages", label: "Messages", icon: "messages" },
   { id: "contracts", label: "Contracts", icon: "contracts" },
   { id: "logs", label: "Logs", icon: "logs" },
+];
+
+const contractSubTabs: Array<{ id: ContractSubTab; label: string }> = [
+  { id: "deploy", label: "Deploy" },
+  { id: "execute", label: "Execute" },
+  { id: "authorization", label: "Authorization" },
+  { id: "randomness", label: "Randomness" },
+  { id: "contracts", label: "Contracts" },
+  { id: "receipts", label: "Receipts" },
 ];
 
 function TabIcon({ name }: { name: TabIconName }) {
@@ -799,6 +809,7 @@ function App() {
   const [blockchainSearch, setBlockchainSearch] = useState("");
   const [blockchainWindow, setBlockchainWindow] = useState<BlockchainWindow | null>(null);
   const [blockchainSearchError, setBlockchainSearchError] = useState<string | null>(null);
+  const [activeContractSubTab, setActiveContractSubTab] = useState<ContractSubTab>("deploy");
   const [seenReceivedMessageCount, setSeenReceivedMessageCount] = useState(0);
   const [randomnessCommits, setRandomnessCommits] = useState<RandomnessCommitRecord[]>([]);
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
@@ -2644,6 +2655,20 @@ function App() {
             <span>Current Tab</span>
             <h2>{activeTabLabel}</h2>
           </header>
+          {activeTab === "contracts" ? (
+            <nav className="subtab-bar" aria-label="Contract workflows">
+              {contractSubTabs.map((contractTab) => (
+                <button
+                  type="button"
+                  className={activeContractSubTab === contractTab.id ? "active" : ""}
+                  key={contractTab.id}
+                  onClick={() => setActiveContractSubTab(contractTab.id)}
+                >
+                  {contractTab.label}
+                </button>
+              ))}
+            </nav>
+          ) : null}
 
         {activeTab === "overview" ? (
           <section className="view">
@@ -3361,8 +3386,8 @@ function App() {
         ) : null}
 
         {activeTab === "contracts" ? (
-          <section className="view">
-            <div className="panel-grid two">
+          <section className="view contracts-view">
+            {activeContractSubTab === "deploy" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Deploy</h3>
@@ -3382,7 +3407,9 @@ function App() {
                   </button>
                 </form>
               </section>
+            ) : null}
 
+            {activeContractSubTab === "execute" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Execute</h3>
@@ -3431,9 +3458,9 @@ function App() {
                   </button>
                 </form>
               </section>
-            </div>
+            ) : null}
 
-            <div className="panel-grid two">
+            {activeContractSubTab === "authorization" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Authorization</h3>
@@ -3475,7 +3502,9 @@ function App() {
                   )}
                 </div>
               </section>
+            ) : null}
 
+            {activeContractSubTab === "randomness" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Randomness</h3>
@@ -3593,9 +3622,9 @@ function App() {
                   </button>
                 </form>
               </section>
-            </div>
+            ) : null}
 
-            <div className="panel-grid two">
+            {activeContractSubTab === "contracts" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Contracts</h3>
@@ -3613,6 +3642,7 @@ function App() {
                         onClick={() => {
                           setExecuteContractAddress(contract.address);
                           setAuthContractAddress(contract.address);
+                          setActiveContractSubTab("execute");
                         }}
                       >
                         <span className="contract-card-main">
@@ -3628,7 +3658,9 @@ function App() {
                   )}
                 </div>
               </section>
+            ) : null}
 
+            {activeContractSubTab === "receipts" ? (
               <section className="panel">
                 <div className="panel-title">
                   <h3>Receipts</h3>
@@ -3649,7 +3681,7 @@ function App() {
                   )}
                 </div>
               </section>
-            </div>
+            ) : null}
           </section>
         ) : null}
 
