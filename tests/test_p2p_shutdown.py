@@ -49,6 +49,23 @@ class P2PServerShutdownTests(unittest.IsolatedAsyncioTestCase):
             any("Timed out waiting for peer" in message for message in notifications)
         )
 
+    async def test_disconnect_peer_closes_one_connection(self) -> None:
+        server = P2PServer(host="127.0.0.1", port=9999)
+        writer = _HangingWriter()
+        peer = PeerAddress("127.0.0.1", 9100)
+        other_peer = PeerAddress("127.0.0.1", 9101)
+        other_writer = _HangingWriter()
+        server.active_connections[peer] = writer
+        server.active_connections[other_peer] = other_writer
+
+        with patch("network.p2p_server.P2P_CLOSE_TIMEOUT_SECONDS", 0.01):
+            await server.disconnect_peer(peer.host, peer.port)
+
+        self.assertTrue(writer.closed)
+        self.assertFalse(other_writer.closed)
+        self.assertNotIn(peer, server.active_connections)
+        self.assertIn(other_peer, server.active_connections)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1905,6 +1905,12 @@ dd {
   white-space: nowrap;
 }
 
+.compact-action {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
 .contract-card-main,
 .contract-row-meta {
   display: grid;

@@ -5,6 +5,7 @@ import {
   connectPeer,
   createCommitment,
   deployContract,
+  disconnectPeer,
   discoverPeers,
   executeContract,
   mineBlock,
@@ -2242,6 +2243,13 @@ function App() {
     });
   }
 
+  async function handleDisconnectPeer(peer: string) {
+    await runNodeAction("disconnect-peer", async () => {
+      const response = await disconnectPeer(activeApiPort, peer);
+      return { label: "Disconnected peer", detail: peer || String(response.connected.length) };
+    });
+  }
+
   async function handleConnectBootstrapPeers() {
     if (!isApiAvailable) {
       setError("Start the node before connecting bootstrap peers.");
@@ -3788,7 +3796,13 @@ function App() {
             </section>
 
             <div className="panel-grid two">
-              <PeerList title="Connected Peers" peers={connectedPeers} />
+              <PeerList
+                title="Connected Peers"
+                peers={connectedPeers}
+                actionLabel="Disconnect"
+                disableAction={disableNodeAction}
+                onPeerAction={(peer) => void handleDisconnectPeer(peer)}
+              />
               <PeerList title="Known Peers" peers={knownPeers} />
             </div>
           </section>
@@ -4377,7 +4391,19 @@ function BlockchainTransactionCard({ transaction }: { transaction: TransactionPa
   );
 }
 
-function PeerList({ title, peers }: { title: string; peers: string[] }) {
+function PeerList({
+  title,
+  peers,
+  actionLabel,
+  disableAction = false,
+  onPeerAction,
+}: {
+  title: string;
+  peers: string[];
+  actionLabel?: string;
+  disableAction?: boolean;
+  onPeerAction?: (peer: string) => void;
+}) {
   return (
     <section className="panel">
       <div className="panel-title">
@@ -4391,6 +4417,16 @@ function PeerList({ title, peers }: { title: string; peers: string[] }) {
           peers.map((peer) => (
             <div className="list-row" key={peer}>
               <ReferenceCode value={peer} />
+              {actionLabel && onPeerAction ? (
+                <button
+                  type="button"
+                  className="compact-action"
+                  disabled={disableAction}
+                  onClick={() => onPeerAction(peer)}
+                >
+                  {actionLabel}
+                </button>
+              ) : null}
             </div>
           ))
         )}

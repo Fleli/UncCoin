@@ -355,6 +355,15 @@ export function connectPeer(apiPort: number, peer: string): Promise<PeersRespons
   );
 }
 
+export function disconnectPeer(apiPort: number, peer: string): Promise<PeersResponse> {
+  return requestApi<PeersResponse>(
+    apiPort,
+    "/control/peers/disconnect",
+    "POST",
+    { peer },
+  );
+}
+
 export function discoverPeers(apiPort: number): Promise<PeersResponse> {
   return requestApi<PeersResponse>(apiPort, "/control/peers/discover", "POST", {});
 }

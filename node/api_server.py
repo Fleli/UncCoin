@@ -401,6 +401,15 @@ def create_api_app(node: "Node", api_token: str | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {"connected": node.list_peers(), "known": node.list_known_peers()}
 
+    @app.post(f"{API_PREFIX}/control/peers/disconnect")
+    async def disconnect_peer(request: PeerRequest) -> dict[str, Any]:
+        host, port = _parse_peer(request.peer)
+        try:
+            await node.disconnect_peer(host, port)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {"connected": node.list_peers(), "known": node.list_known_peers()}
+
     @app.post(f"{API_PREFIX}/control/peers/discover")
     async def discover_peers() -> dict[str, Any]:
         await node.discover_peers()

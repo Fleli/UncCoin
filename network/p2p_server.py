@@ -135,6 +135,16 @@ class P2PServer:
         asyncio.create_task(self._read_messages(reader, writer, peer))
         self._notify(f"Connected to peer {host}:{port}")
 
+    async def disconnect_peer(self, host: str, port: int) -> None:
+        peer = PeerAddress(host=host, port=port)
+        writer = self.active_connections.pop(peer, None)
+        if writer is None:
+            raise ValueError(f"Peer {host}:{port} is not connected.")
+
+        self.fast_sync_states.pop(peer, None)
+        await self._close_writer(writer, peer)
+        self._notify(f"Disconnected from peer {host}:{port}")
+
     async def broadcast(self, message: dict) -> None:
         await self._broadcast_to_peers(message)
 

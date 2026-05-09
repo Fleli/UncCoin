@@ -15,6 +15,17 @@ from node.node import Node
 from wallet import create_wallet
 
 
+class _ClosedWriter:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
 def create_funded_node() -> tuple[Node, object, object]:
     miner_wallet = create_wallet(name="miner")
     receiver_wallet = create_wallet(name="receiver")
@@ -147,6 +158,30 @@ class NodeApiServerTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_disconnect_peer_endpoint_closes_connection(self) -> None:
+        peer = PeerAddress(host="100.98.249.35", port=9000)
+        writer = _ClosedWriter()
+        self.node.p2p_server.peers.add(peer)
+        self.node.p2p_server.active_connections[peer] = writer
+
+        response = self.client.post(
+            "/api/v1/control/peers/disconnect",
+            json={"peer": "100.98.249.35:9000"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(writer.closed)
+        self.assertEqual(response.json()["connected"], [])
+        self.assertEqual(response.json()["known"], ["100.98.249.35:9000"])
+
+    def test_disconnect_peer_endpoint_reports_missing_peer(self) -> None:
+        response = self.client.post(
+            "/api/v1/control/peers/disconnect",
+            json={"peer": "100.98.249.35:9000"},
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_mining_status_reports_progress_and_recent_miners(self) -> None:
         self.node._start_mining_progress(
