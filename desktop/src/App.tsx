@@ -2003,6 +2003,26 @@ function App() {
     }
   }
 
+  async function handleWalletDoubleClick(wallet: WalletSummary) {
+    if (busyAction !== null) {
+      return;
+    }
+
+    const walletWasAlreadySelected = walletName === wallet.name;
+    const walletPreferredPort = normalizePreferredPort(wallet.preferredPort);
+    const nodePortValue = walletWasAlreadySelected ? port : String(walletPreferredPort);
+    const nodeApiPortValue = walletWasAlreadySelected ? apiPort : String(apiPortForNodePort(walletPreferredPort));
+
+    applyWalletSelection(wallet.name);
+    try {
+      await launchWalletNode(wallet.name, "start-node", nodePortValue, nodeApiPortValue);
+    } catch (startError) {
+      setError(String(startError));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleStop() {
     setBusyAction("stop-node");
     setError(null);
@@ -2625,6 +2645,7 @@ function App() {
                             className={walletName === wallet.name ? "wallet-choice selected" : "wallet-choice"}
                             key={wallet.name}
                             onClick={() => applyWalletSelection(wallet.name)}
+                            onDoubleClick={() => void handleWalletDoubleClick(wallet)}
                             disabled={busyAction !== null}
                           >
                             <span>{wallet.name}</span>
