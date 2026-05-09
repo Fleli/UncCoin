@@ -1,4 +1,4 @@
-import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   authorizeContract,
   buildMiningBackend,
@@ -68,7 +68,7 @@ const DEFAULT_DEPLOY_JSON = `{
 }`;
 const DEFAULT_EXECUTE_JSON = "null";
 const RECENT_BLOCK_LIMIT = 12;
-const BLOCKCHAIN_VIEW_BLOCKS = 2;
+const BLOCKCHAIN_CONTEXT_BLOCKS = 3;
 const MINING_REWARD_SENDER = "SYSTEM";
 const RANDOMNESS_SEED_MODULUS = 1n << 256n;
 
@@ -1984,7 +1984,7 @@ function App() {
 
     const targetBlock = await readBlock(activeApiPort, reference);
     const fromHeight = targetBlock.height === 0 ? 0 : targetBlock.height - 1;
-    const response = await readBlocks(activeApiPort, BLOCKCHAIN_VIEW_BLOCKS, fromHeight);
+    const response = await readBlocks(activeApiPort, BLOCKCHAIN_CONTEXT_BLOCKS, fromHeight);
     const blocks = response.blocks.some((block) => block.block_hash === targetBlock.block_hash)
       ? response.blocks
       : [targetBlock];
@@ -2785,19 +2785,26 @@ function App() {
   const ownBalance = loadedWallet
     ? snapshot.balances.find((balance) => balance.address === loadedWallet.address)
     : undefined;
-  const latestBlockchainBlocks = snapshot.blocks.slice(-BLOCKCHAIN_VIEW_BLOCKS);
-  const blockchainBlocks = blockchainWindow?.blocks ?? latestBlockchainBlocks;
-  const blockchainSlots = [
-    ...Array<BlockPayload | null>(Math.max(0, BLOCKCHAIN_VIEW_BLOCKS - blockchainBlocks.length)).fill(null),
-    ...blockchainBlocks,
-  ];
-  const blockchainWindowLabel = blockchainWindow
-    ? `Focused on block #${blockchainWindow.targetHeight}`
-    : "Latest blocks";
   const blockchainTargetHeight = blockchainWindow?.targetHeight
     ?? snapshot.chainHead?.height
-    ?? latestBlockchainBlocks.at(-1)?.height
+    ?? snapshot.blocks.at(-1)?.height
     ?? null;
+  const blockchainBlocks = blockchainWindow?.blocks ?? snapshot.blocks;
+  const focusedBlockchainBlock = blockchainTargetHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === blockchainTargetHeight)
+      ?? blockchainBlocks.find((block) => block.block_hash === blockchainWindow?.targetHash)
+      ?? null;
+  const focusedBlockchainHeight = focusedBlockchainBlock?.height ?? blockchainTargetHeight;
+  const previousBlockchainBlock = focusedBlockchainHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === focusedBlockchainHeight - 1) ?? null;
+  const nextBlockchainBlock = focusedBlockchainHeight === null
+    ? null
+    : blockchainBlocks.find((block) => block.height === focusedBlockchainHeight + 1) ?? null;
+  const blockchainWindowLabel = focusedBlockchainHeight !== null
+    ? `Focused on block #${focusedBlockchainHeight}`
+    : "No block focused";
   const blockchainTipHeight = snapshot.chainHead?.height ?? null;
   const blockchainNavBusy = busyAction === "blockchain-search" || busyAction === "blockchain-nav";
   const canNavigatePrevious = (
@@ -3147,20 +3154,28 @@ function App() {
               </form>
               {blockchainSearchError ? <p>{blockchainSearchError}</p> : null}
             </section>
-            <div className="blockchain-strip">
-              {blockchainSlots.map((block, index) => (
-                <Fragment key={block?.block_hash ?? `empty-${index}`}>
-                  <BlockchainBlockCard
-                    block={block}
-                    focused={block !== null && block.block_hash === blockchainWindow?.targetHash}
-                  />
-                  {index < BLOCKCHAIN_VIEW_BLOCKS - 1 ? (
-                    <div className="block-arrow" aria-label="Next block">
-                      <span aria-hidden="true">&rarr;</span>
-                    </div>
-                  ) : null}
-                </Fragment>
-              ))}
+            <div className="blockchain-carousel">
+              <div className="block-preview previous" aria-label="Previous block preview">
+                <BlockchainBlockCard
+                  block={previousBlockchainBlock}
+                  preview
+                  emptyLabel="No previous block."
+                />
+              </div>
+              <div className={`block-arrow ${previousBlockchainBlock ? "" : "muted"}`} aria-label="Previous block points to focused block">
+                <span aria-hidden="true">&rarr;</span>
+              </div>
+              <BlockchainBlockCard block={focusedBlockchainBlock} focused emptyLabel="No focused block loaded." />
+              <div className={`block-arrow ${nextBlockchainBlock ? "" : "muted"}`} aria-label="Focused block points to next block">
+                <span aria-hidden="true">&rarr;</span>
+              </div>
+              <div className="block-preview next" aria-label="Next block preview">
+                <BlockchainBlockCard
+                  block={nextBlockchainBlock}
+                  preview
+                  emptyLabel="No next block."
+                />
+              </div>
             </div>
           </section>
         ) : null}
@@ -4150,21 +4165,37 @@ function App() {
   );
 }
 
-function BlockchainBlockCard({ block, focused = false }: { block: BlockPayload | null; focused?: boolean }) {
+function BlockchainBlockCard({
+  block,
+  focused = false,
+  preview = false,
+  emptyLabel = "No canonical block loaded.",
+}: {
+  block: BlockPayload | null;
+  focused?: boolean;
+  preview?: boolean;
+  emptyLabel?: string;
+}) {
+  const cardClassName = [
+    "block-card",
+    focused ? "focused-block" : "",
+    preview ? "preview-block" : "",
+  ].filter(Boolean).join(" ");
+
   if (!block) {
     return (
-      <section className="block-card empty-block">
+      <section className={`${cardClassName} empty-block`}>
         <header>
           <span>Block</span>
           <strong>Waiting</strong>
         </header>
-        <p className="empty">No earlier canonical block loaded.</p>
+        <p className="empty">{emptyLabel}</p>
       </section>
     );
   }
 
   return (
-    <section className={`block-card ${focused ? "focused-block" : ""}`}>
+    <section className={cardClassName}>
       <header>
         <span>Block #{block.height}</span>
         <ReferenceStrong value={block.block_hash} />

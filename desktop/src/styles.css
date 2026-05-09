@@ -1404,11 +1404,12 @@ dd {
   gap: 16px;
 }
 
-.blockchain-strip {
+.blockchain-carousel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr);
+  grid-template-columns: minmax(120px, 0.34fr) 34px minmax(420px, 1fr) 34px minmax(120px, 0.34fr);
   gap: 10px;
-  align-items: stretch;
+  align-items: start;
+  overflow: hidden;
 }
 
 .blockchain-toolbar {
@@ -1457,14 +1458,36 @@ dd {
   align-items: start;
   justify-items: center;
   min-width: 0;
-  padding-top: 18px;
+  padding-top: 30px;
   color: #9fc3d3;
   font-size: 24px;
   font-weight: 760;
 }
 
+.block-arrow.muted {
+  opacity: 0.2;
+}
+
+.block-preview {
+  min-width: 0;
+  max-height: 760px;
+  overflow: hidden;
+  padding-top: 12px;
+}
+
+.block-preview.previous .block-card {
+  width: min(620px, 52vw);
+  margin-left: auto;
+}
+
+.block-preview.next .block-card {
+  width: min(620px, 52vw);
+  margin-right: auto;
+}
+
 .block-card {
   display: grid;
+  position: relative;
   min-width: 0;
   align-content: start;
   gap: 12px;
@@ -1480,8 +1503,34 @@ dd {
 }
 
 .block-card.focused-block {
+  z-index: 1;
   border-color: #6aa0b8;
   box-shadow: inset 0 0 0 1px rgba(106, 160, 184, 0.35);
+}
+
+.block-card.preview-block {
+  max-height: 720px;
+  overflow: hidden;
+  opacity: 0.46;
+  filter: saturate(0.62);
+  pointer-events: none;
+  transform: scale(0.95);
+  transform-origin: top right;
+}
+
+.block-preview.next .preview-block {
+  transform-origin: top left;
+}
+
+.block-card.preview-block::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 150px;
+  background: linear-gradient(180deg, rgba(23, 28, 31, 0), #0f1315 82%);
+  pointer-events: none;
 }
 
 .block-card header,
