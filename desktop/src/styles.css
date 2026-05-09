@@ -1503,6 +1503,19 @@ dd {
   background: #14181b;
 }
 
+.block-card.boundary-block {
+  min-height: 180px;
+  border-style: dashed;
+  background: #14181b;
+}
+
+.boundary-block p {
+  margin: 0;
+  color: #a9b3ba;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .block-card.focused-block {
   z-index: 1;
   border-color: #6aa0b8;

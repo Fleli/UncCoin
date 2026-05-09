@@ -2921,10 +2921,17 @@ function App() {
   const nextBlockchainBlock = focusedBlockchainHeight === null
     ? null
     : blockchainBlocks.find((block) => block.height === focusedBlockchainHeight + 1) ?? null;
+  const blockchainTipHeight = snapshot.chainHead?.height ?? null;
+  const showGenesisBoundary = previousBlockchainBlock === null && focusedBlockchainHeight === 0;
+  const showTipBoundary = (
+    nextBlockchainBlock === null
+    && focusedBlockchainHeight !== null
+    && blockchainTipHeight !== null
+    && focusedBlockchainHeight >= blockchainTipHeight
+  );
   const blockchainWindowLabel = focusedBlockchainHeight !== null
     ? `Focused on block #${focusedBlockchainHeight}`
     : "No block focused";
-  const blockchainTipHeight = snapshot.chainHead?.height ?? null;
   const blockchainNavBusy = busyAction === "blockchain-search" || busyAction === "blockchain-nav";
   const canNavigatePrevious = (
     isApiAvailable
@@ -3275,21 +3282,29 @@ function App() {
             </section>
             <div className="blockchain-carousel">
               <div className="block-preview previous" aria-label="Previous block preview">
-                <BlockchainBlockCard
-                  block={previousBlockchainBlock}
-                  preview
-                  emptyLabel="No previous block."
-                />
+                {showGenesisBoundary ? (
+                  <BlockchainBoundaryCard kind="genesis" />
+                ) : (
+                  <BlockchainBlockCard
+                    block={previousBlockchainBlock}
+                    preview
+                    emptyLabel="No previous block loaded."
+                  />
+                )}
               </div>
               <BlockchainHashConnector active={previousBlockchainBlock !== null && focusedBlockchainBlock !== null} />
               <BlockchainBlockCard block={focusedBlockchainBlock} focused emptyLabel="No focused block loaded." />
               <BlockchainHashConnector active={focusedBlockchainBlock !== null && nextBlockchainBlock !== null} />
               <div className="block-preview next" aria-label="Next block preview">
-                <BlockchainBlockCard
-                  block={nextBlockchainBlock}
-                  preview
-                  emptyLabel="No next block."
-                />
+                {showTipBoundary ? (
+                  <BlockchainBoundaryCard kind="tip" />
+                ) : (
+                  <BlockchainBlockCard
+                    block={nextBlockchainBlock}
+                    preview
+                    emptyLabel="No next block loaded."
+                  />
+                )}
               </div>
             </div>
           </section>
@@ -4298,6 +4313,19 @@ function App() {
         </div>
       </section>
     </main>
+  );
+}
+
+function BlockchainBoundaryCard({ kind }: { kind: "genesis" | "tip" }) {
+  const isGenesis = kind === "genesis";
+  return (
+    <section className="block-card preview-block boundary-block">
+      <header>
+        <span>{isGenesis ? "Chain Start" : "Chain End"}</span>
+        <strong>{isGenesis ? "Genesis" : "Current Tip"}</strong>
+      </header>
+      <p>{isGenesis ? "No canonical block exists before the genesis block." : "No newer canonical block exists yet."}</p>
+    </section>
   );
 }
 
