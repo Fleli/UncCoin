@@ -13,6 +13,7 @@ import {
   readBlock,
   readBlocks,
   readChainHead,
+  readCommitments,
   readContracts,
   readMiningBackends,
   readMiningStatus,
@@ -22,6 +23,7 @@ import {
   readPeers,
   readPendingTransactions,
   readReceipts,
+  readReveals,
   readSyncStatus,
   rebroadcastPendingTransactions,
   revealCommitment,
@@ -491,6 +493,132 @@ function payloadValue(transaction: TransactionPayload, key: string): string | nu
   return JSON.stringify(value);
 }
 
+function pendingTransactionMatchesCommit(
+  transaction: TransactionPayload,
+  record: RandomnessCommitRecord,
+  walletAddress: string,
+): boolean {
+  return (
+    transaction.sender === walletAddress
+    && payloadValue(transaction, "request_id") === record.requestId
+    && payloadValue(transaction, "commitment_hash")?.toLowerCase() === record.commitmentHash.toLowerCase()
+  );
+}
+
+function pendingTransactionMatchesReveal(
+  transaction: TransactionPayload,
+  record: RandomnessCommitRecord,
+  walletAddress: string,
+): boolean {
+  return (
+    transaction.sender === walletAddress
+    && payloadValue(transaction, "request_id") === record.requestId
+    && payloadValue(transaction, "seed") === record.seed
+    && (payloadValue(transaction, "salt") ?? "") === record.salt
+  );
+}
+
+function randomnessRecordsChanged(
+  previousRecords: RandomnessCommitRecord[],
+  nextRecords: RandomnessCommitRecord[],
+): boolean {
+  return JSON.stringify(previousRecords) !== JSON.stringify(nextRecords);
+}
+
+function markRandomnessRecordPending(record: RandomnessCommitRecord): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "pending",
+    staleReason: undefined,
+  };
+}
+
+function markRandomnessRecordRevealed(record: RandomnessCommitRecord): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "revealed",
+    revealedAt: record.revealedAt ?? new Date().toISOString(),
+    staleReason: undefined,
+  };
+}
+
+function markRandomnessRecordStale(record: RandomnessCommitRecord, staleReason: string): RandomnessCommitRecord {
+  return {
+    ...record,
+    status: "stale",
+    staleReason,
+  };
+}
+
+async function reconcileRandomnessCommitRecords(
+  apiPort: number,
+  records: RandomnessCommitRecord[],
+  walletAddress: string | null | undefined,
+  pendingTransactions: TransactionPayload[],
+): Promise<RandomnessCommitRecord[]> {
+  if (!walletAddress || records.length === 0) {
+    return records;
+  }
+
+  const requestIds = [...new Set(records.map((record) => record.requestId).filter(Boolean))];
+  if (requestIds.length === 0) {
+    return records;
+  }
+
+  const chainStateEntries = await Promise.all(
+    requestIds.map(async (requestId) => {
+      const [commitments, reveals] = await Promise.all([
+        readCommitments(apiPort, requestId),
+        readReveals(apiPort, requestId),
+      ]);
+      return [requestId, { commitments: commitments.commitments, reveals: reveals.reveals }] as const;
+    }),
+  );
+  const chainStateByRequestId = new Map(chainStateEntries);
+
+  return records.map((record) => {
+    const chainState = chainStateByRequestId.get(record.requestId);
+    const canonicalCommitmentHash = chainState?.commitments[walletAddress]?.toLowerCase();
+    const canonicalReveal = chainState?.reveals[walletAddress];
+    const canonicalRevealCommitmentHash = canonicalReveal?.commitment_hash?.toLowerCase();
+    const localCommitmentHash = record.commitmentHash.toLowerCase();
+
+    if (canonicalReveal !== undefined) {
+      if (canonicalRevealCommitmentHash === undefined || canonicalRevealCommitmentHash === localCommitmentHash) {
+        return markRandomnessRecordRevealed(record);
+      }
+      return markRandomnessRecordStale(record, "On-chain reveal exists for a different commitment.");
+    }
+
+    if (pendingTransactions.some((transaction) => pendingTransactionMatchesReveal(transaction, record, walletAddress))) {
+      return markRandomnessRecordRevealed(record);
+    }
+
+    if (canonicalCommitmentHash === localCommitmentHash) {
+      return markRandomnessRecordPending(record);
+    }
+
+    if (pendingTransactions.some((transaction) => pendingTransactionMatchesCommit(transaction, record, walletAddress))) {
+      return markRandomnessRecordPending(record);
+    }
+
+    if (canonicalCommitmentHash === undefined) {
+      return markRandomnessRecordStale(record, "Commitment is not on the canonical chain.");
+    }
+
+    return markRandomnessRecordStale(record, "Canonical commitment hash differs from this local record.");
+  });
+}
+
+function isRandomnessChainStateError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /reveal already exists/i.test(message)
+    || /no prior commitment/i.test(message)
+    || /seed does not match prior commitment/i.test(message)
+  );
+}
+
 function displayReference(value: string | null | undefined, _length = 16): { value: string; title?: string } {
   if (!value) {
     return { value: "-" };
@@ -815,6 +943,8 @@ function App() {
   const [localAddresses, setLocalAddresses] = useState<string[]>([]);
   const [disabledBootstrapPeers, setDisabledBootstrapPeers] = useState<string[]>([]);
   const latestSnapshotRef = useRef<Snapshot>(snapshot);
+  const randomnessCommitsRef = useRef<RandomnessCommitRecord[]>([]);
+  const lastRandomnessReconcileKeyRef = useRef("");
   const snapshotRefreshRef = useRef<Promise<void> | null>(null);
   const snapshotRefreshQueuedRef = useRef(false);
 
@@ -887,6 +1017,10 @@ function App() {
     () => randomnessCommits.filter((record) => record.status === "revealed").reverse(),
     [randomnessCommits],
   );
+  const staleRandomnessCommits = useMemo(
+    () => randomnessCommits.filter((record) => record.status === "stale").reverse(),
+    [randomnessCommits],
+  );
   const isPreferredPortDirty = (
     selectedWallet !== undefined
     && Number(port) !== selectedWallet.preferredPort
@@ -923,6 +1057,7 @@ function App() {
   }, [desktopStateKey]);
 
   const saveRandomnessCommits = useCallback(async (records: RandomnessCommitRecord[]) => {
+    randomnessCommitsRef.current = records;
     setRandomnessCommits(records);
     if (!desktopStateKey) {
       return;
@@ -930,8 +1065,50 @@ function App() {
     const nextState = await window.unccoinDesktop.updateDesktopState(desktopStateKey, {
       randomnessCommits: records,
     });
+    randomnessCommitsRef.current = nextState.randomnessCommits;
     setRandomnessCommits(nextState.randomnessCommits);
   }, [desktopStateKey]);
+
+  const reconcileRandomnessCommits = useCallback(async (
+    apiPortToUse: number,
+    walletAddress: string | null | undefined,
+    pendingTransactions: TransactionPayload[],
+    chainReference: string | number | null | undefined,
+    force = false,
+  ) => {
+    const currentRecords = randomnessCommitsRef.current;
+    if (!walletAddress || currentRecords.length === 0) {
+      return currentRecords;
+    }
+
+    const reconcileKey = JSON.stringify({
+      walletAddress,
+      records: currentRecords.map((record) => ({
+        id: record.id,
+        requestId: record.requestId,
+        commitmentHash: record.commitmentHash,
+        status: record.status,
+      })),
+      pending: pendingTransactions.map((transaction) => transaction.transaction_id),
+      chainReference,
+      apiPortToUse,
+    });
+    if (!force && reconcileKey === lastRandomnessReconcileKeyRef.current) {
+      return currentRecords;
+    }
+
+    const nextRecords = await reconcileRandomnessCommitRecords(
+      apiPortToUse,
+      currentRecords,
+      walletAddress,
+      pendingTransactions,
+    );
+    lastRandomnessReconcileKeyRef.current = reconcileKey;
+    if (randomnessRecordsChanged(currentRecords, nextRecords)) {
+      await saveRandomnessCommits(nextRecords);
+    }
+    return nextRecords;
+  }, [saveRandomnessCommits]);
 
   const loadSnapshot = useCallback(async (apiPortToUse: number) => {
     const chainHead = await readChainHead(apiPortToUse);
@@ -991,7 +1168,17 @@ function App() {
       setSyncStatus(nodeInfo.sync);
     }
     setApiStatus("live");
-  }, []);
+    try {
+      await reconcileRandomnessCommits(
+        apiPortToUse,
+        nodeInfo.wallet?.address,
+        pendingTransactions.transactions,
+        chainHead.state_tip_hash ?? chainHead.tip_hash ?? chainHead.height,
+      );
+    } catch (reconcileError) {
+      console.warn("Failed to reconcile randomness records", reconcileError);
+    }
+  }, [reconcileRandomnessCommits]);
 
   const refreshSnapshot = useCallback(async () => {
     if (!isApiAvailable) {
@@ -1063,8 +1250,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    randomnessCommitsRef.current = randomnessCommits;
+  }, [randomnessCommits]);
+
+  useEffect(() => {
     if (!desktopStateKey) {
       setSeenReceivedMessageCount(0);
+      randomnessCommitsRef.current = [];
       setRandomnessCommits([]);
       return undefined;
     }
@@ -1074,6 +1266,7 @@ function App() {
       .then((state) => {
         if (!cancelled) {
           setSeenReceivedMessageCount(state.seenReceivedMessageCount);
+          randomnessCommitsRef.current = state.randomnessCommits;
           setRandomnessCommits(state.randomnessCommits);
         }
       })
@@ -1935,19 +2128,41 @@ function App() {
         createdAt: new Date().toISOString(),
         status: "pending",
       };
-      await saveRandomnessCommits([...randomnessCommits, nextRecord]);
+      await saveRandomnessCommits([...randomnessCommitsRef.current, nextRecord]);
       return { label: "Broadcast commitment", detail: response.transaction_id };
     });
   }
 
   async function handleRevealSavedCommit(record: RandomnessCommitRecord) {
     await runNodeAction("reveal-randomness", async () => {
-      const response = await revealCommitment(activeApiPort, {
-        request_id: record.requestId,
-        seed: record.seed,
-        fee: revealFee,
-        salt: record.salt,
-      });
+      let response;
+      try {
+        response = await revealCommitment(activeApiPort, {
+          request_id: record.requestId,
+          seed: record.seed,
+          fee: revealFee,
+          salt: record.salt,
+        });
+      } catch (revealError) {
+        if (isRandomnessChainStateError(revealError)) {
+          const latestSnapshot = latestSnapshotRef.current;
+          const reconciledRecords = await reconcileRandomnessCommits(
+            activeApiPort,
+            latestSnapshot.nodeInfo?.wallet?.address,
+            latestSnapshot.pendingTransactions,
+            latestSnapshot.chainHead?.state_tip_hash ?? latestSnapshot.chainHead?.tip_hash ?? latestSnapshot.chainHead?.height,
+            true,
+          );
+          const reconciledRecord = reconciledRecords.find((currentRecord) => currentRecord.id === record.id);
+          if (reconciledRecord?.status === "revealed") {
+            return { label: "Reveal already on chain", detail: record.requestId };
+          }
+          if (reconciledRecord?.status === "stale") {
+            return { label: "Randomness record stale", detail: reconciledRecord.staleReason };
+          }
+        }
+        throw revealError;
+      }
       const revealedRecord: RandomnessCommitRecord = {
         ...record,
         status: "revealed",
@@ -1955,7 +2170,7 @@ function App() {
         revealedAt: new Date().toISOString(),
       };
       await saveRandomnessCommits(
-        randomnessCommits.map((currentRecord) => (
+        randomnessCommitsRef.current.map((currentRecord) => (
           currentRecord.id === record.id ? revealedRecord : currentRecord
         )),
       );
@@ -3585,7 +3800,34 @@ function App() {
                               <span>{formatTimestamp(record.revealedAt)}</span>
                             </div>
                             <ReferenceCode value={record.transactionId} prefix="commit " />
-                            <ReferenceCode value={record.revealTransactionId} prefix="reveal " />
+                            {record.revealTransactionId ? (
+                              <ReferenceCode value={record.revealTransactionId} prefix="reveal " />
+                            ) : (
+                              <span>reveal detected on chain</span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="randomness-section">
+                    <div className="randomness-section-title">
+                      <h4>Stale</h4>
+                      <span>{staleRandomnessCommits.length}</span>
+                    </div>
+                    <div className="list">
+                      {staleRandomnessCommits.length === 0 ? (
+                        <p className="empty">No stale randomness records.</p>
+                      ) : (
+                        staleRandomnessCommits.map((record) => (
+                          <div className="list-row stacked randomness-record stale-record" key={record.id}>
+                            <div className="auth-summary">
+                              <strong>{record.requestId}</strong>
+                              <span>{record.staleReason ?? "Not usable on current chain"}</span>
+                            </div>
+                            <ReferenceCode value={record.transactionId} prefix="commit " />
+                            <span>{formatTimestamp(record.createdAt)}</span>
                           </div>
                         ))
                       )}

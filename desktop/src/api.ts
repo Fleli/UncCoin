@@ -216,6 +216,26 @@ export type AuthorizationsResponse = {
   authorizations: Record<string, unknown>[];
 };
 
+export type CommitmentsResponse = {
+  request_id: string;
+  tip_hash: string | null;
+  height: number;
+  commitments: Record<string, string>;
+};
+
+export type RevealEntry = {
+  seed?: string;
+  salt?: string;
+  commitment_hash?: string;
+};
+
+export type RevealsResponse = {
+  request_id: string;
+  tip_hash: string | null;
+  height: number;
+  reveals: Record<string, RevealEntry>;
+};
+
 export type BroadcastTransactionResponse = {
   transaction_id: string;
   transaction: TransactionPayload;
@@ -308,6 +328,14 @@ export function readReceipts(apiPort: number): Promise<ReceiptsResponse> {
 
 export function readAuthorizations(apiPort: number): Promise<AuthorizationsResponse> {
   return requestApi<AuthorizationsResponse>(apiPort, "/authorizations");
+}
+
+export function readCommitments(apiPort: number, requestId: string): Promise<CommitmentsResponse> {
+  return requestApi<CommitmentsResponse>(apiPort, `/commitments/${encodeURIComponent(requestId)}`);
+}
+
+export function readReveals(apiPort: number, requestId: string): Promise<RevealsResponse> {
+  return requestApi<RevealsResponse>(apiPort, `/reveals/${encodeURIComponent(requestId)}`);
 }
 
 export function connectPeer(apiPort: number, peer: string): Promise<PeersResponse> {

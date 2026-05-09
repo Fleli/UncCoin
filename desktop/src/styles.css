@@ -1885,6 +1885,14 @@ dd {
   font-weight: 700;
 }
 
+.stale-record {
+  border-color: #5f5230;
+}
+
+.stale-record .auth-summary span {
+  color: #f0d48a;
+}
+
 .table {
   display: grid;
 }

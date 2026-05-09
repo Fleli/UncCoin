@@ -70,9 +70,10 @@ type RandomnessCommitRecord = {
   commitmentHash: string;
   transactionId: string;
   createdAt: string;
-  status: "pending" | "revealed";
+  status: "pending" | "revealed" | "stale";
   revealTransactionId?: string;
   revealedAt?: string;
+  staleReason?: string;
 };
 
 type DesktopState = {
@@ -182,7 +183,11 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
       ))
       .map((record): RandomnessCommitRecord => {
         const status: RandomnessCommitRecord["status"] = (
-          record.status === "revealed" ? "revealed" : "pending"
+          record.status === "revealed"
+            ? "revealed"
+            : record.status === "stale"
+            ? "stale"
+            : "pending"
         );
         return {
           id: String(record.id || randomUUID()),
@@ -195,6 +200,7 @@ function normalizeDesktopState(value: Partial<DesktopState>): DesktopState {
           status,
           ...(record.revealTransactionId ? { revealTransactionId: String(record.revealTransactionId) } : {}),
           ...(record.revealedAt ? { revealedAt: String(record.revealedAt) } : {}),
+          ...(record.staleReason ? { staleReason: String(record.staleReason) } : {}),
         };
       })
       .filter((record) => record.requestId && record.seed && record.commitmentHash && record.transactionId),
