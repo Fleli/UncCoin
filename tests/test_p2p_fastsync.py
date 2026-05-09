@@ -258,8 +258,8 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(server.fast_sync_states[peer].active)
 
     async def test_handshake_starts_initial_fastsync_stream(self) -> None:
-        peer = PeerAddress(host="0.0.0.0", port=5000)
-        original_peer = PeerAddress(host="100.71.105.5", port=5000)
+        peer = PeerAddress(host="100.71.105.5", port=5000)
+        original_peer = PeerAddress(host="100.71.105.5", port=51000)
         server = P2PServer(
             host="127.0.0.1",
             port=9108,
@@ -286,8 +286,8 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_handshake_moves_existing_fastsync_state_to_advertised_peer(self) -> None:
-        peer = PeerAddress(host="0.0.0.0", port=5000)
-        original_peer = PeerAddress(host="100.71.105.5", port=5000)
+        peer = PeerAddress(host="100.71.105.5", port=5000)
+        original_peer = PeerAddress(host="100.71.105.5", port=51000)
         server = P2PServer(
             host="127.0.0.1",
             port=9109,
@@ -319,8 +319,8 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
         request_fast_sync_stream.assert_not_awaited()
 
     async def test_handshake_does_not_start_second_sync_during_active_fastsync(self) -> None:
-        peer = PeerAddress(host="0.0.0.0", port=5000)
-        original_peer = PeerAddress(host="100.71.105.5", port=5000)
+        peer = PeerAddress(host="100.71.105.5", port=5000)
+        original_peer = PeerAddress(host="100.71.105.5", port=51000)
         server = P2PServer(
             host="127.0.0.1",
             port=9108,

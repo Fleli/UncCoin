@@ -1,6 +1,7 @@
 import json
 import unittest
 from datetime import datetime
+from unittest import mock
 
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
@@ -79,6 +80,60 @@ class P2PServerMempoolTests(unittest.IsolatedAsyncioTestCase):
             "mempool_request",
             "transaction",
         ])
+
+    async def test_handshake_uses_observed_host_for_wildcard_advertisement(self) -> None:
+        socket_peer = PeerAddress(host="100.71.105.5", port=51000)
+        reachable_peer = PeerAddress(host="100.71.105.5", port=9101)
+        writer = RecordingWriter()
+        server = P2PServer(
+            host="0.0.0.0",
+            port=9100,
+            on_chain_summary=lambda: ("tip", 4),
+        )
+        server.active_connections[socket_peer] = writer
+
+        returned_peer = await server._handle_message(
+            {
+                "type": "handshake",
+                "host": "0.0.0.0",
+                "port": reachable_peer.port,
+                "tip_hash": "tip",
+                "height": 4,
+            },
+            socket_peer,
+        )
+
+        self.assertEqual(returned_peer, reachable_peer)
+        self.assertNotIn(socket_peer, server.active_connections)
+        self.assertIn(reachable_peer, server.active_connections)
+        self.assertIn(reachable_peer, server.peers)
+
+    async def test_peer_list_skips_unreachable_remote_addresses(self) -> None:
+        source_peer = PeerAddress(host="100.71.105.5", port=9101)
+        reachable_peer = PeerAddress(host="100.98.249.35", port=9102)
+        server = P2PServer(host="0.0.0.0", port=9100)
+        with mock.patch.object(
+            server,
+            "connect_to_peer",
+            new=mock.AsyncMock(),
+        ) as connect_to_peer:
+            await server._handle_message(
+                {
+                    "type": "peer_list",
+                    "peers": [
+                        {"host": "0.0.0.0", "port": 9103},
+                        {"host": "127.0.0.1", "port": 9104},
+                        {"host": reachable_peer.host, "port": reachable_peer.port},
+                    ],
+                },
+                source_peer,
+            )
+
+        self.assertEqual(server.peers, {reachable_peer})
+        connect_to_peer.assert_awaited_once_with(
+            reachable_peer.host,
+            reachable_peer.port,
+        )
 
     async def test_rebroadcast_pending_transactions_sends_to_connected_peers(self) -> None:
         transaction = create_pending_transaction()

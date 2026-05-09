@@ -1,6 +1,7 @@
 import asyncio
 import json
 import hashlib
+import ipaddress
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -457,8 +458,12 @@ class P2PServer:
         message_type = message.get("type", "unknown")
 
         if message_type == "handshake":
-            advertised_host = message.get("host", peer.host)
-            advertised_port = message.get("port", peer.port)
+            raw_advertised_host = str(message.get("host", peer.host)).strip()
+            advertised_port = int(message.get("port", peer.port))
+            advertised_host = self._reachable_advertised_host(
+                raw_advertised_host,
+                observed_host=peer.host,
+            )
             advertised_peer = PeerAddress(advertised_host, advertised_port)
             remote_tip_hash = message.get("tip_hash")
             remote_height = int(message.get("height", -1))
@@ -515,7 +520,10 @@ class P2PServer:
             return peer
 
         if message_type == "peer_list":
-            for discovered_peer in self._parse_peer_list(message.get("peers", [])):
+            for discovered_peer in self._parse_peer_list(
+                message.get("peers", []),
+                source_peer=peer,
+            ):
                 if self._is_self_peer(discovered_peer):
                     continue
 
@@ -1025,11 +1033,30 @@ class P2PServer:
             start_height=normalized_start_height,
         )
 
-    def _parse_peer_list(self, peers: list[dict]) -> list[PeerAddress]:
-        return [
-            PeerAddress(host=peer["host"], port=int(peer["port"]))
-            for peer in peers
-        ]
+    def _parse_peer_list(
+        self,
+        peers: list[dict],
+        source_peer: PeerAddress | None = None,
+    ) -> list[PeerAddress]:
+        parsed_peers: list[PeerAddress] = []
+        for peer in peers:
+            try:
+                host = str(peer["host"]).strip()
+                port = int(peer["port"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not host or port <= 0 or port > 65535:
+                continue
+            if self._host_is_unspecified(host):
+                continue
+            if (
+                source_peer is not None
+                and self._host_is_loopback(host)
+                and not self._host_is_loopback(source_peer.host)
+            ):
+                continue
+            parsed_peers.append(PeerAddress(host=host, port=port))
+        return parsed_peers
 
     def _create_handshake_message(self) -> dict:
         tip_hash, height = self._get_chain_summary()
@@ -1064,6 +1091,39 @@ class P2PServer:
 
     def _is_self_peer(self, peer: PeerAddress) -> bool:
         return peer.host == self.host and peer.port == self.port
+
+    @classmethod
+    def _reachable_advertised_host(
+        cls,
+        advertised_host: str,
+        observed_host: str,
+    ) -> str:
+        if not advertised_host:
+            return observed_host
+        if cls._host_is_unspecified(advertised_host):
+            return observed_host
+        if (
+            cls._host_is_loopback(advertised_host)
+            and not cls._host_is_loopback(observed_host)
+        ):
+            return observed_host
+        return advertised_host
+
+    @staticmethod
+    def _host_is_unspecified(host: str) -> bool:
+        try:
+            return ipaddress.ip_address(host).is_unspecified
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _host_is_loopback(host: str) -> bool:
+        if host.strip().lower() == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
 
     @staticmethod
     def _short_hash(hash_value: str | None) -> str:
