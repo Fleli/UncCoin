@@ -20,6 +20,7 @@ FASTSYNC_INITIAL_BATCH_CHUNKS = 50
 FASTSYNC_STREAM_DRAIN_INTERVAL = 8
 P2P_CONNECT_TIMEOUT_SECONDS = 15.0
 P2P_CLOSE_TIMEOUT_SECONDS = 2.0
+P2P_MESSAGE_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 @dataclass
@@ -85,6 +86,7 @@ class P2PServer:
             self._handle_connection,
             self.host,
             self.port,
+            limit=P2P_MESSAGE_LIMIT_BYTES,
         )
         self._notify(f"P2P server listening on {self.host}:{self.port}")
 
@@ -125,7 +127,11 @@ class P2PServer:
             return
 
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
+            asyncio.open_connection(
+                host,
+                port,
+                limit=P2P_MESSAGE_LIMIT_BYTES,
+            ),
             timeout=P2P_CONNECT_TIMEOUT_SECONDS,
         )
         self.peers.add(peer)
@@ -448,6 +454,11 @@ class P2PServer:
                 peer = await self._handle_message(message, peer)
         except (ConnectionError, OSError):
             pass
+        except ValueError as error:
+            self._notify(
+                f"Dropped peer {peer.host}:{peer.port}: invalid or oversized message "
+                f"({error})"
+            )
         finally:
             self.active_connections.pop(peer, None)
             self._complete_fast_sync(peer, remove=True)
