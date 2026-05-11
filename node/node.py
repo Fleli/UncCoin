@@ -46,6 +46,8 @@ class Node:
     wallet: Wallet | None = None
     blockchain: Blockchain | None = None
     private_automine: bool = False
+    mining_only: bool = False
+    mined_block_persist_interval: int = 1
     difficulty_bits: int = DEFAULT_DIFFICULTY_BITS
     genesis_difficulty_bits: int = DEFAULT_GENESIS_DIFFICULTY_BITS
     difficulty_growth_factor: int = DEFAULT_DIFFICULTY_GROWTH_FACTOR
@@ -82,12 +84,15 @@ class Node:
     autosend_task: asyncio.Task | None = field(default=None, init=False)
     _persist_blockchain_state: bool = field(default=False, init=False)
     _deferred_chain_sync_save_pending: bool = field(default=False, init=False)
+    _mined_blocks_since_persist: int = field(default=0, init=False)
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
 
     def __post_init__(self) -> None:
         self._persist_blockchain_state = self.blockchain is None
+        if self.mined_block_persist_interval < 0:
+            raise ValueError("mined_block_persist_interval must be non-negative.")
         if self.blockchain is None:
             self.blockchain = Blockchain(
                 difficulty_bits=self.difficulty_bits,
@@ -109,6 +114,7 @@ class Node:
             on_chain_sync_complete=self._handle_chain_sync_complete,
             on_pending_transactions=self._handle_pending_transactions,
             on_notification=self._print_network_notification,
+            transaction_relay=not self.mining_only,
         )
         self.miner_warmup_status = self._default_miner_warmup_status()
 
@@ -135,6 +141,22 @@ class Node:
         if self.private_automine:
             print(
                 "Private automine mode enabled. Mining keeps a preferred branch tip.",
+                flush=True,
+            )
+        if self.mining_only:
+            print(
+                "Mining-only mode enabled. Transaction relay is disabled.",
+                flush=True,
+            )
+        if self.mined_block_persist_interval == 0:
+            print(
+                "Mined block persistence deferred until shutdown.",
+                flush=True,
+            )
+        elif self.mined_block_persist_interval > 1:
+            print(
+                "Mined block persistence interval: "
+                f"{self.mined_block_persist_interval} block(s).",
                 flush=True,
             )
         self._reset_autosend_balance_baseline()
@@ -615,7 +637,7 @@ class Node:
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
-        self._save_persisted_blockchain("mined block")
+        self._save_mined_block_progress()
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -651,7 +673,7 @@ class Node:
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
         self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
-        self._save_persisted_blockchain("mined block")
+        self._save_mined_block_progress()
         await self.broadcast_block(block)
         self._maybe_schedule_autosend()
         return block
@@ -714,7 +736,7 @@ class Node:
                 self._record_mined_block_progress(block)
                 self._record_local_mining_tip(block.block_hash)
                 self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
-                self._save_persisted_blockchain("mined block")
+                self._save_mined_block_progress()
                 await self.broadcast_block(block)
                 self._maybe_schedule_autosend()
                 print(
@@ -1587,6 +1609,18 @@ Wallet commands accept either a wallet address or a local alias."""
 
         reason_suffix = f" ({reason})" if reason else ""
         print(f"Saved blockchain state to {path}{reason_suffix}", flush=True)
+
+    def _save_mined_block_progress(self) -> None:
+        if self.mined_block_persist_interval == 0:
+            self._mined_blocks_since_persist += 1
+            return
+
+        self._mined_blocks_since_persist += 1
+        if self._mined_blocks_since_persist < self.mined_block_persist_interval:
+            return
+
+        self._mined_blocks_since_persist = 0
+        self._save_persisted_blockchain("mined block")
 
     def _load_contract_deploy_payload(self, contract_source: str):
         try:

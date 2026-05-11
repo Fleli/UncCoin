@@ -154,7 +154,7 @@ For a dedicated Linux NVIDIA/CUDA miner:
 ```bash
 ./scripts/setup_runpod_cuda.sh
 ./.venv/bin/python scripts/benchmark_gpu_pow.py
-UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
+./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-tailscale-ip:peer-port ...]
 ```
 
 ## 9. Notes

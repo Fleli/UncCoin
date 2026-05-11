@@ -219,7 +219,7 @@ Linux NVIDIA/CUDA setup:
 Dedicated GPU miner:
 
 ```bash
-UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
+./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
 ## 9. Useful CLI Commands

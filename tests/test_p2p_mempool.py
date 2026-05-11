@@ -81,6 +81,34 @@ class P2PServerMempoolTests(unittest.IsolatedAsyncioTestCase):
             "transaction",
         ])
 
+    async def test_transaction_relay_can_disable_handshake_mempool_sync(self) -> None:
+        transaction = create_pending_transaction()
+        socket_peer = PeerAddress(host="127.0.0.1", port=51000)
+        advertised_peer = PeerAddress(host="127.0.0.1", port=9101)
+        writer = RecordingWriter()
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9100,
+            on_chain_summary=lambda: ("tip", 4),
+            on_pending_transactions=lambda: [transaction],
+            transaction_relay=False,
+        )
+        server.active_connections[socket_peer] = writer
+
+        returned_peer = await server._handle_message(
+            {
+                "type": "handshake",
+                "host": advertised_peer.host,
+                "port": advertised_peer.port,
+                "tip_hash": "tip",
+                "height": 4,
+            },
+            socket_peer,
+        )
+
+        self.assertEqual(returned_peer, advertised_peer)
+        self.assertEqual(writer.messages, [])
+
     async def test_handshake_uses_observed_host_for_wildcard_advertisement(self) -> None:
         socket_peer = PeerAddress(host="100.71.105.5", port=51000)
         reachable_peer = PeerAddress(host="100.71.105.5", port=9101)
@@ -152,6 +180,43 @@ class P2PServerMempoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(writer.messages), 1)
         self.assertEqual(writer.messages[0]["type"], "transaction")
 
+    async def test_transaction_relay_can_disable_rebroadcast_pending_transactions(self) -> None:
+        transaction = create_pending_transaction()
+        peer = PeerAddress(host="127.0.0.1", port=9101)
+        writer = RecordingWriter()
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9100,
+            on_pending_transactions=lambda: [transaction],
+            transaction_relay=False,
+        )
+        server.active_connections[peer] = writer
+
+        count = await server.broadcast_pending_transactions()
+
+        self.assertEqual(count, 0)
+        self.assertEqual(writer.messages, [])
+
+    async def test_transaction_relay_can_disable_local_transaction_broadcast(self) -> None:
+        transaction = create_pending_transaction()
+        peer = PeerAddress(host="127.0.0.1", port=9101)
+        writer = RecordingWriter()
+        on_transaction = mock.Mock(return_value=(True, None))
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9100,
+            on_transaction=on_transaction,
+            transaction_relay=False,
+        )
+        server.active_connections[peer] = writer
+
+        accepted, reason = await server.broadcast_transaction(transaction)
+
+        self.assertFalse(accepted)
+        self.assertEqual(reason, "transaction relay disabled")
+        on_transaction.assert_not_called()
+        self.assertEqual(writer.messages, [])
+
     async def test_accepted_block_requests_peer_mempool(self) -> None:
         peer = PeerAddress(host="127.0.0.1", port=9101)
         writer = RecordingWriter()
@@ -174,6 +239,54 @@ class P2PServerMempoolTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(writer.messages), 1)
         self.assertEqual(writer.messages[0]["type"], "mempool_request")
+
+    async def test_transaction_relay_can_disable_mempool_requests_after_block(self) -> None:
+        peer = PeerAddress(host="127.0.0.1", port=9101)
+        writer = RecordingWriter()
+        block = create_genesis_block(sha256_block_hash)
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9100,
+            on_block=lambda _block: ("accepted", None),
+            transaction_relay=False,
+        )
+        server.active_connections[peer] = writer
+
+        await server._handle_message(
+            {
+                "type": "block",
+                "block_hash": block.block_hash,
+                "block": block.to_dict(),
+            },
+            peer,
+        )
+
+        self.assertEqual(writer.messages, [])
+
+    async def test_transaction_relay_can_ignore_incoming_transactions(self) -> None:
+        transaction = create_pending_transaction()
+        peer = PeerAddress(host="127.0.0.1", port=9101)
+        writer = RecordingWriter()
+        on_transaction = mock.Mock(return_value=(True, None))
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9100,
+            on_transaction=on_transaction,
+            transaction_relay=False,
+        )
+        server.active_connections[peer] = writer
+
+        await server._handle_message(
+            {
+                "type": "transaction",
+                "tx_id": "abc",
+                "transaction": transaction.to_dict(),
+            },
+            peer,
+        )
+
+        on_transaction.assert_not_called()
+        self.assertEqual(writer.messages, [])
 
 
 if __name__ == "__main__":

@@ -59,6 +59,7 @@ class P2PServer:
     on_chain_sync_complete: Callable[[], None] | None = None
     on_pending_transactions: Callable[[], list[Transaction]] | None = None
     on_notification: Callable[[str], None] | None = None
+    transaction_relay: bool = True
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     seen_block_hashes: set[str] = field(default_factory=set)
@@ -157,6 +158,9 @@ class P2PServer:
         await self._broadcast_to_peers(message)
 
     async def broadcast_transaction(self, transaction: Transaction) -> tuple[bool, str | None]:
+        if not self.transaction_relay:
+            return False, "transaction relay disabled"
+
         transaction_id = sha256_transaction_hash(transaction)
         if transaction_id in self.seen_transaction_ids:
             reason = "transaction already seen"
@@ -188,6 +192,9 @@ class P2PServer:
         return True, None
 
     async def broadcast_pending_transactions(self) -> int:
+        if not self.transaction_relay:
+            return 0
+
         transactions = self._get_pending_transactions()
         for transaction in transactions:
             transaction_id = sha256_transaction_hash(transaction)
@@ -523,6 +530,9 @@ class P2PServer:
             return peer
 
         if message_type == "mempool_request":
+            if not self.transaction_relay:
+                return peer
+
             transaction_count = await self._send_pending_transactions_to_peer(peer)
             self._notify(
                 f"Mempool requested by {peer.host}:{peer.port}; "
@@ -649,6 +659,9 @@ class P2PServer:
             return peer
 
         if message_type == "transaction":
+            if not self.transaction_relay:
+                return peer
+
             transaction = Transaction.from_dict(message["transaction"])
             transaction_id = message.get("tx_id", sha256_transaction_hash(transaction))
 
@@ -754,6 +767,9 @@ class P2PServer:
         )
 
     async def _sync_mempool_with_peer(self, peer: PeerAddress) -> None:
+        if not self.transaction_relay:
+            return
+
         writer = self.active_connections.get(peer)
         if (
             writer is None

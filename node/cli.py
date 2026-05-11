@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import ipaddress
 import os
+import signal
 
 from node.node import Node
 from wallet import load_wallet
@@ -53,6 +54,20 @@ async def _run_from_cli() -> None:
         ),
     )
     parser.add_argument(
+        "--mining-only",
+        action="store_true",
+        help="Disable transaction and mempool relay for a dedicated miner.",
+    )
+    parser.add_argument(
+        "--mined-block-persist-interval",
+        type=int,
+        default=1,
+        help=(
+            "Save blockchain state every N locally mined blocks. "
+            "Use 0 to save only on shutdown or chain sync."
+        ),
+    )
+    parser.add_argument(
         "--api-host",
         default="127.0.0.1",
         help="Host interface for the optional state/control HTTP API.",
@@ -72,6 +87,8 @@ async def _run_from_cli() -> None:
     args = parser.parse_args()
     if args.api_port is not None and not 0 < args.api_port < 65536:
         parser.error("--api-port must be between 1 and 65535.")
+    if args.mined_block_persist_interval < 0:
+        parser.error("--mined-block-persist-interval must be non-negative.")
     api_token = _normalize_api_token(
         args.api_token
         if args.api_token is not None
@@ -91,6 +108,8 @@ async def _run_from_cli() -> None:
         port=args.port,
         wallet=wallet,
         private_automine=args.private_automine,
+        mining_only=args.mining_only,
+        mined_block_persist_interval=args.mined_block_persist_interval,
     )
     await node.start()
 
@@ -133,13 +152,35 @@ async def _run_from_cli() -> None:
             print("Control API is unauthenticated; keep the API host loopback.", flush=True)
 
     server_task = asyncio.create_task(node.serve_forever())
+    stop_event = asyncio.Event()
+    stop_task = None
+    loop = asyncio.get_running_loop()
+    registered_signals = []
+    if args.no_interactive:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.add_signal_handler(signum, stop_event.set)
+                registered_signals.append(signum)
 
     try:
         if args.no_interactive:
-            await server_task
+            stop_task = asyncio.create_task(stop_event.wait())
+            done, _pending = await asyncio.wait(
+                {server_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if server_task in done:
+                await server_task
         else:
             await node.interactive_console()
     finally:
+        if stop_task is not None:
+            stop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stop_task
+        for signum in registered_signals:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(signum)
         try:
             if api_server is not None:
                 await api_server.stop()

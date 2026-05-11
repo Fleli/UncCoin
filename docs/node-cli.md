@@ -9,6 +9,12 @@ Start a terminal node:
 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
+Start a headless cloud GPU miner:
+
+```bash
+./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
+```
+
 Example:
 
 ```bash

@@ -77,6 +77,18 @@ For a dedicated GPU miner:
 UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
+For a headless cloud GPU miner, use the dedicated launcher:
+
+```bash
+./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
+```
+
+The cloud launcher defaults to GPU-only mining, disables transaction/mempool relay, reduces
+nonce progress output, requests fast sync, starts automine through the local API, and defers
+locally mined block persistence until shutdown. Peers still receive locally mined blocks. If
+you want periodic mined-block saves, set `UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive
+block interval.
+
 ## Linux/CUDA and Runpod
 
 The repo includes a Linux/CUDA proof-of-work backend for NVIDIA GPUs.
@@ -86,7 +98,7 @@ For a simple Runpod setup:
 ```bash
 ./scripts/setup_runpod_cuda.sh
 ./.venv/bin/python scripts/benchmark_gpu_pow.py
-UNCCOIN_PRIVATE_AUTOMINE=1 UNCCOIN_GPU_ONLY=1 ./scripts/run.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
+./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
 If you also want local CPU workers on the pod, set `UNCCOIN_BUILD_CPU_POW_EXTENSION=1`

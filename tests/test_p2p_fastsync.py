@@ -285,6 +285,37 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
             4899,
         )
 
+    async def test_transaction_relay_disabled_handshake_still_starts_fastsync(self) -> None:
+        peer = PeerAddress(host="100.71.105.5", port=5000)
+        original_peer = PeerAddress(host="100.71.105.5", port=51000)
+        writer = RecordingWriter()
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9108,
+            on_chain_summary=lambda: ("local-tip", 4898),
+            transaction_relay=False,
+        )
+        server.active_connections[original_peer] = writer
+
+        returned_peer = await server._handle_message(
+            {
+                "type": "handshake",
+                "host": "0.0.0.0",
+                "port": 5000,
+                "tip_hash": "abc",
+                "height": 30939,
+            },
+            original_peer,
+        )
+
+        self.assertEqual(returned_peer, peer)
+        self.assertEqual(
+            writer.messages,
+            [{"type": "chain_stream_request", "start_height": 4899}],
+        )
+        self.assertIn(peer, server.fast_sync_states)
+        self.assertEqual(server.fast_sync_states[peer].expected_start_height, 4899)
+
     async def test_handshake_moves_existing_fastsync_state_to_advertised_peer(self) -> None:
         peer = PeerAddress(host="100.71.105.5", port=5000)
         original_peer = PeerAddress(host="100.71.105.5", port=51000)
