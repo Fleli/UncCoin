@@ -60,6 +60,7 @@ class P2PServer:
     on_pending_transactions: Callable[[], list[Transaction]] | None = None
     on_notification: Callable[[str], None] | None = None
     transaction_relay: bool = True
+    log_block_broadcasts: bool = True
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     seen_block_hashes: set[str] = field(default_factory=set)
@@ -219,7 +220,8 @@ class P2PServer:
                 "block": block.to_dict(),
             }
         )
-        print(f"Broadcast block {block_hash[:12]} at height {block.block_id}")
+        if self.log_block_broadcasts:
+            print(f"Broadcast block {block_hash[:12]} at height {block.block_id}")
 
     async def broadcast_wallet_message(self, wallet_message: dict) -> tuple[bool, str | None]:
         message_id = wallet_message["message_id"]

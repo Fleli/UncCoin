@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from core.block import Block
+from core.block import mine_serialized_block_prefix_resident
 from core.block import proof_of_work
 from core.cuda_pow import _mine_pow_gpu_range
 from core.cuda_pow import _resolve_cuda_dispatch_window
@@ -221,3 +222,40 @@ class ProofOfWorkGpuOnlySettingTests(unittest.TestCase):
         self.assertEqual(run_chunked_mining.call_args.args[3], 0)
         self.assertEqual(run_chunked_mining.call_args.kwargs["gpu_device_ids"], (0, 1))
         self.assertEqual(block.nonces_checked, 8)
+
+    @mock.patch("core.block.get_gpu_device_ids", return_value=(2, 3))
+    @mock.patch("core.block.get_tuned_gpu_chunk_multiplier", return_value=4)
+    @mock.patch("core.block.get_tuned_gpu_launch_config", return_value=(8, 256))
+    @mock.patch("core.block.native_gpu_available", return_value=True)
+    @mock.patch("core.block.native_mine_pow_gpu")
+    def test_resident_prefix_gpu_uses_one_long_running_gpu_call(
+        self,
+        native_mine_pow_gpu: mock.Mock,
+        _native_gpu_available: mock.Mock,
+        _get_tuned_gpu_launch_config: mock.Mock,
+        _get_tuned_gpu_chunk_multiplier: mock.Mock,
+        _get_gpu_device_ids: mock.Mock,
+    ) -> None:
+        native_mine_pow_gpu.return_value = (12, "0" * 64, False)
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            result = mine_serialized_block_prefix_resident(
+                "prefix|",
+                difficulty_bits=0,
+                mining_backend="gpu",
+            )
+
+        self.assertEqual(result.nonce, 12)
+        self.assertEqual(result.block_hash, "0" * 64)
+        self.assertEqual(result.attempts, 13)
+        native_mine_pow_gpu.assert_called_once_with(
+            "prefix|",
+            0,
+            0,
+            0,
+            262_144 * 4,
+            1,
+            8,
+            256,
+            2,
+        )

@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 
 from core.block import Block
+from core.block import mine_serialized_block_prefix_resident
 from core.block import proof_of_work
 from core.hashing import sha256_block_hash
 
@@ -15,6 +16,16 @@ class MiningBackendTests(unittest.TestCase):
         self.assertTrue(block.block_hash.startswith("0"))
         self.assertIsNotNone(block.nonces_checked)
         self.assertEqual(block.block_hash, sha256_block_hash(block))
+
+    def test_resident_prefix_python_backend_mines_valid_prefix(self) -> None:
+        result = mine_serialized_block_prefix_resident(
+            "1|||0|",
+            difficulty_bits=4,
+            mining_backend="python",
+        )
+
+        self.assertTrue(result.block_hash.startswith("0"))
+        self.assertGreaterEqual(result.attempts, 1)
 
     def test_auto_backend_falls_back_to_python_when_native_is_unavailable(self) -> None:
         block = Block(1, [], sha256_block_hash, "fallback", "0")

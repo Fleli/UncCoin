@@ -6,8 +6,11 @@ from typing import Literal
 
 from core.block import Block
 from core.block import ProofOfWorkCancelled
-from core.block import proof_of_work
+from core.block import PrefixProofOfWorkResult
+from core.block import mine_serialized_block_prefix_resident
 from core.hashing import sha256_block_hash
+from core.serialization import serialize_transaction
+from core.transaction import Transaction
 from core.utils.mining import create_mining_reward_transaction
 
 
@@ -96,6 +99,39 @@ def build_reward_only_block(
     )
 
 
+def build_reward_only_block_prefix(
+    *,
+    block_id: int,
+    previous_hash: str,
+    reward_transaction: Transaction,
+    description: str,
+) -> str:
+    return (
+        f"{block_id}|{serialize_transaction(reward_transaction)}|"
+        f"{description}|{previous_hash}|"
+    )
+
+
+def hydrate_mined_reward_only_block(
+    *,
+    block_id: int,
+    previous_hash: str,
+    reward_transaction: Transaction,
+    description: str,
+    proof_of_work_result: PrefixProofOfWorkResult,
+) -> Block:
+    block = Block.__new__(Block)
+    block.block_id = block_id
+    block.transactions = [reward_transaction]
+    block.hash_function = sha256_block_hash
+    block.description = description
+    block.previous_hash = previous_hash
+    block.nonce = proof_of_work_result.nonce
+    block.nonces_checked = proof_of_work_result.attempts
+    block.block_hash = proof_of_work_result.block_hash
+    return block
+
+
 def mine_reward_only_blocks(
     config: CloudNativeAutomineConfig,
     output_queue: "queue.Queue[CloudNativeAutomineEvent]",
@@ -106,16 +142,24 @@ def mine_reward_only_blocks(
 
     try:
         while not stop_event.is_set():
-            block = build_reward_only_block(
+            reward_transaction = create_mining_reward_transaction(config.miner_address)
+            prefix = build_reward_only_block_prefix(
                 block_id=block_height,
                 previous_hash=previous_hash,
-                miner_address=config.miner_address,
+                reward_transaction=reward_transaction,
                 description=config.description,
             )
-            proof_of_work(
-                block,
-                config.difficulty_schedule.difficulty_bits_for_height(block.block_id),
+            proof_of_work_result = mine_serialized_block_prefix_resident(
+                prefix,
+                config.difficulty_schedule.difficulty_bits_for_height(block_height),
                 mining_backend=config.mining_backend,
+            )
+            block = hydrate_mined_reward_only_block(
+                block_id=block_height,
+                previous_hash=previous_hash,
+                reward_transaction=reward_transaction,
+                description=config.description,
+                proof_of_work_result=proof_of_work_result,
             )
 
             if stop_event.is_set():

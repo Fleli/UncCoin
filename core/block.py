@@ -18,6 +18,8 @@ from core.mining_scheduler import get_cpu_chunk_size
 from core.mining_scheduler import get_gpu_device_ids
 from core.mining_scheduler import run_chunked_mining
 from core.native_pow import gpu_available as native_gpu_available
+from core.native_pow import mine_pow as native_mine_pow
+from core.native_pow import mine_pow_gpu as native_mine_pow_gpu
 from core.native_pow import native_extension_built
 from core.python_pow import run_python_mining
 from core.serialization import serialize_block_prefix
@@ -95,6 +97,13 @@ class Block:
 
 class ProofOfWorkCancelled(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class PrefixProofOfWorkResult:
+    nonce: int
+    block_hash: str
+    attempts: int
 
 
 def _read_int_env(name: str, default: int, minimum: int = 0) -> int:
@@ -352,6 +361,230 @@ def _python_proof_of_work(
     block.nonce, block.block_hash = mining_result.winner
     block.nonces_checked = mining_result.attempts
     return block.block_hash
+
+
+def mine_serialized_block_prefix_resident(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int = 0,
+    progress_callback: Callable[[int], None] | None = None,
+    progress_interval: int = DEFAULT_MINING_PROGRESS_INTERVAL,
+    mining_backend: str | None = None,
+) -> PrefixProofOfWorkResult:
+    backend = (
+        selected_mining_backend()
+        if mining_backend is None
+        else normalize_mining_backend(mining_backend)
+    )
+    if backend == MINING_BACKEND_PYTHON:
+        return _python_prefix_proof_of_work(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            progress_callback,
+            progress_interval,
+        )
+    if backend == MINING_BACKEND_NATIVE:
+        if not native_extension_built():
+            raise ValueError("Native C mining is not built. Build the native miner first.")
+        return _resident_native_prefix_proof_of_work(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            progress_callback,
+            progress_interval,
+            gpu_mode="disabled",
+        )
+    if backend == MINING_BACKEND_GPU:
+        return _resident_native_prefix_proof_of_work(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            progress_callback,
+            progress_interval,
+            gpu_mode="required",
+        )
+
+    if platform.system() == "Linux":
+        try:
+            return _resident_native_prefix_proof_of_work(
+                prefix,
+                difficulty_bits,
+                start_nonce,
+                progress_callback,
+                progress_interval,
+                gpu_mode="required",
+            )
+        except ProofOfWorkCancelled:
+            raise
+        except Exception:
+            pass
+
+    if native_extension_built():
+        try:
+            return _resident_native_prefix_proof_of_work(
+                prefix,
+                difficulty_bits,
+                start_nonce,
+                progress_callback,
+                progress_interval,
+                gpu_mode=MINING_BACKEND_AUTO,
+            )
+        except ProofOfWorkCancelled:
+            raise
+        except Exception:
+            pass
+
+    return _python_prefix_proof_of_work(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        progress_callback,
+        progress_interval,
+    )
+
+
+def _python_prefix_proof_of_work(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int,
+    progress_callback: Callable[[int], None] | None,
+    progress_interval: int,
+) -> PrefixProofOfWorkResult:
+    mining_result = run_python_mining(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        progress_interval,
+        progress_callback,
+    )
+    if mining_result.winner is None:
+        raise ProofOfWorkCancelled("Proof of work was cancelled.")
+
+    nonce, block_hash = mining_result.winner
+    return PrefixProofOfWorkResult(
+        nonce=nonce,
+        block_hash=block_hash,
+        attempts=mining_result.attempts,
+    )
+
+
+def _resident_native_prefix_proof_of_work(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int,
+    progress_callback: Callable[[int], None] | None,
+    progress_interval: int,
+    gpu_mode: str,
+) -> PrefixProofOfWorkResult:
+    native_progress_interval = 0
+    if progress_callback is not None:
+        native_progress_interval = _read_int_env(
+            "UNCCOIN_MINING_PROGRESS_INTERVAL",
+            progress_interval,
+            minimum=0,
+        )
+
+    native_gpu_enabled = False
+    if gpu_mode != "disabled":
+        try:
+            native_gpu_enabled = native_gpu_available()
+        except Exception:
+            if gpu_mode == "required":
+                raise
+    if gpu_mode == "required" and not native_gpu_enabled:
+        raise ValueError("GPU mining is unavailable.")
+
+    if native_gpu_enabled and gpu_mode != "disabled":
+        return _resident_gpu_prefix_proof_of_work(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            native_progress_interval,
+        )
+
+    if gpu_mode == "required":
+        raise ValueError("GPU mining is unavailable.")
+    if not native_extension_built():
+        raise ValueError("Native C mining is not built. Build the native miner first.")
+
+    nonce, block_hash, cancelled = native_mine_pow(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        native_progress_interval,
+        1,
+    )
+    if cancelled:
+        raise ProofOfWorkCancelled("Proof of work was cancelled.")
+    return PrefixProofOfWorkResult(
+        nonce=nonce,
+        block_hash=block_hash,
+        attempts=max(0, nonce - start_nonce) + 1,
+    )
+
+
+def _resident_gpu_prefix_proof_of_work(
+    prefix: str,
+    difficulty_bits: int,
+    start_nonce: int,
+    progress_interval: int,
+) -> PrefixProofOfWorkResult:
+    gpu_batch_size = _read_int_env(
+        "UNCCOIN_GPU_BATCH_SIZE",
+        DEFAULT_GPU_BATCH_SIZE,
+        minimum=1,
+    )
+    gpu_device_ids = get_gpu_device_ids()
+    if not gpu_device_ids:
+        raise ValueError("No GPU devices were selected for GPU mining.")
+
+    device_id = gpu_device_ids[0]
+    default_gpu_nonces_per_thread, default_gpu_threads_per_group = (
+        get_tuned_gpu_launch_config(
+            gpu_batch_size,
+            device_id,
+        )
+    )
+    gpu_nonces_per_thread = _read_int_env(
+        "UNCCOIN_GPU_NONCES_PER_THREAD",
+        default_gpu_nonces_per_thread,
+        minimum=1,
+    )
+    gpu_threads_per_group = _read_int_env(
+        "UNCCOIN_GPU_THREADS_PER_GROUP",
+        default_gpu_threads_per_group,
+        minimum=1,
+    )
+    gpu_chunk_multiplier = _read_int_env(
+        "UNCCOIN_GPU_CHUNK_MULTIPLIER",
+        get_tuned_gpu_chunk_multiplier(
+            gpu_batch_size,
+            gpu_nonces_per_thread,
+            gpu_threads_per_group,
+            device_id,
+        ),
+        minimum=1,
+    )
+    dispatch_batch_size = gpu_batch_size * gpu_chunk_multiplier
+    nonce, block_hash, cancelled = native_mine_pow_gpu(
+        prefix,
+        difficulty_bits,
+        start_nonce,
+        progress_interval,
+        dispatch_batch_size,
+        1,
+        gpu_nonces_per_thread,
+        gpu_threads_per_group,
+        device_id,
+    )
+    if cancelled:
+        raise ProofOfWorkCancelled("Proof of work was cancelled.")
+    return PrefixProofOfWorkResult(
+        nonce=nonce,
+        block_hash=block_hash,
+        attempts=max(0, nonce - start_nonce) + 1,
+    )
 
 
 def verify_block(block: Block, difficulty_bits: int) -> bool:

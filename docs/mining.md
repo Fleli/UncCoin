@@ -86,11 +86,23 @@ For a headless cloud GPU miner, use the dedicated launcher:
 The cloud launcher defaults to GPU-only mining, disables transaction/mempool relay, reduces
 nonce progress output, requests fast sync, starts automine through the local API, and defers
 locally mined block persistence until shutdown. It also enables the cloud-native burst
-autominer, a mining-only reward-block path where a long-running worker keeps preparing and
-mining the next empty reward block while Python validates and broadcasts completed blocks.
-Consensus is still enforced by the normal Python block validator before each block is
-broadcast. Peers still receive locally mined blocks. If you want periodic mined-block saves,
-set `UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive block interval.
+autominer, a mining-only reward-block path where a long-running worker prepares serialized
+reward-block prefixes and mines them through a resident backend call. Python hydrates the
+mined prefix into a normal block, validates the same proof-of-work and reward rules used by
+consensus, and then broadcasts it. For self-mined reward-only blocks with an empty local
+mempool, cloud mode uses a fast reward-state update and periodically reruns full chain
+verification as a guard.
+Per-block broadcast logs are replaced by compact periodic summaries. Peers still receive
+locally mined blocks. If you want periodic mined-block saves, set
+`UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive block interval.
+
+Cloud summary output can be tuned with:
+
+- `UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS`: print every N accepted burst blocks, default `10`.
+- `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: print after this many seconds even if the block
+  interval has not been reached, default `15`.
+- `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS`: run full chain verification every N fast-path
+  reward blocks before broadcast, default `100`.
 
 To fall back to the ordinary cloud automine loop:
 

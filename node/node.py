@@ -1,8 +1,10 @@
 import asyncio
 import functools
 import json
+import os
 import queue
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,7 +17,10 @@ from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
 from config import DEFAULT_DIFFICULTY_GROWTH_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_START_HEIGHT
 from config import DEFAULT_GENESIS_DIFFICULTY_BITS
-from core.block import Block, ProofOfWorkCancelled, proof_of_work
+from core.block import Block
+from core.block import ProofOfWorkCancelled
+from core.block import get_block_verification_error
+from core.block import proof_of_work
 from core.blockchain import Blockchain
 from core.contracts import NFT_TRANSFER_GAS_LIMIT
 from core.contracts import build_nft_contract
@@ -38,7 +43,10 @@ from core.native_pow import reset_pow_cancel
 from core.randomness import create_reveal_commitment_hash
 from core.transaction import Transaction
 from core.uvm_authorization import UvmAuthorizationScope
-from core.utils.constants import MINING_REWARD_SENDER
+from core.utils.constants import MINING_REWARD_AMOUNT, MINING_REWARD_SENDER
+from core.utils.mining import get_mining_reward_amount_validation_error
+from core.utils.mining import get_mining_reward_structure_error
+from core.utils.mining import is_mining_reward_transaction
 from node.alias_store import load_aliases, save_aliases
 from network.p2p_server import P2PServer
 from node.message_store import load_messages, save_messages
@@ -48,6 +56,28 @@ from wallet import Wallet
 
 class CloudNativeAutomineStaleTip(Exception):
     pass
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _read_positive_float_env(name: str, default: float) -> float:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 @dataclass
@@ -97,6 +127,7 @@ class Node:
     _persist_blockchain_state: bool = field(default=False, init=False)
     _deferred_chain_sync_save_pending: bool = field(default=False, init=False)
     _mined_blocks_since_persist: int = field(default=0, init=False)
+    _cloud_native_fast_blocks_since_verify: int = field(default=0, init=False)
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     CONTRACTS_DIR = REPO_ROOT / "state" / "contracts"
@@ -129,6 +160,7 @@ class Node:
             on_pending_transactions=self._handle_pending_transactions,
             on_notification=self._print_network_notification,
             transaction_relay=not self.mining_only,
+            log_block_broadcasts=not self.cloud_native_automine,
         )
         self.miner_warmup_status = self._default_miner_warmup_status()
 
@@ -861,6 +893,10 @@ class Node:
         )
         worker.start()
         restart_requested = False
+        accepted_blocks = 0
+        stale_restarts = 0
+        started_at = time.perf_counter()
+        last_summary_at = started_at
 
         try:
             while worker.is_alive() or not result_queue.empty():
@@ -877,7 +913,16 @@ class Node:
                     assert event.block is not None
                     try:
                         await self._accept_cloud_native_mined_block(event.block)
+                        accepted_blocks += 1
+                        last_summary_at = self._maybe_print_cloud_native_summary(
+                            block=event.block,
+                            accepted_blocks=accepted_blocks,
+                            stale_restarts=stale_restarts,
+                            started_at=started_at,
+                            last_summary_at=last_summary_at,
+                        )
                     except CloudNativeAutomineStaleTip:
+                        stale_restarts += 1
                         restart_requested = True
                         stop_event.set()
                         request_pow_cancel()
@@ -897,6 +942,42 @@ class Node:
             reset_pow_cancel()
 
         return restart_requested
+
+    def _maybe_print_cloud_native_summary(
+        self,
+        *,
+        block: Block,
+        accepted_blocks: int,
+        stale_restarts: int,
+        started_at: float,
+        last_summary_at: float,
+    ) -> float:
+        block_interval = _read_positive_int_env(
+            "UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS",
+            10,
+        )
+        seconds_interval = _read_positive_float_env(
+            "UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS",
+            15.0,
+        )
+        now = time.perf_counter()
+        if (
+            accepted_blocks % block_interval != 0
+            and now - last_summary_at < seconds_interval
+        ):
+            return last_summary_at
+
+        elapsed = max(now - started_at, 0.001)
+        blocks_per_minute = accepted_blocks * 60.0 / elapsed
+        print(
+            "Cloud-native summary: "
+            f"height={block.block_id} "
+            f"accepted={accepted_blocks} "
+            f"rate={blocks_per_minute:.1f}/min "
+            f"stale_restarts={stale_restarts}",
+            flush=True,
+        )
+        return now
 
     def _cloud_native_difficulty_schedule(self) -> CloudNativeDifficultySchedule:
         assert self.blockchain is not None
@@ -922,17 +1003,20 @@ class Node:
             )
 
         previous_state_tip_hash = self._state_tip_hash()
-        result = self.blockchain.add_block_result(
-            block,
-            reconcile_pending_transactions=not self.private_automine,
-        )
-        if result.status != "accepted":
-            if result.status in {"duplicate", "missing_parent"}:
-                raise CloudNativeAutomineStaleTip(result.reason or result.status)
-            raise ValueError(
-                "native mined block failed consensus validation: "
-                f"{result.reason or result.status}"
+        if self._can_fast_accept_cloud_native_block():
+            self._fast_accept_cloud_native_mined_block(block)
+        else:
+            result = self.blockchain.add_block_result(
+                block,
+                reconcile_pending_transactions=not self.private_automine,
             )
+            if result.status != "accepted":
+                if result.status in {"duplicate", "missing_parent"}:
+                    raise CloudNativeAutomineStaleTip(result.reason or result.status)
+                raise ValueError(
+                    "native mined block failed consensus validation: "
+                    f"{result.reason or result.status}"
+                )
 
         self._record_mined_block_progress(block)
         self._record_local_mining_tip(block.block_hash)
@@ -945,9 +1029,125 @@ class Node:
         self.mining_difficulty_bits = self.blockchain.get_next_block_difficulty_bits(
             self.mining_tip_hash,
         )
-        print(
-            f"\nCloud-native mined block {block.block_hash[:12]} at height {block.block_id}",
-            flush=True,
+
+    def _can_fast_accept_cloud_native_block(self) -> bool:
+        assert self.blockchain is not None
+        return (
+            self.cloud_native_automine
+            and self.mining_only
+            and not self.blockchain.pending_transactions
+        )
+
+    def _fast_accept_cloud_native_mined_block(self, block: Block) -> None:
+        assert self.blockchain is not None
+
+        if block.block_hash in self.blockchain.blocks_by_hash:
+            raise CloudNativeAutomineStaleTip("block already exists")
+
+        parent_state = self.blockchain.block_states.get(block.previous_hash)
+        if parent_state is None:
+            raise CloudNativeAutomineStaleTip(
+                f"missing parent state for block {block.previous_hash[:12]}"
+            )
+
+        if block.block_id != parent_state.height + 1:
+            raise ValueError(
+                "native mined block failed fast consensus validation: "
+                f"block_id {block.block_id} does not extend parent height "
+                f"{parent_state.height}"
+            )
+
+        validation_error = self._cloud_native_reward_only_validation_error(block)
+        if validation_error is not None:
+            raise ValueError(
+                "native mined block failed fast consensus validation: "
+                f"{validation_error}"
+            )
+
+        previous_head = self.blockchain.main_tip_hash
+        previous_parent_children = list(
+            self.blockchain.children_by_hash.get(block.previous_hash, [])
+        )
+        previous_block_children = self.blockchain.children_by_hash.get(block.block_hash)
+        previous_fast_blocks_since_verify = self._cloud_native_fast_blocks_since_verify
+        child_state = parent_state.copy()
+        reward_transaction = block.transactions[0]
+        child_state.height = block.block_id
+        child_state.balances[reward_transaction.receiver] = (
+            child_state.balances.get(reward_transaction.receiver, Decimal("0.0"))
+            + reward_transaction.amount
+        )
+
+        try:
+            self.blockchain.blocks_by_hash[block.block_hash] = block
+            self.blockchain.block_states[block.block_hash] = child_state
+            self.blockchain.children_by_hash.setdefault(block.block_hash, [])
+            self.blockchain.children_by_hash.setdefault(block.previous_hash, []).append(
+                block.block_hash
+            )
+            if self.blockchain._should_update_main_tip(block.block_hash):
+                self.blockchain.main_tip_hash = block.block_hash
+
+            self._cloud_native_fast_blocks_since_verify += 1
+            verify_interval = _read_positive_int_env(
+                "UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS",
+                100,
+            )
+            if self._cloud_native_fast_blocks_since_verify >= verify_interval:
+                self._cloud_native_fast_blocks_since_verify = 0
+                if not self.blockchain.verify_chain():
+                    raise ValueError("full chain verification failed")
+        except Exception:
+            self.blockchain.blocks_by_hash.pop(block.block_hash, None)
+            self.blockchain.block_states.pop(block.block_hash, None)
+            if previous_block_children is None:
+                self.blockchain.children_by_hash.pop(block.block_hash, None)
+            else:
+                self.blockchain.children_by_hash[block.block_hash] = previous_block_children
+            self.blockchain.children_by_hash[block.previous_hash] = previous_parent_children
+            self.blockchain.main_tip_hash = previous_head
+            self._cloud_native_fast_blocks_since_verify = previous_fast_blocks_since_verify
+            raise
+
+    def _cloud_native_reward_only_validation_error(self, block: Block) -> str | None:
+        assert self.blockchain is not None
+
+        if len(block.transactions) != 1:
+            return "cloud native fast path requires exactly one reward transaction"
+
+        reward_transaction = block.transactions[0]
+        if not is_mining_reward_transaction(reward_transaction):
+            return "cloud native fast path block is missing a mining reward transaction"
+
+        structure_error = get_mining_reward_structure_error(block)
+        if structure_error is not None:
+            return structure_error
+
+        if (
+            reward_transaction.sender_public_key is not None
+            or reward_transaction.signature is not None
+        ):
+            return "mining reward transaction must not include signature data"
+
+        if reward_transaction.fee != Decimal("0.0"):
+            return "mining reward transaction fee must be 0.0"
+
+        if reward_transaction.amount != MINING_REWARD_AMOUNT:
+            return (
+                f"mining reward amount {reward_transaction.amount} does not match "
+                f"expected reward {MINING_REWARD_AMOUNT}"
+            )
+
+        reward_amount_error = get_mining_reward_amount_validation_error(
+            block,
+            Decimal("0.0"),
+        )
+        if reward_amount_error is not None:
+            return reward_amount_error
+
+        return get_block_verification_error(
+            block,
+            self.blockchain.get_difficulty_bits_for_height(block.block_id),
         )
 
     def mining_status(self) -> dict[str, Any]:

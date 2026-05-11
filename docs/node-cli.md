@@ -17,7 +17,8 @@ Start a headless cloud GPU miner:
 
 The cloud launcher enables `--mining-only --cloud-native-automine` by default. That mode is
 reserved for dedicated cloud miners: it mines reward-only blocks in a long-running burst
-worker, then validates each block through the normal consensus path before broadcast.
+worker using serialized block prefixes and compact periodic summaries, then validates each
+block's proof-of-work and reward consensus rules before broadcast.
 
 Example:
 

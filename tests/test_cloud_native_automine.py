@@ -1,4 +1,8 @@
 import asyncio
+import hashlib
+import os
+import queue
+import threading
 import unittest
 from datetime import datetime
 from decimal import Decimal
@@ -6,12 +10,17 @@ from pathlib import Path
 from unittest import mock
 
 from core.block import proof_of_work
+from core.block import PrefixProofOfWorkResult
+from core.block import ProofOfWorkCancelled
+from core.cloud_native_automine import CloudNativeAutomineConfig
 from core.cloud_native_automine import CloudNativeDifficultySchedule
 from core.cloud_native_automine import build_reward_only_block
+from core.cloud_native_automine import mine_reward_only_blocks
 from core.hashing import sha256_block_hash
 from core.serialization import serialize_block_prefix
 from core.serialization import serialize_transaction
 from core.transaction import Transaction
+from core.utils.constants import MINING_REWARD_AMOUNT
 from core.utils.constants import MINING_REWARD_SENDER
 from core.utils.mining import create_mining_reward_transaction
 from node.node import CloudNativeAutomineStaleTip
@@ -82,6 +91,66 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
                 cloud_native_automine=True,
             )
 
+    def test_cloud_native_node_disables_per_block_broadcast_logs(self) -> None:
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            mining_only=True,
+            cloud_native_automine=True,
+        )
+
+        self.assertFalse(node.p2p_server.log_block_broadcasts)
+
+    def test_reward_only_worker_mines_serialized_prefix_then_hydrates_block(self) -> None:
+        wallet = create_wallet(name="cloud-native-prefix")
+        output_queue: queue.Queue = queue.Queue()
+        stop_event = threading.Event()
+        seen_prefixes: list[str] = []
+
+        def fake_mine_prefix(prefix: str, difficulty_bits: int, mining_backend: str):
+            del difficulty_bits, mining_backend
+            seen_prefixes.append(prefix)
+            if len(seen_prefixes) > 1:
+                raise ProofOfWorkCancelled("stop")
+            return PrefixProofOfWorkResult(
+                nonce=7,
+                block_hash=hashlib.sha256(f"{prefix}7".encode("utf-8")).hexdigest(),
+                attempts=8,
+            )
+
+        with mock.patch(
+            "core.cloud_native_automine.mine_serialized_block_prefix_resident",
+            side_effect=fake_mine_prefix,
+        ):
+            mine_reward_only_blocks(
+                CloudNativeAutomineConfig(
+                    miner_address=wallet.address,
+                    description="cloud native prefix",
+                    start_tip_hash="a" * 64,
+                    start_height=10,
+                    difficulty_schedule=CloudNativeDifficultySchedule(
+                        difficulty_bits=0,
+                        genesis_difficulty_bits=0,
+                        difficulty_growth_factor=10,
+                        difficulty_growth_start_height=100,
+                        difficulty_growth_bits=1,
+                        difficulty_schedule_activation_height=0,
+                    ),
+                    mining_backend="gpu",
+                ),
+                output_queue,
+                stop_event,
+            )
+
+        block_event = output_queue.get_nowait()
+        self.assertEqual(block_event.kind, "block")
+        self.assertIsNotNone(block_event.block)
+        self.assertEqual(serialize_block_prefix(block_event.block), seen_prefixes[0])
+        self.assertEqual(block_event.block.nonce, 7)
+        self.assertEqual(block_event.block.nonces_checked, 8)
+        self.assertEqual(block_event.block.block_hash, sha256_block_hash(block_event.block))
+        self.assertEqual(output_queue.get_nowait().kind, "cancelled")
+
 
 class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_cloud_native_automine_accepts_only_consensus_valid_blocks(self) -> None:
@@ -92,6 +161,7 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
             wallet=wallet,
             mining_only=True,
             cloud_native_automine=True,
+            mined_block_persist_interval=0,
             difficulty_bits=0,
             genesis_difficulty_bits=0,
         )
@@ -123,6 +193,7 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
             wallet=wallet,
             mining_only=True,
             cloud_native_automine=True,
+            mined_block_persist_interval=0,
             difficulty_bits=0,
             genesis_difficulty_bits=0,
         )
@@ -137,6 +208,96 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(CloudNativeAutomineStaleTip):
             await node._accept_cloud_native_mined_block(stale_block)
+
+    async def test_cloud_native_fast_path_updates_reward_state_without_generic_add(self) -> None:
+        wallet = create_wallet(name="cloud-native-fast")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        block = build_reward_only_block(
+            block_id=1,
+            previous_hash=node.blockchain.main_tip_hash,
+            miner_address=wallet.address,
+            description="fast cloud native",
+        )
+        proof_of_work(block, difficulty_bits=0, mining_backend="python")
+
+        with mock.patch.object(node.blockchain, "add_block_result") as add_block_result:
+            await node._accept_cloud_native_mined_block(block)
+
+        add_block_result.assert_not_called()
+        self.assertEqual(node.blockchain.main_tip_hash, block.block_hash)
+        self.assertEqual(
+            node.blockchain.get_balance(wallet.address),
+            MINING_REWARD_AMOUNT,
+        )
+        self.assertTrue(node.blockchain.verify_chain())
+
+    async def test_cloud_native_fast_path_runs_periodic_full_verify_before_broadcast(self) -> None:
+        wallet = create_wallet(name="cloud-native-fast-verify")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        block = build_reward_only_block(
+            block_id=1,
+            previous_hash=node.blockchain.main_tip_hash,
+            miner_address=wallet.address,
+            description="fast cloud native verify",
+        )
+        proof_of_work(block, difficulty_bits=0, mining_backend="python")
+
+        with mock.patch.dict(os.environ, {"UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS": "1"}):
+            with mock.patch.object(node.blockchain, "verify_chain", return_value=True) as verify_chain:
+                await node._accept_cloud_native_mined_block(block)
+
+        verify_chain.assert_called_once()
+
+    async def test_cloud_native_fast_path_rolls_back_when_full_verify_fails(self) -> None:
+        wallet = create_wallet(name="cloud-native-fast-rollback")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        genesis_hash = node.blockchain.main_tip_hash
+        block = build_reward_only_block(
+            block_id=1,
+            previous_hash=genesis_hash,
+            miner_address=wallet.address,
+            description="fast cloud native rollback",
+        )
+        proof_of_work(block, difficulty_bits=0, mining_backend="python")
+
+        with mock.patch.dict(os.environ, {"UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS": "1"}):
+            with mock.patch.object(node.blockchain, "verify_chain", return_value=False):
+                with self.assertRaisesRegex(ValueError, "full chain verification failed"):
+                    await node._accept_cloud_native_mined_block(block)
+
+        self.assertNotIn(block.block_hash, node.blockchain.blocks_by_hash)
+        self.assertEqual(node.blockchain.main_tip_hash, genesis_hash)
+        self.assertEqual(node._cloud_native_fast_blocks_since_verify, 0)
 
     async def test_cloud_native_automine_mines_valid_chain_until_stopped(self) -> None:
         wallet = create_wallet(name="cloud-native-runner")
