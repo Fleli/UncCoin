@@ -37,6 +37,10 @@ ARGS=(
   --mined-block-persist-interval "$MINED_BLOCK_PERSIST_INTERVAL"
 )
 
+if [[ "${UNCCOIN_CLOUD_NATIVE_AUTOMINE:-1}" == "1" ]]; then
+  ARGS+=(--cloud-native-automine)
+fi
+
 if [[ "${UNCCOIN_PRIVATE_AUTOMINE:-0}" == "1" ]]; then
   ARGS+=(--private-automine)
 fi

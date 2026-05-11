@@ -59,6 +59,14 @@ async def _run_from_cli() -> None:
         help="Disable transaction and mempool relay for a dedicated miner.",
     )
     parser.add_argument(
+        "--cloud-native-automine",
+        action="store_true",
+        help=(
+            "Use the dedicated cloud reward-only burst autominer. "
+            "Requires --mining-only."
+        ),
+    )
+    parser.add_argument(
         "--mined-block-persist-interval",
         type=int,
         default=1,
@@ -89,6 +97,8 @@ async def _run_from_cli() -> None:
         parser.error("--api-port must be between 1 and 65535.")
     if args.mined_block_persist_interval < 0:
         parser.error("--mined-block-persist-interval must be non-negative.")
+    if args.cloud_native_automine and not args.mining_only:
+        parser.error("--cloud-native-automine requires --mining-only.")
     api_token = _normalize_api_token(
         args.api_token
         if args.api_token is not None
@@ -109,6 +119,7 @@ async def _run_from_cli() -> None:
         wallet=wallet,
         private_automine=args.private_automine,
         mining_only=args.mining_only,
+        cloud_native_automine=args.cloud_native_automine,
         mined_block_persist_interval=args.mined_block_persist_interval,
     )
     await node.start()

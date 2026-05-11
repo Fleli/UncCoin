@@ -9,13 +9,14 @@ from core.utils.constants import MINING_REWARD_AMOUNT, MINING_REWARD_SENDER
 def create_mining_reward_transaction(
     miner_address: str,
     total_fees: Decimal = Decimal("0.0"),
+    timestamp: datetime | None = None,
 ) -> Transaction:
     return Transaction(
         sender=MINING_REWARD_SENDER,
         receiver=miner_address,
         amount=MINING_REWARD_AMOUNT + total_fees,
         fee=Decimal("0.0"),
-        timestamp=datetime.now(),
+        timestamp=timestamp or datetime.now(),
     )
 
 

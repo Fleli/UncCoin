@@ -1,6 +1,8 @@
 import asyncio
 import functools
 import json
+import queue
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,12 +24,17 @@ from core.contracts import normalize_wallet_address
 from core.genesis import create_genesis_block
 from core.hashing import sha256_block_hash
 from core.hashing import sha256_transaction_hash
+from core.cloud_native_automine import CloudNativeAutomineConfig
+from core.cloud_native_automine import CloudNativeAutomineEvent
+from core.cloud_native_automine import CloudNativeDifficultySchedule
+from core.cloud_native_automine import mine_reward_only_blocks
 from core.mining_backend import build_mining_backend as build_pow_backend
 from core.mining_backend import mining_backend_capabilities
 from core.mining_backend import normalize_mining_backend
 from core.mining_backend import selected_mining_backend
 from core.native_pow import gpu_device_ids
 from core.native_pow import request_pow_cancel
+from core.native_pow import reset_pow_cancel
 from core.randomness import create_reveal_commitment_hash
 from core.transaction import Transaction
 from core.uvm_authorization import UvmAuthorizationScope
@@ -39,6 +46,10 @@ from node.storage import load_blockchain_state, save_blockchain_state, write_blo
 from wallet import Wallet
 
 
+class CloudNativeAutomineStaleTip(Exception):
+    pass
+
+
 @dataclass
 class Node:
     host: str
@@ -47,6 +58,7 @@ class Node:
     blockchain: Blockchain | None = None
     private_automine: bool = False
     mining_only: bool = False
+    cloud_native_automine: bool = False
     mined_block_persist_interval: int = 1
     difficulty_bits: int = DEFAULT_DIFFICULTY_BITS
     genesis_difficulty_bits: int = DEFAULT_GENESIS_DIFFICULTY_BITS
@@ -93,6 +105,8 @@ class Node:
         self._persist_blockchain_state = self.blockchain is None
         if self.mined_block_persist_interval < 0:
             raise ValueError("mined_block_persist_interval must be non-negative.")
+        if self.cloud_native_automine and not self.mining_only:
+            raise ValueError("cloud_native_automine requires mining_only.")
         if self.blockchain is None:
             self.blockchain = Blockchain(
                 difficulty_bits=self.difficulty_bits,
@@ -146,6 +160,11 @@ class Node:
         if self.mining_only:
             print(
                 "Mining-only mode enabled. Transaction relay is disabled.",
+                flush=True,
+            )
+        if self.cloud_native_automine:
+            print(
+                "Cloud native automine enabled. Mining reward-only blocks in a burst worker.",
                 flush=True,
             )
         if self.mined_block_persist_interval == 0:
@@ -689,7 +708,10 @@ class Node:
         self._mining_tip_hash()
         self.automine_description = description
         self._automine_stop_requested = False
-        self.automine_task = asyncio.create_task(self._automine_loop())
+        if self.cloud_native_automine:
+            self.automine_task = asyncio.create_task(self._cloud_native_automine_loop())
+        else:
+            self.automine_task = asyncio.create_task(self._automine_loop())
 
     async def stop_automine(self, wait: bool = False) -> None:
         if self.automine_task is None or self.automine_task.done():
@@ -697,8 +719,10 @@ class Node:
             return
 
         self._automine_stop_requested = True
+        request_pow_cancel()
         if wait:
             await self.automine_task
+            reset_pow_cancel()
 
     async def _automine_loop(self) -> None:
         assert self.wallet is not None
@@ -753,10 +777,178 @@ class Node:
             self._clear_mining_progress()
             print(f"\nAutomine stopped: {error}", flush=True)
         finally:
+            reset_pow_cancel()
             self._current_automine_tip_hash = None
             if self.automine_task is asyncio.current_task():
                 self.automine_task = None
             self._automine_stop_requested = False
+
+    async def _cloud_native_automine_loop(self) -> None:
+        assert self.wallet is not None
+        assert self.blockchain is not None
+
+        try:
+            while not self._automine_stop_requested:
+                tip_hash = self._mining_tip_hash()
+                if tip_hash is None:
+                    raise ValueError("Genesis block must be created before mining.")
+                if tip_hash not in self.blockchain.block_states:
+                    raise ValueError(f"Unknown mining tip {tip_hash[:12]}.")
+
+                start_height = self.blockchain.block_states[tip_hash].height
+                self._current_automine_tip_hash = tip_hash
+                self._start_mining_progress(
+                    mode="cloud-native-automine",
+                    description=self.automine_description,
+                    difficulty_bits=self.blockchain.get_difficulty_bits_for_height(
+                        start_height + 1,
+                    ),
+                    tip_hash=tip_hash,
+                )
+                print(
+                    f"Cloud native automining... ({self._mining_status_text()})",
+                    flush=True,
+                )
+
+                restart_requested = await self._run_cloud_native_automine_worker(
+                    tip_hash,
+                    start_height,
+                )
+                if self._automine_stop_requested:
+                    break
+                if restart_requested:
+                    print(
+                        "\nRestarting cloud native automine on newer preferred tip.",
+                        flush=True,
+                    )
+                    continue
+                break
+        except Exception as error:
+            print(f"\nCloud native automine stopped: {error}", flush=True)
+        finally:
+            self._clear_mining_progress()
+            reset_pow_cancel()
+            self._current_automine_tip_hash = None
+            if self.automine_task is asyncio.current_task():
+                self.automine_task = None
+            self._automine_stop_requested = False
+
+    async def _run_cloud_native_automine_worker(
+        self,
+        tip_hash: str,
+        start_height: int,
+    ) -> bool:
+        assert self.wallet is not None
+        assert self.blockchain is not None
+
+        result_queue: queue.Queue[CloudNativeAutomineEvent] = queue.Queue(maxsize=2)
+        stop_event = threading.Event()
+        worker = threading.Thread(
+            target=mine_reward_only_blocks,
+            args=(
+                CloudNativeAutomineConfig(
+                    miner_address=self.wallet.address,
+                    description=self.automine_description,
+                    start_tip_hash=tip_hash,
+                    start_height=start_height,
+                    difficulty_schedule=self._cloud_native_difficulty_schedule(),
+                    mining_backend=self.mining_backend,
+                ),
+                result_queue,
+                stop_event,
+            ),
+            daemon=True,
+        )
+        worker.start()
+        restart_requested = False
+
+        try:
+            while worker.is_alive() or not result_queue.empty():
+                if self._automine_stop_requested:
+                    stop_event.set()
+                    request_pow_cancel()
+
+                try:
+                    event = await asyncio.to_thread(result_queue.get, True, 0.25)
+                except queue.Empty:
+                    continue
+
+                if event.kind == "block":
+                    assert event.block is not None
+                    try:
+                        await self._accept_cloud_native_mined_block(event.block)
+                    except CloudNativeAutomineStaleTip:
+                        restart_requested = True
+                        stop_event.set()
+                        request_pow_cancel()
+                        break
+                elif event.kind == "cancelled":
+                    restart_requested = not self._automine_stop_requested
+                    break
+                elif event.kind == "error":
+                    if event.error is not None:
+                        raise event.error
+                    raise RuntimeError("Cloud native automine worker failed.")
+        finally:
+            stop_event.set()
+            if worker.is_alive():
+                request_pow_cancel()
+                await asyncio.to_thread(worker.join, 5.0)
+            reset_pow_cancel()
+
+        return restart_requested
+
+    def _cloud_native_difficulty_schedule(self) -> CloudNativeDifficultySchedule:
+        assert self.blockchain is not None
+        return CloudNativeDifficultySchedule(
+            difficulty_bits=self.blockchain.difficulty_bits,
+            genesis_difficulty_bits=self.blockchain.genesis_difficulty_bits,
+            difficulty_growth_factor=self.blockchain.difficulty_growth_factor,
+            difficulty_growth_start_height=self.blockchain.difficulty_growth_start_height,
+            difficulty_growth_bits=self.blockchain.difficulty_growth_bits,
+            difficulty_schedule_activation_height=(
+                self.blockchain.difficulty_schedule_activation_height
+            ),
+        )
+
+    async def _accept_cloud_native_mined_block(self, block: Block) -> None:
+        assert self.blockchain is not None
+
+        expected_tip_hash = self._mining_tip_hash()
+        if block.previous_hash != expected_tip_hash:
+            raise CloudNativeAutomineStaleTip(
+                f"mined block extends {block.previous_hash[:12]}, "
+                f"current preferred tip is {expected_tip_hash[:12] if expected_tip_hash else 'unset'}",
+            )
+
+        previous_state_tip_hash = self._state_tip_hash()
+        result = self.blockchain.add_block_result(
+            block,
+            reconcile_pending_transactions=not self.private_automine,
+        )
+        if result.status != "accepted":
+            if result.status in {"duplicate", "missing_parent"}:
+                raise CloudNativeAutomineStaleTip(result.reason or result.status)
+            raise ValueError(
+                "native mined block failed consensus validation: "
+                f"{result.reason or result.status}"
+            )
+
+        self._record_mined_block_progress(block)
+        self._record_local_mining_tip(block.block_hash)
+        self._current_automine_tip_hash = block.block_hash
+        self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+        self._save_mined_block_progress()
+        await self.broadcast_block(block)
+        self._maybe_schedule_autosend()
+        self.mining_tip_hash = self._mining_tip_hash()
+        self.mining_difficulty_bits = self.blockchain.get_next_block_difficulty_bits(
+            self.mining_tip_hash,
+        )
+        print(
+            f"\nCloud-native mined block {block.block_hash[:12]} at height {block.block_id}",
+            flush=True,
+        )
 
     def mining_status(self) -> dict[str, Any]:
         next_difficulty_bits = None

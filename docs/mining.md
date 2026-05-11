@@ -85,9 +85,18 @@ For a headless cloud GPU miner, use the dedicated launcher:
 
 The cloud launcher defaults to GPU-only mining, disables transaction/mempool relay, reduces
 nonce progress output, requests fast sync, starts automine through the local API, and defers
-locally mined block persistence until shutdown. Peers still receive locally mined blocks. If
-you want periodic mined-block saves, set `UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive
-block interval.
+locally mined block persistence until shutdown. It also enables the cloud-native burst
+autominer, a mining-only reward-block path where a long-running worker keeps preparing and
+mining the next empty reward block while Python validates and broadcasts completed blocks.
+Consensus is still enforced by the normal Python block validator before each block is
+broadcast. Peers still receive locally mined blocks. If you want periodic mined-block saves,
+set `UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive block interval.
+
+To fall back to the ordinary cloud automine loop:
+
+```bash
+UNCCOIN_CLOUD_NATIVE_AUTOMINE=0 ./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
+```
 
 ## Linux/CUDA and Runpod
 

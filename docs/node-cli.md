@@ -15,6 +15,10 @@ Start a headless cloud GPU miner:
 ./scripts/cloud_automine.sh <wallet-name> <p2p-port> [peer-host:peer-port ...]
 ```
 
+The cloud launcher enables `--mining-only --cloud-native-automine` by default. That mode is
+reserved for dedicated cloud miners: it mines reward-only blocks in a long-running burst
+worker, then validates each block through the normal consensus path before broadcast.
+
 Example:
 
 ```bash
