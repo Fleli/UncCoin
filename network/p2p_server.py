@@ -61,6 +61,7 @@ class P2PServer:
     on_notification: Callable[[str], None] | None = None
     transaction_relay: bool = True
     log_block_broadcasts: bool = True
+    skip_empty_block_broadcasts: bool = False
     peers: set[PeerAddress] = field(default_factory=set)
     seen_transaction_ids: set[str] = field(default_factory=set)
     seen_block_hashes: set[str] = field(default_factory=set)
@@ -207,6 +208,9 @@ class P2PServer:
         return len(transactions)
 
     async def broadcast_block(self, block: Block) -> None:
+        if self.skip_empty_block_broadcasts and not self.active_connections:
+            return
+
         block_hash = block.block_hash
         if block_hash in self.seen_block_hashes:
             print(f"Block {block_hash[:12]} already seen. Skipping broadcast.")

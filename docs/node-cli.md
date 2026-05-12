@@ -18,7 +18,10 @@ Start a headless cloud GPU miner:
 The cloud launcher enables `--mining-only --cloud-native-automine` by default. That mode is
 reserved for dedicated cloud miners: it mines reward-only blocks in a long-running burst
 worker using serialized block prefixes and compact periodic summaries, then validates each
-block's proof-of-work and reward consensus rules before broadcast.
+block's proof-of-work and reward consensus rules before broadcast. For maximum offline
+throughput, the launcher skips empty broadcast serialization and disables periodic
+full-chain verification unless `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` is set. It also
+batches native worker results with `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`, default `10`.
 
 Example:
 

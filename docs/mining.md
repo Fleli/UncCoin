@@ -91,8 +91,13 @@ reward-block prefixes and mines them through a resident backend call. Python hyd
 mined prefix into a normal block, validates the same proof-of-work and reward rules used by
 consensus, and then broadcasts it. For self-mined reward-only blocks with an empty local
 mempool, cloud mode uses a fast reward-state update and periodically reruns full chain
-verification as a guard.
-Per-block broadcast logs are replaced by compact periodic summaries. Peers still receive
+verification as a guard. The dedicated cloud launcher disables that periodic full-chain
+guard by default for maximum offline throughput; set
+`UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` to a positive block interval to re-enable it.
+When the periodic guard is disabled, the node still runs a full verification before
+shutdown and before opening a peer connection if it has accepted unverified burst blocks.
+Per-block broadcast logs are replaced by compact periodic summaries, and offline cloud
+miners skip block broadcast serialization until a peer is connected. Peers still receive
 locally mined blocks. If you want periodic mined-block saves, set
 `UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL` to a positive block interval.
 
@@ -102,7 +107,11 @@ Cloud summary output can be tuned with:
 - `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: print after this many seconds even if the block
   interval has not been reached, default `15`.
 - `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS`: run full chain verification every N fast-path
-  reward blocks before broadcast, default `100`.
+  reward blocks before broadcast, default `100` for direct node launches and `0` for
+  `scripts/cloud_automine.sh`. Set `0` to disable the periodic guard.
+- `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`: deliver mined blocks from the native worker to
+  Python in batches, default `1` for direct node launches and `10` for
+  `scripts/cloud_automine.sh`.
 
 To fall back to the ordinary cloud automine loop:
 

@@ -22,6 +22,7 @@ from core.block import ProofOfWorkCancelled
 from core.block import get_block_verification_error
 from core.block import proof_of_work
 from core.blockchain import Blockchain
+from core.blockchain import ChainState
 from core.contracts import NFT_TRANSFER_GAS_LIMIT
 from core.contracts import build_nft_contract
 from core.contracts import compute_contract_code_hash
@@ -67,6 +68,17 @@ def _read_positive_int_env(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _read_nonnegative_int_env(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def _read_positive_float_env(name: str, default: float) -> float:
@@ -161,6 +173,7 @@ class Node:
             on_notification=self._print_network_notification,
             transaction_relay=not self.mining_only,
             log_block_broadcasts=not self.cloud_native_automine,
+            skip_empty_block_broadcasts=self.cloud_native_automine,
         )
         self.miner_warmup_status = self._default_miner_warmup_status()
 
@@ -217,11 +230,15 @@ class Node:
 
     async def stop(self) -> None:
         await self.stop_automine(wait=True)
-        self._save_persisted_blockchain("shutdown")
-        self._save_persisted_aliases()
-        await self.p2p_server.stop()
+        try:
+            self._verify_cloud_native_fast_chain_for_exposure("shutdown")
+            self._save_persisted_blockchain("shutdown")
+        finally:
+            self._save_persisted_aliases()
+            await self.p2p_server.stop()
 
     async def connect_to_peer(self, host: str, port: int) -> None:
+        self._verify_cloud_native_fast_chain_for_exposure("peer connect")
         try:
             await self.p2p_server.connect_to_peer(host, port)
         except TimeoutError as error:
@@ -885,6 +902,10 @@ class Node:
                     start_height=start_height,
                     difficulty_schedule=self._cloud_native_difficulty_schedule(),
                     mining_backend=self.mining_backend,
+                    batch_blocks=_read_positive_int_env(
+                        "UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS",
+                        1,
+                    ),
                 ),
                 result_queue,
                 stop_event,
@@ -909,18 +930,22 @@ class Node:
                 except queue.Empty:
                     continue
 
-                if event.kind == "block":
-                    assert event.block is not None
+                if event.kind in {"block", "blocks"}:
+                    blocks = event.blocks
+                    if event.kind == "block":
+                        assert event.block is not None
+                        blocks = (event.block,)
                     try:
-                        await self._accept_cloud_native_mined_block(event.block)
-                        accepted_blocks += 1
-                        last_summary_at = self._maybe_print_cloud_native_summary(
-                            block=event.block,
-                            accepted_blocks=accepted_blocks,
-                            stale_restarts=stale_restarts,
-                            started_at=started_at,
-                            last_summary_at=last_summary_at,
-                        )
+                        for block in blocks:
+                            await self._accept_cloud_native_mined_block(block)
+                            accepted_blocks += 1
+                            last_summary_at = self._maybe_print_cloud_native_summary(
+                                block=block,
+                                accepted_blocks=accepted_blocks,
+                                stale_restarts=stale_restarts,
+                                started_at=started_at,
+                                last_summary_at=last_summary_at,
+                            )
                     except CloudNativeAutomineStaleTip:
                         stale_restarts += 1
                         restart_requested = True
@@ -942,6 +967,26 @@ class Node:
             reset_pow_cancel()
 
         return restart_requested
+
+    def _verify_cloud_native_fast_chain_for_exposure(self, reason: str) -> None:
+        if (
+            not self.cloud_native_automine
+            or self.blockchain is None
+            or self._cloud_native_fast_blocks_since_verify == 0
+        ):
+            return
+
+        print(
+            "Verifying cloud-native fast chain before "
+            f"{reason} ({self._cloud_native_fast_blocks_since_verify} burst block(s))...",
+            flush=True,
+        )
+        if not self.blockchain.verify_chain():
+            raise ValueError(
+                "cloud-native fast chain failed full verification before "
+                f"{reason}"
+            )
+        self._cloud_native_fast_blocks_since_verify = 0
 
     def _maybe_print_cloud_native_summary(
         self,
@@ -1070,12 +1115,11 @@ class Node:
         )
         previous_block_children = self.blockchain.children_by_hash.get(block.block_hash)
         previous_fast_blocks_since_verify = self._cloud_native_fast_blocks_since_verify
-        child_state = parent_state.copy()
         reward_transaction = block.transactions[0]
-        child_state.height = block.block_id
-        child_state.balances[reward_transaction.receiver] = (
-            child_state.balances.get(reward_transaction.receiver, Decimal("0.0"))
-            + reward_transaction.amount
+        child_state = self._create_cloud_native_reward_child_state(
+            parent_state,
+            reward_transaction,
+            block.block_id,
         )
 
         try:
@@ -1089,11 +1133,14 @@ class Node:
                 self.blockchain.main_tip_hash = block.block_hash
 
             self._cloud_native_fast_blocks_since_verify += 1
-            verify_interval = _read_positive_int_env(
+            verify_interval = _read_nonnegative_int_env(
                 "UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS",
                 100,
             )
-            if self._cloud_native_fast_blocks_since_verify >= verify_interval:
+            if (
+                verify_interval > 0
+                and self._cloud_native_fast_blocks_since_verify >= verify_interval
+            ):
                 self._cloud_native_fast_blocks_since_verify = 0
                 if not self.blockchain.verify_chain():
                     raise ValueError("full chain verification failed")
@@ -1108,6 +1155,29 @@ class Node:
             self.blockchain.main_tip_hash = previous_head
             self._cloud_native_fast_blocks_since_verify = previous_fast_blocks_since_verify
             raise
+
+    def _create_cloud_native_reward_child_state(
+        self,
+        parent_state: ChainState,
+        reward_transaction: Transaction,
+        block_height: int,
+    ) -> ChainState:
+        balances = parent_state.balances.copy()
+        balances[reward_transaction.receiver] = (
+            balances.get(reward_transaction.receiver, Decimal("0.0"))
+            + reward_transaction.amount
+        )
+        return ChainState(
+            balances=balances,
+            nonces=parent_state.nonces,
+            commitments=parent_state.commitments,
+            reveals=parent_state.reveals,
+            authorizations=parent_state.authorizations,
+            contracts=parent_state.contracts,
+            contract_storage=parent_state.contract_storage,
+            uvm_receipts=parent_state.uvm_receipts,
+            height=block_height,
+        )
 
     def _cloud_native_reward_only_validation_error(self, block: Block) -> str | None:
         assert self.blockchain is not None

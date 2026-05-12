@@ -14,7 +14,7 @@ from core.transaction import Transaction
 from core.utils.mining import create_mining_reward_transaction
 
 
-CloudNativeAutomineEventKind = Literal["block", "cancelled", "error"]
+CloudNativeAutomineEventKind = Literal["block", "blocks", "cancelled", "error"]
 
 
 @dataclass(frozen=True)
@@ -68,12 +68,14 @@ class CloudNativeAutomineConfig:
     start_height: int
     difficulty_schedule: CloudNativeDifficultySchedule
     mining_backend: str
+    batch_blocks: int = 1
 
 
 @dataclass(frozen=True)
 class CloudNativeAutomineEvent:
     kind: CloudNativeAutomineEventKind
     block: Block | None = None
+    blocks: tuple[Block, ...] = ()
     error: BaseException | None = None
 
 
@@ -139,6 +141,8 @@ def mine_reward_only_blocks(
 ) -> None:
     previous_hash = config.start_tip_hash
     block_height = config.start_height + 1
+    batch_blocks = max(1, int(config.batch_blocks))
+    mined_batch: list[Block] = []
 
     try:
         while not stop_event.is_set():
@@ -164,16 +168,17 @@ def mine_reward_only_blocks(
 
             if stop_event.is_set():
                 return
-            if not _put_event(
-                output_queue,
-                CloudNativeAutomineEvent(kind="block", block=block),
-                stop_event,
-            ):
-                return
+            mined_batch.append(block)
 
             previous_hash = block.block_hash
             block_height += 1
+            if len(mined_batch) >= batch_blocks:
+                if not _put_block_batch(output_queue, mined_batch, stop_event):
+                    return
+                mined_batch = []
     except ProofOfWorkCancelled:
+        if mined_batch:
+            _put_block_batch(output_queue, mined_batch, stop_event)
         if not stop_event.is_set():
             _put_event(
                 output_queue,
@@ -181,11 +186,27 @@ def mine_reward_only_blocks(
                 stop_event,
             )
     except BaseException as error:
+        if mined_batch:
+            _put_block_batch(output_queue, mined_batch, stop_event)
         _put_event(
             output_queue,
             CloudNativeAutomineEvent(kind="error", error=error),
             stop_event,
         )
+
+
+def _put_block_batch(
+    output_queue: "queue.Queue[CloudNativeAutomineEvent]",
+    blocks: list[Block],
+    stop_event: threading.Event,
+) -> bool:
+    if not blocks:
+        return True
+    if len(blocks) == 1:
+        event = CloudNativeAutomineEvent(kind="block", block=blocks[0])
+    else:
+        event = CloudNativeAutomineEvent(kind="blocks", blocks=tuple(blocks))
+    return _put_event(output_queue, event, stop_event)
 
 
 def _put_event(
