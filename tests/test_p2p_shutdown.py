@@ -158,6 +158,25 @@ class P2PServerShutdownTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(peer, server.active_connections)
         self.assertEqual(notifications, ["Disconnected from peer 0.0.0.0:4001"])
 
+    async def test_stale_read_task_does_not_remove_replacement_connection(self) -> None:
+        notifications: list[str] = []
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9999,
+            on_notification=notifications.append,
+        )
+        peer = PeerAddress("100.119.242.7", 6000)
+        stale_writer = _WritableWriter()
+        replacement_writer = _WritableWriter()
+        server.active_connections[peer] = replacement_writer
+
+        await server._read_messages(_EmptyReader(), stale_writer, peer)
+
+        self.assertTrue(stale_writer.closed)
+        self.assertFalse(replacement_writer.closed)
+        self.assertIs(server.active_connections[peer], replacement_writer)
+        self.assertEqual(notifications, [])
+
     async def test_oversized_message_disconnects_without_traceback(self) -> None:
         notifications: list[str] = []
         server = P2PServer(

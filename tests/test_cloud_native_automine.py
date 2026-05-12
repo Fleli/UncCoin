@@ -14,6 +14,7 @@ from core.block import PrefixProofOfWorkResult
 from core.block import ProofOfWorkCancelled
 from core.cloud_native_automine import CloudNativeAutomineConfig
 from core.cloud_native_automine import CloudNativeDifficultySchedule
+from core.cloud_native_automine import RewardOnlyBlockTemplate
 from core.cloud_native_automine import build_reward_only_block
 from core.cloud_native_automine import mine_reward_only_blocks
 from core.hashing import sha256_block_hash
@@ -25,6 +26,7 @@ from core.utils.constants import MINING_REWARD_SENDER
 from core.utils.mining import create_mining_reward_transaction
 from node.node import CloudNativeAutomineStaleTip
 from node.node import Node
+from network.p2p_server import PeerAddress
 from wallet import create_wallet
 
 
@@ -53,6 +55,31 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
             ),
         )
         self.assertEqual(block.block_hash, sha256_block_hash(block))
+
+    def test_reward_only_template_matches_consensus_serialization(self) -> None:
+        wallet = create_wallet(name="cloud-native-template")
+        timestamp = datetime(2026, 5, 11, 12, 30, 0)
+        template = RewardOnlyBlockTemplate(
+            miner_address=wallet.address,
+            description="cloud native template",
+        )
+        reward_transaction = template.reward_transaction(timestamp)
+
+        self.assertEqual(
+            template.serialized_reward_transaction(timestamp),
+            serialize_transaction(reward_transaction),
+        )
+        self.assertEqual(
+            template.block_prefix(
+                block_id=18,
+                previous_hash="b" * 64,
+                timestamp=timestamp,
+            ),
+            (
+                f"18|{serialize_transaction(reward_transaction)}|"
+                f"cloud native template|{'b' * 64}|"
+            ),
+        )
 
     def test_cloud_native_difficulty_schedule_matches_blockchain(self) -> None:
         node = Node(
@@ -414,6 +441,75 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
 
         verify_chain.assert_not_called()
         self.assertEqual(node._cloud_native_fast_blocks_since_verify, 1)
+
+    async def test_cloud_native_offline_trusts_worker_hash_when_enabled(self) -> None:
+        wallet = create_wallet(name="cloud-native-trust-worker-hash")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        block = build_reward_only_block(
+            block_id=1,
+            previous_hash=node.blockchain.main_tip_hash,
+            miner_address=wallet.address,
+            description="fast cloud native trust worker hash",
+        )
+        proof_of_work(block, difficulty_bits=0, mining_backend="python")
+
+        with mock.patch.dict(
+            os.environ,
+            {"UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH": "1"},
+        ):
+            with mock.patch(
+                "node.node.get_block_verification_error",
+                side_effect=AssertionError("duplicate hash check should be skipped"),
+            ):
+                await node._accept_cloud_native_mined_block(block)
+
+        self.assertEqual(node.blockchain.main_tip_hash, block.block_hash)
+        self.assertTrue(node.blockchain.verify_chain())
+
+    async def test_cloud_native_rechecks_worker_hash_before_broadcast(self) -> None:
+        wallet = create_wallet(name="cloud-native-trust-worker-hash-peer")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        block = build_reward_only_block(
+            block_id=1,
+            previous_hash=node.blockchain.main_tip_hash,
+            miner_address=wallet.address,
+            description="fast cloud native trust worker hash peer",
+        )
+        proof_of_work(block, difficulty_bits=0, mining_backend="python")
+        node.p2p_server.active_connections[PeerAddress("127.0.0.1", 9000)] = mock.Mock()
+
+        with mock.patch.dict(
+            os.environ,
+            {"UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH": "1"},
+        ):
+            with mock.patch(
+                "node.node.get_block_verification_error",
+                return_value="forced hash mismatch",
+            ) as verify_block_hash:
+                with self.assertRaisesRegex(ValueError, "forced hash mismatch"):
+                    await node._accept_cloud_native_mined_block(block)
+
+        verify_block_hash.assert_called_once()
 
     async def test_cloud_native_connect_verifies_pending_fast_blocks(self) -> None:
         node = Node(

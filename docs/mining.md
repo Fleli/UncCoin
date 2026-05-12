@@ -94,6 +94,9 @@ mempool, cloud mode uses a fast reward-state update and periodically reruns full
 verification as a guard. The dedicated cloud launcher disables that periodic full-chain
 guard by default for maximum offline throughput; set
 `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` to a positive block interval to re-enable it.
+It also trusts the resident worker's returned block hash while offline, avoiding a duplicate
+Python hash check for each accepted burst block; as soon as a peer is connected, blocks are
+fully checked before broadcast.
 When the periodic guard is disabled, the node still runs a full verification before
 shutdown and before opening a peer connection if it has accepted unverified burst blocks;
 on shutdown, it saves a pre-verification snapshot first so a long full-chain check cannot
@@ -105,15 +108,19 @@ locally mined blocks. If you want periodic mined-block saves, set
 
 Cloud summary output can be tuned with:
 
-- `UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS`: print every N accepted burst blocks, default `10`.
+- `UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS`: print every N accepted burst blocks, default `10`
+  for direct node launches and `100` for `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: print after this many seconds even if the block
   interval has not been reached, default `15`.
 - `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS`: run full chain verification every N fast-path
   reward blocks before broadcast, default `100` for direct node launches and `0` for
   `scripts/cloud_automine.sh`. Set `0` to disable the periodic guard.
 - `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`: deliver mined blocks from the native worker to
-  Python in batches, default `1` for direct node launches and `25` for
+  Python in batches, default `1` for direct node launches and `50` for
   `scripts/cloud_automine.sh`.
+- `UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH`: skip the duplicate Python block-hash
+  recompute while the cloud-native miner is offline, default `0` for direct node
+  launches and `1` for `scripts/cloud_automine.sh`.
 - `UNCCOIN_GPU_CHUNK_MULTIPLIER`: tune GPU dispatch size, default `128` for
   `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_SHUTDOWN_WAIT_SECONDS`: graceful shutdown wait after SIGINT before the

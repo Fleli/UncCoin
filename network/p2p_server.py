@@ -473,10 +473,13 @@ class P2PServer:
                 f"({error})"
             )
         finally:
-            self.active_connections.pop(peer, None)
-            self._complete_fast_sync(peer, remove=True)
+            was_active_connection = self.active_connections.get(peer) is writer
+            if was_active_connection:
+                self.active_connections.pop(peer, None)
+                self._complete_fast_sync(peer, remove=True)
             await self._close_writer(writer, peer)
-            self._notify(f"Disconnected from peer {peer.host}:{peer.port}")
+            if was_active_connection:
+                self._notify(f"Disconnected from peer {peer.host}:{peer.port}")
 
     async def _handle_message(self, message: dict, peer: PeerAddress) -> PeerAddress:
         message_type = message.get("type", "unknown")
@@ -494,11 +497,24 @@ class P2PServer:
             existing_fast_sync = self.fast_sync_states.pop(peer, None)
             self.peers.discard(peer)
             self.peers.add(advertised_peer)
-            writer = self.active_connections.pop(peer, None)
+            writer = self.active_connections.get(peer)
+            duplicate_writer = self.active_connections.get(advertised_peer)
+            if peer != advertised_peer:
+                self.active_connections.pop(peer, None)
             if writer is not None:
-                self.active_connections[advertised_peer] = writer
+                if duplicate_writer is not None and duplicate_writer is not writer:
+                    await self._close_writer(writer, advertised_peer)
+                    self._notify(
+                        "Dropped duplicate peer connection from "
+                        f"{advertised_host}:{advertised_port}"
+                    )
+                else:
+                    self.active_connections[advertised_peer] = writer
             self._move_peer_stats(peer, advertised_peer)
-            if existing_fast_sync is not None:
+            if (
+                existing_fast_sync is not None
+                and self.active_connections.get(advertised_peer) is writer
+            ):
                 self.fast_sync_states[advertised_peer] = existing_fast_sync
             self._notify(
                 f"Handshake received from {advertised_host}:{advertised_port} "

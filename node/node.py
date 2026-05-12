@@ -20,6 +20,7 @@ from config import DEFAULT_GENESIS_DIFFICULTY_BITS
 from core.block import Block
 from core.block import ProofOfWorkCancelled
 from core.block import get_block_verification_error
+from core.block import has_leading_zero_bits
 from core.block import proof_of_work
 from core.blockchain import Blockchain
 from core.blockchain import ChainState
@@ -90,6 +91,18 @@ def _read_positive_float_env(name: str, default: float) -> float:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _read_bool_env(name: str, default: bool = False) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 @dataclass
@@ -1165,7 +1178,10 @@ class Node:
                 f"{parent_state.height}"
             )
 
-        validation_error = self._cloud_native_reward_only_validation_error(block)
+        validation_error = self._cloud_native_reward_only_validation_error(
+            block,
+            verify_block_hash=not self._can_defer_cloud_native_worker_hash_check(),
+        )
         if validation_error is not None:
             raise ValueError(
                 "native mined block failed fast consensus validation: "
@@ -1242,7 +1258,18 @@ class Node:
             height=block_height,
         )
 
-    def _cloud_native_reward_only_validation_error(self, block: Block) -> str | None:
+    def _can_defer_cloud_native_worker_hash_check(self) -> bool:
+        return (
+            _read_bool_env("UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH", False)
+            and not self.p2p_server.active_connections
+        )
+
+    def _cloud_native_reward_only_validation_error(
+        self,
+        block: Block,
+        *,
+        verify_block_hash: bool = True,
+    ) -> str | None:
         assert self.blockchain is not None
 
         if len(block.transactions) != 1:
@@ -1278,10 +1305,21 @@ class Node:
         if reward_amount_error is not None:
             return reward_amount_error
 
-        return get_block_verification_error(
-            block,
-            self.blockchain.get_difficulty_bits_for_height(block.block_id),
-        )
+        difficulty_bits = self.blockchain.get_difficulty_bits_for_height(block.block_id)
+        if verify_block_hash:
+            return get_block_verification_error(block, difficulty_bits)
+
+        try:
+            satisfies_difficulty = has_leading_zero_bits(block.block_hash, difficulty_bits)
+        except ValueError:
+            return "block hash is not valid hexadecimal"
+
+        if not satisfies_difficulty:
+            return (
+                f"block hash does not satisfy proof-of-work difficulty "
+                f"{difficulty_bits}"
+            )
+        return None
 
     def mining_status(self) -> dict[str, Any]:
         next_difficulty_bits = None

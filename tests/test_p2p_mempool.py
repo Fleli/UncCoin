@@ -21,6 +21,18 @@ class RecordingWriter:
         return
 
 
+class ClosableRecordingWriter(RecordingWriter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    async def wait_closed(self) -> None:
+        return
+
+
 def create_pending_transaction() -> Transaction:
     return Transaction.commit(
         sender="alice",
@@ -135,6 +147,42 @@ class P2PServerMempoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(socket_peer, server.active_connections)
         self.assertIn(reachable_peer, server.active_connections)
         self.assertIn(reachable_peer, server.peers)
+
+    async def test_handshake_drops_duplicate_canonical_connection(self) -> None:
+        notifications: list[str] = []
+        socket_peer = PeerAddress(host="100.119.242.7", port=51000)
+        advertised_peer = PeerAddress(host="100.119.242.7", port=6000)
+        existing_writer = ClosableRecordingWriter()
+        duplicate_writer = ClosableRecordingWriter()
+        server = P2PServer(
+            host="0.0.0.0",
+            port=4040,
+            on_chain_summary=lambda: ("tip", 4),
+            on_notification=notifications.append,
+        )
+        server.active_connections[advertised_peer] = existing_writer
+        server.active_connections[socket_peer] = duplicate_writer
+
+        returned_peer = await server._handle_message(
+            {
+                "type": "handshake",
+                "host": "0.0.0.0",
+                "port": advertised_peer.port,
+                "tip_hash": "tip",
+                "height": 4,
+            },
+            socket_peer,
+        )
+
+        self.assertEqual(returned_peer, advertised_peer)
+        self.assertIs(server.active_connections[advertised_peer], existing_writer)
+        self.assertNotIn(socket_peer, server.active_connections)
+        self.assertFalse(existing_writer.closed)
+        self.assertTrue(duplicate_writer.closed)
+        self.assertIn(
+            "Dropped duplicate peer connection from 100.119.242.7:6000",
+            notifications,
+        )
 
     async def test_peer_list_skips_unreachable_remote_addresses(self) -> None:
         source_peer = PeerAddress(host="100.71.105.5", port=9101)

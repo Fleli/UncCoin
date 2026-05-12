@@ -122,8 +122,13 @@ def _read_int_env(name: str, default: int, minimum: int = 0) -> int:
 
 
 def has_leading_zero_bits(block_hash: str, difficulty_bits: int) -> bool:
-    binary_hash = bin(int(block_hash, 16))[2:].zfill(len(block_hash) * 4)
-    return binary_hash.startswith("0" * difficulty_bits)
+    hash_value = int(block_hash, 16)
+    if difficulty_bits <= 0:
+        return True
+    total_bits = len(block_hash) * 4
+    if difficulty_bits > total_bits:
+        return False
+    return hash_value >> (total_bits - difficulty_bits) == 0
 
 
 def hash_to_binary(block_hash: str) -> str:
