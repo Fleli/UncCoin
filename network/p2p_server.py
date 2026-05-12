@@ -30,6 +30,7 @@ class FastSyncState:
     batch_chunk_count: int
     pending_chunks: dict[int, dict] = field(default_factory=dict)
     active: bool = True
+    accepted_blocks: int = 0
 
 
 @dataclass
@@ -158,6 +159,15 @@ class P2PServer:
 
     async def broadcast(self, message: dict) -> None:
         await self._broadcast_to_peers(message)
+
+    async def advertise_chain_tip(
+        self,
+        exclude_peer: PeerAddress | None = None,
+    ) -> None:
+        await self._broadcast_to_peers(
+            self._create_handshake_message(),
+            exclude_peer=exclude_peer,
+        )
 
     async def broadcast_transaction(self, transaction: Transaction) -> tuple[bool, str | None]:
         if not self.transaction_relay:
@@ -677,6 +687,8 @@ class P2PServer:
                     f"starting at height {max(next_start_height, 0)}"
                 )
             else:
+                if accepted_blocks > 0:
+                    await self.advertise_chain_tip(exclude_peer=peer)
                 await self._sync_mempool_with_peer(peer)
             return peer
 
@@ -967,6 +979,7 @@ class P2PServer:
             accepted_blocks = 0 if sync_result is None else sync_result.get("accepted", 0)
             orphaned_blocks = 0 if sync_result is None else sync_result.get("orphans", 0)
             rejected_blocks = 0 if sync_result is None else sync_result.get("rejected", 0)
+            fast_sync_state.accepted_blocks += accepted_blocks
 
             if start_height > 0 and accepted_blocks == 0 and orphaned_blocks > 0:
                 fast_sync_state.pending_chunks.clear()
@@ -992,7 +1005,10 @@ class P2PServer:
             fast_sync_state.expected_start_height = max(next_start_height, 0)
 
             if done:
+                should_advertise_tip = fast_sync_state.accepted_blocks > 0
                 self._complete_fast_sync(peer)
+                if should_advertise_tip:
+                    await self.advertise_chain_tip(exclude_peer=peer)
                 await self._sync_mempool_with_peer(peer)
                 return
 
@@ -1067,6 +1083,7 @@ class P2PServer:
             fast_sync_state.batch_end_start_height = normalized_start_height
             fast_sync_state.batch_chunk_count = 1
             fast_sync_state.active = True
+            fast_sync_state.accepted_blocks = 0
             if clear_buffer:
                 fast_sync_state.pending_chunks.clear()
             else:

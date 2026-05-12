@@ -208,6 +208,94 @@ class P2PServerFastSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(server.fast_sync_states[peer].active)
         self.assertEqual(completed_syncs, [True])
 
+    async def test_fastsync_completion_advertises_new_tip_to_other_peers(self) -> None:
+        source_peer = PeerAddress(host="127.0.0.1", port=9106)
+        downstream_peer = PeerAddress(host="127.0.0.1", port=9108)
+        downstream_writer = RecordingWriter()
+        blockchain = create_blockchain(block_count=3)
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9107,
+            on_chain_summary=lambda: ("new-tip", 3),
+            on_chain_response=lambda blocks: {
+                "accepted": len(blocks),
+                "duplicates": 0,
+                "orphans": 0,
+                "rejected": 0,
+            },
+            transaction_relay=False,
+        )
+        server.active_connections[source_peer] = RecordingWriter()
+        server.active_connections[downstream_peer] = downstream_writer
+        server.fast_sync_states[source_peer] = FastSyncState(
+            expected_start_height=1,
+            batch_end_start_height=1,
+            batch_chunk_count=1,
+        )
+
+        await server._handle_message(
+            {
+                "type": "chain_chunk",
+                "start_height": 1,
+                "height": 3,
+                "done": True,
+                "next_start_height": None,
+                "blocks": [blockchain.blocks[1].to_dict()],
+            },
+            source_peer,
+        )
+
+        self.assertEqual(
+            downstream_writer.messages,
+            [
+                {
+                    "type": "handshake",
+                    "host": "127.0.0.1",
+                    "port": 9107,
+                    "tip_hash": "new-tip",
+                    "height": 3,
+                }
+            ],
+        )
+
+    async def test_fastsync_completion_without_accepted_blocks_does_not_advertise(self) -> None:
+        source_peer = PeerAddress(host="127.0.0.1", port=9106)
+        downstream_peer = PeerAddress(host="127.0.0.1", port=9108)
+        downstream_writer = RecordingWriter()
+        server = P2PServer(
+            host="127.0.0.1",
+            port=9107,
+            on_chain_summary=lambda: ("old-tip", 3),
+            on_chain_response=lambda blocks: {
+                "accepted": 0,
+                "duplicates": len(blocks),
+                "orphans": 0,
+                "rejected": 0,
+            },
+            transaction_relay=False,
+        )
+        server.active_connections[source_peer] = RecordingWriter()
+        server.active_connections[downstream_peer] = downstream_writer
+        server.fast_sync_states[source_peer] = FastSyncState(
+            expected_start_height=1,
+            batch_end_start_height=1,
+            batch_chunk_count=1,
+        )
+
+        await server._handle_message(
+            {
+                "type": "chain_chunk",
+                "start_height": 1,
+                "height": 3,
+                "done": True,
+                "next_start_height": None,
+                "blocks": [],
+            },
+            source_peer,
+        )
+
+        self.assertEqual(downstream_writer.messages, [])
+
     async def test_fastsync_buffers_ahead_chunk_until_missing_chunk_arrives(self) -> None:
         peer = PeerAddress(host="127.0.0.1", port=9107)
         processed_starts: list[int] = []
