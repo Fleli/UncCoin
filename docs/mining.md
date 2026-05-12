@@ -110,7 +110,9 @@ Cloud summary output can be tuned with:
   reward blocks before broadcast, default `100` for direct node launches and `0` for
   `scripts/cloud_automine.sh`. Set `0` to disable the periodic guard.
 - `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`: deliver mined blocks from the native worker to
-  Python in batches, default `1` for direct node launches and `10` for
+  Python in batches, default `1` for direct node launches and `25` for
+  `scripts/cloud_automine.sh`.
+- `UNCCOIN_GPU_CHUNK_MULTIPLIER`: tune GPU dispatch size, default `128` for
   `scripts/cloud_automine.sh`.
 
 To fall back to the ordinary cloud automine loop:

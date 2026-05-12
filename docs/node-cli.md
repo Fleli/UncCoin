@@ -21,7 +21,8 @@ worker using serialized block prefixes and compact periodic summaries, then vali
 block's proof-of-work and reward consensus rules before broadcast. For maximum offline
 throughput, the launcher skips empty broadcast serialization and disables periodic
 full-chain verification unless `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` is set. It also
-batches native worker results with `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`, default `10`.
+batches native worker results with `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`, default `25`, and
+uses `UNCCOIN_GPU_CHUNK_MULTIPLIER=128` unless overridden.
 
 Example:
 

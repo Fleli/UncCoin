@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from config import DEFAULT_DIFFICULTY_BITS
 from config import DEFAULT_DIFFICULTY_GROWTH_FACTOR
@@ -936,11 +936,14 @@ class Node:
                         assert event.block is not None
                         blocks = (event.block,)
                     try:
-                        for block in blocks:
-                            await self._accept_cloud_native_mined_block(block)
+                        accepted_batch = await self._accept_cloud_native_mined_blocks(
+                            blocks,
+                        )
+                        for _block in accepted_batch:
                             accepted_blocks += 1
+                        if accepted_batch:
                             last_summary_at = self._maybe_print_cloud_native_summary(
-                                block=block,
+                                block=accepted_batch[-1],
                                 accepted_blocks=accepted_blocks,
                                 stale_restarts=stale_restarts,
                                 started_at=started_at,
@@ -1036,6 +1039,55 @@ class Node:
                 self.blockchain.difficulty_schedule_activation_height
             ),
         )
+
+    async def _accept_cloud_native_mined_blocks(
+        self,
+        blocks: Sequence[Block],
+    ) -> tuple[Block, ...]:
+        if not blocks:
+            return ()
+        if len(blocks) == 1:
+            await self._accept_cloud_native_mined_block(blocks[0])
+            return (blocks[0],)
+
+        assert self.blockchain is not None
+        if not self._can_fast_accept_cloud_native_block():
+            accepted_blocks: list[Block] = []
+            for block in blocks:
+                await self._accept_cloud_native_mined_block(block)
+                accepted_blocks.append(block)
+            return tuple(accepted_blocks)
+
+        previous_state_tip_hash = self._state_tip_hash()
+        expected_tip_hash = self._mining_tip_hash()
+        accepted_blocks: list[Block] = []
+        for block in blocks:
+            if block.previous_hash != expected_tip_hash:
+                raise CloudNativeAutomineStaleTip(
+                    f"mined block extends {block.previous_hash[:12]}, "
+                    "current batch tip is "
+                    f"{expected_tip_hash[:12] if expected_tip_hash else 'unset'}",
+                )
+
+            self._fast_accept_cloud_native_mined_block(block)
+            accepted_blocks.append(block)
+            expected_tip_hash = block.block_hash
+
+        final_block = accepted_blocks[-1]
+        self._record_mined_block_progress(final_block)
+        self._record_local_mining_tip(final_block.block_hash)
+        self._current_automine_tip_hash = final_block.block_hash
+        self._reconcile_pending_transactions_for_state_tip(previous_state_tip_hash)
+        self._save_mined_block_progress(len(accepted_blocks))
+        if self.p2p_server.active_connections:
+            for block in accepted_blocks:
+                await self.broadcast_block(block)
+        self._maybe_schedule_autosend()
+        self.mining_tip_hash = self._mining_tip_hash()
+        self.mining_difficulty_bits = self.blockchain.get_next_block_difficulty_bits(
+            self.mining_tip_hash,
+        )
+        return tuple(accepted_blocks)
 
     async def _accept_cloud_native_mined_block(self, block: Block) -> None:
         assert self.blockchain is not None
@@ -2072,12 +2124,13 @@ Wallet commands accept either a wallet address or a local alias."""
         reason_suffix = f" ({reason})" if reason else ""
         print(f"Saved blockchain state to {path}{reason_suffix}", flush=True)
 
-    def _save_mined_block_progress(self) -> None:
+    def _save_mined_block_progress(self, block_count: int = 1) -> None:
+        block_count = max(1, int(block_count))
         if self.mined_block_persist_interval == 0:
-            self._mined_blocks_since_persist += 1
+            self._mined_blocks_since_persist += block_count
             return
 
-        self._mined_blocks_since_persist += 1
+        self._mined_blocks_since_persist += block_count
         if self._mined_blocks_since_persist < self.mined_block_persist_interval:
             return
 
@@ -2667,9 +2720,11 @@ Wallet commands accept either a wallet address or a local alias."""
         print(message, flush=True)
 
     def _maybe_schedule_autosend(self) -> None:
+        if self.autosend_target is None:
+            return
+
         if (
-            self.autosend_target is None
-            or self.wallet is None
+            self.wallet is None
             or self.blockchain is None
         ):
             self._reset_autosend_balance_baseline()

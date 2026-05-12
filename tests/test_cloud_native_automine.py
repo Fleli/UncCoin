@@ -298,6 +298,68 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(node.blockchain.verify_chain())
 
+    async def test_cloud_native_batch_fast_path_updates_once(self) -> None:
+        wallet = create_wallet(name="cloud-native-fast-batch")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._ensure_genesis_block()
+        first_block = build_reward_only_block(
+            block_id=1,
+            previous_hash=node.blockchain.main_tip_hash,
+            miner_address=wallet.address,
+            description="fast cloud native batch 1",
+        )
+        proof_of_work(first_block, difficulty_bits=0, mining_backend="python")
+        second_block = build_reward_only_block(
+            block_id=2,
+            previous_hash=first_block.block_hash,
+            miner_address=wallet.address,
+            description="fast cloud native batch 2",
+        )
+        proof_of_work(second_block, difficulty_bits=0, mining_backend="python")
+
+        with mock.patch.object(node.blockchain, "add_block_result") as add_block_result:
+            with mock.patch.object(node, "_maybe_schedule_autosend") as autosend:
+                accepted = await node._accept_cloud_native_mined_blocks(
+                    (first_block, second_block),
+                )
+
+        self.assertEqual(accepted, (first_block, second_block))
+        add_block_result.assert_not_called()
+        autosend.assert_called_once()
+        self.assertEqual(node.blockchain.main_tip_hash, second_block.block_hash)
+        self.assertEqual(
+            node.blockchain.get_balance(wallet.address),
+            MINING_REWARD_AMOUNT * 2,
+        )
+        self.assertEqual(node._mined_blocks_since_persist, 2)
+        self.assertTrue(node.blockchain.verify_chain())
+
+    def test_autosend_off_does_not_recompute_balance(self) -> None:
+        wallet = create_wallet(name="cloud-native-autosend-off")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+
+        with mock.patch.object(node, "_reset_autosend_balance_baseline") as reset_baseline:
+            node._maybe_schedule_autosend()
+
+        reset_baseline.assert_not_called()
+
     async def test_cloud_native_fast_path_runs_periodic_full_verify_before_broadcast(self) -> None:
         wallet = create_wallet(name="cloud-native-fast-verify")
         node = Node(
