@@ -511,6 +511,10 @@ class Blockchain:
         if block_verification_error is not None:
             return None, block_verification_error
 
+        reward_only_state = self._build_reward_only_child_state(block, parent_state)
+        if reward_only_state is not None:
+            return reward_only_state, None
+
         state = parent_state.copy()
         state.height = block.block_id
         fee_collector: list[Decimal] = []
@@ -538,6 +542,45 @@ class Blockchain:
             return None, reward_amount_error
 
         return state, None
+
+    def _build_reward_only_child_state(
+        self,
+        block: Block,
+        parent_state: ChainState,
+    ) -> ChainState | None:
+        if block.block_id == 0 or len(block.transactions) != 1:
+            return None
+
+        reward_transaction = block.transactions[0]
+        if not is_mining_reward_transaction(reward_transaction):
+            return None
+
+        if self._validate_transaction_authenticity_error(reward_transaction) is not None:
+            return None
+
+        reward_amount_error = get_mining_reward_amount_validation_error(
+            block,
+            Decimal("0.0"),
+        )
+        if reward_amount_error is not None:
+            return None
+
+        balances = parent_state.balances.copy()
+        balances[reward_transaction.receiver] = (
+            balances.get(reward_transaction.receiver, Decimal("0.0"))
+            + reward_transaction.amount
+        )
+        return ChainState(
+            balances=balances,
+            nonces=parent_state.nonces,
+            commitments=parent_state.commitments,
+            reveals=parent_state.reveals,
+            authorizations=parent_state.authorizations,
+            contracts=parent_state.contracts,
+            contract_storage=parent_state.contract_storage,
+            uvm_receipts=parent_state.uvm_receipts,
+            height=block.block_id,
+        )
 
     def _get_parent_state_for_block(
         self,
@@ -745,6 +788,10 @@ class Blockchain:
         ]
 
         candidate_transactions = [*resurrected_transactions, *self.pending_transactions]
+        if not candidate_transactions:
+            self.pending_transactions = []
+            return
+
         state = self._get_canonical_state().copy()
         seen_transaction_ids: set[str] = set()
         valid_pending_transactions: list[Transaction] = []

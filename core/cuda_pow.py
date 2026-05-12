@@ -198,8 +198,18 @@ __device__ int u64_to_ascii(unsigned long long value, unsigned char output[32]) 
 }
 
 __device__ int has_leading_zero_bits_state(const unsigned int state[8], int difficulty_bits) {
-    int full_words = difficulty_bits / 32;
-    int remaining_bits = difficulty_bits % 32;
+    if (difficulty_bits <= 0) {
+        return 1;
+    }
+    if (difficulty_bits <= 32) {
+        if (difficulty_bits == 32) {
+            return state[0] == 0U;
+        }
+        return (state[0] >> (32 - difficulty_bits)) == 0U;
+    }
+
+    int full_words = difficulty_bits >> 5;
+    int remaining_bits = difficulty_bits & 31;
 
     for (int index = 0; index < full_words; ++index) {
         if (state[index] != 0U) {
@@ -447,6 +457,9 @@ __global__ void mine_pow_generic(
     if (first_index >= total_attempts) {
         return;
     }
+    if (first_index >= *best_index) {
+        return;
+    }
 
     unsigned long long limit = first_index + nonces_per_thread;
     if (limit > total_attempts) {
@@ -456,10 +469,6 @@ __global__ void mine_pow_generic(
     for (unsigned long long candidate_index = first_index;
          candidate_index < limit;
          ++candidate_index) {
-        if (candidate_index >= *best_index) {
-            return;
-        }
-
         unsigned long long nonce = start_nonce + (candidate_index * nonce_step);
         unsigned int digest_state[8];
         hash_prefix_with_nonce(
@@ -498,6 +507,9 @@ __global__ void mine_pow_fixed_digits(
     if (first_index >= total_attempts) {
         return;
     }
+    if (first_index >= *best_index) {
+        return;
+    }
 
     unsigned long long limit = first_index + nonces_per_thread;
     if (limit > total_attempts) {
@@ -530,10 +542,6 @@ __global__ void mine_pow_fixed_digits(
     for (unsigned long long candidate_index = first_index;
          candidate_index < limit;
          ++candidate_index) {
-        if (candidate_index >= *best_index) {
-            return;
-        }
-
         hash_prepared_nonce_blocks(
             prefix_state,
             first_block,

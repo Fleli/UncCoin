@@ -75,6 +75,7 @@ class CloudNativeAutomineConfig:
     difficulty_schedule: CloudNativeDifficultySchedule
     mining_backend: str
     batch_blocks: int = 1
+    start_nonce: int = 0
 
 
 @dataclass(frozen=True)
@@ -205,6 +206,7 @@ def mine_reward_only_blocks(
     previous_hash = config.start_tip_hash
     block_height = config.start_height + 1
     batch_blocks = max(1, int(config.batch_blocks))
+    start_nonce = max(0, int(config.start_nonce))
     mined_batch: list[Block] = []
     block_template = RewardOnlyBlockTemplate(
         miner_address=config.miner_address,
@@ -222,6 +224,7 @@ def mine_reward_only_blocks(
             proof_of_work_result = mine_serialized_block_prefix_resident(
                 prefix,
                 config.difficulty_schedule.difficulty_bits_for_height(block_height),
+                start_nonce=start_nonce,
                 mining_backend=config.mining_backend,
             )
             reward_transaction = block_template.reward_transaction(timestamp)

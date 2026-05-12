@@ -135,8 +135,13 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
         stop_event = threading.Event()
         seen_prefixes: list[str] = []
 
-        def fake_mine_prefix(prefix: str, difficulty_bits: int, mining_backend: str):
-            del difficulty_bits, mining_backend
+        def fake_mine_prefix(
+            prefix: str,
+            difficulty_bits: int,
+            start_nonce: int = 0,
+            mining_backend: str = "auto",
+        ):
+            del difficulty_bits, start_nonce, mining_backend
             seen_prefixes.append(prefix)
             if len(seen_prefixes) > 1:
                 raise ProofOfWorkCancelled("stop")
@@ -185,8 +190,13 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
         stop_event = threading.Event()
         seen_prefixes: list[str] = []
 
-        def fake_mine_prefix(prefix: str, difficulty_bits: int, mining_backend: str):
-            del difficulty_bits, mining_backend
+        def fake_mine_prefix(
+            prefix: str,
+            difficulty_bits: int,
+            start_nonce: int = 0,
+            mining_backend: str = "auto",
+        ):
+            del difficulty_bits, start_nonce, mining_backend
             seen_prefixes.append(prefix)
             if len(seen_prefixes) > 2:
                 raise ProofOfWorkCancelled("stop")
@@ -229,6 +239,59 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
         self.assertEqual(batch_event.blocks[1].block_id, 12)
         self.assertEqual(batch_event.blocks[1].previous_hash, batch_event.blocks[0].block_hash)
         self.assertEqual(output_queue.get_nowait().kind, "cancelled")
+
+    def test_reward_only_worker_uses_configured_start_nonce(self) -> None:
+        wallet = create_wallet(name="cloud-native-start-nonce")
+        output_queue: queue.Queue = queue.Queue()
+        stop_event = threading.Event()
+        seen_start_nonces: list[int] = []
+
+        def fake_mine_prefix(
+            prefix: str,
+            difficulty_bits: int,
+            start_nonce: int = 0,
+            mining_backend: str = "auto",
+        ):
+            del difficulty_bits, mining_backend
+            seen_start_nonces.append(start_nonce)
+            if len(seen_start_nonces) > 1:
+                raise ProofOfWorkCancelled("stop")
+            nonce = start_nonce + 7
+            return PrefixProofOfWorkResult(
+                nonce=nonce,
+                block_hash=hashlib.sha256(f"{prefix}{nonce}".encode("utf-8")).hexdigest(),
+                attempts=8,
+            )
+
+        with mock.patch(
+            "core.cloud_native_automine.mine_serialized_block_prefix_resident",
+            side_effect=fake_mine_prefix,
+        ):
+            mine_reward_only_blocks(
+                CloudNativeAutomineConfig(
+                    miner_address=wallet.address,
+                    description="cloud native start nonce",
+                    start_tip_hash="a" * 64,
+                    start_height=10,
+                    difficulty_schedule=CloudNativeDifficultySchedule(
+                        difficulty_bits=0,
+                        genesis_difficulty_bits=0,
+                        difficulty_growth_factor=10,
+                        difficulty_growth_start_height=100,
+                        difficulty_growth_bits=1,
+                        difficulty_schedule_activation_height=0,
+                    ),
+                    mining_backend="gpu",
+                    start_nonce=100_000_000,
+                ),
+                output_queue,
+                stop_event,
+            )
+
+        block_event = output_queue.get_nowait()
+        self.assertEqual(block_event.kind, "block")
+        self.assertEqual(block_event.block.nonce, 100_000_007)
+        self.assertEqual(seen_start_nonces[0], 100_000_000)
 
 
 class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):

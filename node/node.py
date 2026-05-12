@@ -920,6 +920,10 @@ class Node:
                         "UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS",
                         1,
                     ),
+                    start_nonce=_read_positive_int_env(
+                        "UNCCOIN_CLOUD_NATIVE_START_NONCE",
+                        0,
+                    ),
                 ),
                 result_queue,
                 stop_event,
@@ -2152,7 +2156,7 @@ Wallet commands accept either a wallet address or a local alias."""
         self.blockchain = persisted_blockchain
         print(
             f"Loaded persisted blockchain for {self.wallet.address} "
-            f"({len(self.blockchain.blocks)} blocks)",
+            f"({len(self.blockchain.blocks_by_hash)} blocks)",
             flush=True,
         )
 

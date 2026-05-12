@@ -121,6 +121,9 @@ Cloud summary output can be tuned with:
 - `UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH`: skip the duplicate Python block-hash
   recompute while the cloud-native miner is offline, default `0` for direct node
   launches and `1` for `scripts/cloud_automine.sh`.
+- `UNCCOIN_CLOUD_NATIVE_START_NONCE`: start each cloud-native proof-of-work search at
+  this nonce, default `0` for direct node launches and `100000000` for
+  `scripts/cloud_automine.sh` to keep CUDA searches in a stable decimal-width range.
 - `UNCCOIN_GPU_CHUNK_MULTIPLIER`: tune GPU dispatch size, default `128` for
   `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_SHUTDOWN_WAIT_SECONDS`: graceful shutdown wait after SIGINT before the
