@@ -936,6 +936,7 @@ class Node:
         stale_restarts = 0
         started_at = time.perf_counter()
         last_summary_at = started_at
+        last_summary_accepted = 0
 
         try:
             while worker.is_alive() or not result_queue.empty():
@@ -960,12 +961,15 @@ class Node:
                         for _block in accepted_batch:
                             accepted_blocks += 1
                         if accepted_batch:
-                            last_summary_at = self._maybe_print_cloud_native_summary(
-                                block=accepted_batch[-1],
-                                accepted_blocks=accepted_blocks,
-                                stale_restarts=stale_restarts,
-                                started_at=started_at,
-                                last_summary_at=last_summary_at,
+                            last_summary_at, last_summary_accepted = (
+                                self._maybe_print_cloud_native_summary(
+                                    block=accepted_batch[-1],
+                                    accepted_blocks=accepted_blocks,
+                                    stale_restarts=stale_restarts,
+                                    started_at=started_at,
+                                    last_summary_at=last_summary_at,
+                                    last_summary_accepted=last_summary_accepted,
+                                )
                             )
                     except CloudNativeAutomineStaleTip:
                         stale_restarts += 1
@@ -1027,21 +1031,35 @@ class Node:
         stale_restarts: int,
         started_at: float,
         last_summary_at: float,
-    ) -> float:
+        last_summary_accepted: int,
+    ) -> tuple[float, int]:
         block_interval = _read_positive_int_env(
             "UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS",
             10,
         )
-        seconds_interval = _read_positive_float_env(
-            "UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS",
-            15.0,
+        seconds_interval_configured = (
+            os.environ.get("UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS") is not None
         )
         now = time.perf_counter()
-        if (
-            accepted_blocks % block_interval != 0
-            and now - last_summary_at < seconds_interval
-        ):
-            return last_summary_at
+        block_interval_elapsed = accepted_blocks - last_summary_accepted >= block_interval
+        seconds_interval_elapsed = (
+            seconds_interval_configured
+            and now - last_summary_at
+            >= _read_positive_float_env(
+                "UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS",
+                15.0,
+            )
+        )
+        if not block_interval_elapsed and not seconds_interval_elapsed:
+            return last_summary_at, last_summary_accepted
+
+        recent_blocks = accepted_blocks - last_summary_accepted
+        recent_elapsed = max(now - last_summary_at, 0.001)
+        recent_blocks_per_minute = (
+            recent_blocks * 60.0 / recent_elapsed
+            if recent_blocks > 0
+            else 0.0
+        )
 
         elapsed = max(now - started_at, 0.001)
         blocks_per_minute = accepted_blocks * 60.0 / elapsed
@@ -1050,10 +1068,11 @@ class Node:
             f"height={block.block_id} "
             f"accepted={accepted_blocks} "
             f"rate={blocks_per_minute:.1f}/min "
+            f"recent={recent_blocks_per_minute:.1f}/min "
             f"stale_restarts={stale_restarts}",
             flush=True,
         )
-        return now
+        return now, accepted_blocks
 
     def _cloud_native_difficulty_schedule(self) -> CloudNativeDifficultySchedule:
         assert self.blockchain is not None

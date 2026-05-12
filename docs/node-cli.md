@@ -23,8 +23,8 @@ throughput, the launcher skips empty broadcast serialization and disables period
 full-chain verification unless `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` is set. It also
 batches native worker results with `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`, default `50`, trusts
 the resident worker hash while offline with `UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH=1`,
-starts each proof-of-work search at `UNCCOIN_CLOUD_NATIVE_START_NONCE=100000000`, and uses
-`UNCCOIN_GPU_CHUNK_MULTIPLIER=128` unless overridden. Before connecting to peers or
+uses `UNCCOIN_GPU_CHUNK_MULTIPLIER=128` unless overridden, and leaves
+`UNCCOIN_CLOUD_NATIVE_START_NONCE=0` unless explicitly set. Before connecting to peers or
 completing shutdown, cloud-native mode still runs full verification for burst blocks that
 skipped the duplicate Python hash check.
 

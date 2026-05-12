@@ -110,8 +110,8 @@ Cloud summary output can be tuned with:
 
 - `UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS`: print every N accepted burst blocks, default `10`
   for direct node launches and `100` for `scripts/cloud_automine.sh`.
-- `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: print after this many seconds even if the block
-  interval has not been reached, default `15`.
+- `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: if set, also print after this many seconds even
+  if the block interval has not been reached.
 - `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS`: run full chain verification every N fast-path
   reward blocks before broadcast, default `100` for direct node launches and `0` for
   `scripts/cloud_automine.sh`. Set `0` to disable the periodic guard.
@@ -122,8 +122,7 @@ Cloud summary output can be tuned with:
   recompute while the cloud-native miner is offline, default `0` for direct node
   launches and `1` for `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_NATIVE_START_NONCE`: start each cloud-native proof-of-work search at
-  this nonce, default `0` for direct node launches and `100000000` for
-  `scripts/cloud_automine.sh` to keep CUDA searches in a stable decimal-width range.
+  this nonce, default `0`.
 - `UNCCOIN_GPU_CHUNK_MULTIPLIER`: tune GPU dispatch size, default `128` for
   `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_SHUTDOWN_WAIT_SECONDS`: graceful shutdown wait after SIGINT before the

@@ -450,6 +450,72 @@ class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):
 
         reset_baseline.assert_not_called()
 
+    def test_cloud_native_summary_waits_for_configured_block_interval(self) -> None:
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            mining_only=True,
+            cloud_native_automine=True,
+        )
+        block = mock.Mock(block_id=123)
+
+        with mock.patch.dict(
+            os.environ,
+            {"UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS": "250"},
+            clear=True,
+        ):
+            with mock.patch("node.node.time.perf_counter", return_value=30.0):
+                with mock.patch("builtins.print") as print_mock:
+                    last_summary_at, last_summary_accepted = (
+                        node._maybe_print_cloud_native_summary(
+                            block=block,
+                            accepted_blocks=50,
+                            stale_restarts=0,
+                            started_at=0.0,
+                            last_summary_at=0.0,
+                            last_summary_accepted=0,
+                        )
+                    )
+
+        print_mock.assert_not_called()
+        self.assertEqual(last_summary_at, 0.0)
+        self.assertEqual(last_summary_accepted, 0)
+
+    def test_cloud_native_summary_prints_recent_rate(self) -> None:
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            mining_only=True,
+            cloud_native_automine=True,
+        )
+        block = mock.Mock(block_id=456)
+
+        with mock.patch.dict(
+            os.environ,
+            {"UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS": "250"},
+            clear=True,
+        ):
+            with mock.patch("node.node.time.perf_counter", return_value=75.0):
+                with mock.patch("builtins.print") as print_mock:
+                    last_summary_at, last_summary_accepted = (
+                        node._maybe_print_cloud_native_summary(
+                            block=block,
+                            accepted_blocks=250,
+                            stale_restarts=0,
+                            started_at=0.0,
+                            last_summary_at=0.0,
+                            last_summary_accepted=0,
+                        )
+                    )
+
+        print_mock.assert_called_once()
+        printed = print_mock.call_args.args[0]
+        self.assertIn("accepted=250", printed)
+        self.assertIn("rate=200.0/min", printed)
+        self.assertIn("recent=200.0/min", printed)
+        self.assertEqual(last_summary_at, 75.0)
+        self.assertEqual(last_summary_accepted, 250)
+
     async def test_cloud_native_fast_path_runs_periodic_full_verify_before_broadcast(self) -> None:
         wallet = create_wallet(name="cloud-native-fast-verify")
         node = Node(
