@@ -95,7 +95,9 @@ verification as a guard. The dedicated cloud launcher disables that periodic ful
 guard by default for maximum offline throughput; set
 `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS` to a positive block interval to re-enable it.
 When the periodic guard is disabled, the node still runs a full verification before
-shutdown and before opening a peer connection if it has accepted unverified burst blocks.
+shutdown and before opening a peer connection if it has accepted unverified burst blocks;
+on shutdown, it saves a pre-verification snapshot first so a long full-chain check cannot
+lose the mined chain if the launcher is interrupted.
 Per-block broadcast logs are replaced by compact periodic summaries, and offline cloud
 miners skip block broadcast serialization until a peer is connected. Peers still receive
 locally mined blocks. If you want periodic mined-block saves, set
@@ -114,6 +116,8 @@ Cloud summary output can be tuned with:
   `scripts/cloud_automine.sh`.
 - `UNCCOIN_GPU_CHUNK_MULTIPLIER`: tune GPU dispatch size, default `128` for
   `scripts/cloud_automine.sh`.
+- `UNCCOIN_CLOUD_SHUTDOWN_WAIT_SECONDS`: graceful shutdown wait after SIGINT before the
+  launcher escalates to SIGTERM, default `600`.
 
 To fall back to the ordinary cloud automine loop:
 

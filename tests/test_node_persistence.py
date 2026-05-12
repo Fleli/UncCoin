@@ -53,6 +53,54 @@ class NodePersistenceTests(unittest.IsolatedAsyncioTestCase):
 
         save_state.assert_called_once_with(wallet.address, node.blockchain)
 
+    async def test_cloud_native_shutdown_saves_before_full_verify_guard(self) -> None:
+        wallet = create_wallet(name="cloud-shutdown-persist")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._cloud_native_fast_blocks_since_verify = 3
+
+        with mock.patch(
+            "node.node.save_blockchain_state",
+            return_value=Path("state/blockchains/test.json"),
+        ) as save_state:
+            with mock.patch.object(node.blockchain, "verify_chain", return_value=True) as verify_chain:
+                await node.stop()
+
+        self.assertEqual(save_state.call_count, 2)
+        verify_chain.assert_called_once()
+
+    async def test_cloud_native_shutdown_keeps_preverify_save_if_full_verify_fails(self) -> None:
+        wallet = create_wallet(name="cloud-shutdown-persist-fail")
+        node = Node(
+            host="127.0.0.1",
+            port=0,
+            wallet=wallet,
+            mining_only=True,
+            cloud_native_automine=True,
+            mined_block_persist_interval=0,
+            difficulty_bits=0,
+            genesis_difficulty_bits=0,
+        )
+        node._cloud_native_fast_blocks_since_verify = 3
+
+        with mock.patch(
+            "node.node.save_blockchain_state",
+            return_value=Path("state/blockchains/test.json"),
+        ) as save_state:
+            with mock.patch.object(node.blockchain, "verify_chain", return_value=False):
+                with self.assertRaisesRegex(ValueError, "failed full verification"):
+                    await node.stop()
+
+        save_state.assert_called_once_with(wallet.address, node.blockchain)
+
     async def test_mined_block_persistence_can_batch_blocks(self) -> None:
         wallet = create_wallet(name="batched-persist-miner")
         node = Node(

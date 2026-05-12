@@ -231,6 +231,7 @@ class Node:
     async def stop(self) -> None:
         await self.stop_automine(wait=True)
         try:
+            self._save_cloud_native_fast_shutdown_snapshot()
             self._verify_cloud_native_fast_chain_for_exposure("shutdown")
             self._save_persisted_blockchain("shutdown")
         finally:
@@ -990,6 +991,16 @@ class Node:
                 f"{reason}"
             )
         self._cloud_native_fast_blocks_since_verify = 0
+
+    def _save_cloud_native_fast_shutdown_snapshot(self) -> None:
+        if (
+            not self.cloud_native_automine
+            or self.blockchain is None
+            or self._cloud_native_fast_blocks_since_verify == 0
+        ):
+            return
+
+        self._save_persisted_blockchain("shutdown pre-verify")
 
     def _maybe_print_cloud_native_summary(
         self,

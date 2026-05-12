@@ -28,6 +28,8 @@ API_PORT="${UNCCOIN_API_PORT:-$((PORT + 10000))}"
 AUTOMINE_DESCRIPTION="${UNCCOIN_AUTOMINE_DESCRIPTION:-cloud gpu miner}"
 SYNC_WAIT_SECONDS="${UNCCOIN_CLOUD_SYNC_WAIT_SECONDS:-180}"
 MINED_BLOCK_PERSIST_INTERVAL="${UNCCOIN_MINED_BLOCK_PERSIST_INTERVAL:-0}"
+SHUTDOWN_WAIT_SECONDS="${UNCCOIN_CLOUD_SHUTDOWN_WAIT_SECONDS:-600}"
+TERM_WAIT_SECONDS="${UNCCOIN_CLOUD_TERM_WAIT_SECONDS:-30}"
 
 ARGS=(
   "$PYTHON_BIN" -m node.cli
@@ -60,7 +62,7 @@ cleanup() {
   trap - EXIT INT TERM
   if kill -0 "$NODE_PID" >/dev/null 2>&1; then
     kill -INT "$NODE_PID" >/dev/null 2>&1 || true
-    for _ in {1..20}; do
+    for ((elapsed = 0; elapsed < SHUTDOWN_WAIT_SECONDS; elapsed++)); do
       if ! kill -0 "$NODE_PID" >/dev/null 2>&1; then
         wait "$NODE_PID" || true
         return
@@ -68,7 +70,7 @@ cleanup() {
       sleep 1
     done
     kill -TERM "$NODE_PID" >/dev/null 2>&1 || true
-    for _ in {1..5}; do
+    for ((elapsed = 0; elapsed < TERM_WAIT_SECONDS; elapsed++)); do
       if ! kill -0 "$NODE_PID" >/dev/null 2>&1; then
         wait "$NODE_PID" || true
         return
