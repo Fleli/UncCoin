@@ -116,26 +116,15 @@ __constant__ unsigned int SHA256_K[64] = {
 };
 
 __device__ void sha256_transform(unsigned int state[8], const unsigned char block[64]) {
-    unsigned int schedule[64];
+    unsigned int schedule[16];
 
+    #pragma unroll
     for (int index = 0; index < 16; ++index) {
         schedule[index] =
             ((unsigned int)block[index * 4] << 24) |
             ((unsigned int)block[index * 4 + 1] << 16) |
             ((unsigned int)block[index * 4 + 2] << 8) |
             ((unsigned int)block[index * 4 + 3]);
-    }
-
-    for (int index = 16; index < 64; ++index) {
-        unsigned int sigma0 =
-            rotr32(schedule[index - 15], 7) ^
-            rotr32(schedule[index - 15], 18) ^
-            (schedule[index - 15] >> 3);
-        unsigned int sigma1 =
-            rotr32(schedule[index - 2], 17) ^
-            rotr32(schedule[index - 2], 19) ^
-            (schedule[index - 2] >> 10);
-        schedule[index] = schedule[index - 16] + sigma0 + schedule[index - 7] + sigma1;
     }
 
     unsigned int a = state[0];
@@ -147,10 +136,95 @@ __device__ void sha256_transform(unsigned int state[8], const unsigned char bloc
     unsigned int g = state[6];
     unsigned int h = state[7];
 
+    #pragma unroll
     for (int index = 0; index < 64; ++index) {
+        unsigned int message_word;
+        if (index < 16) {
+            message_word = schedule[index];
+        } else {
+            int slot = index & 15;
+            unsigned int schedule_15 = schedule[(index + 1) & 15];
+            unsigned int schedule_2 = schedule[(index + 14) & 15];
+            unsigned int sigma0 =
+                rotr32(schedule_15, 7) ^
+                rotr32(schedule_15, 18) ^
+                (schedule_15 >> 3);
+            unsigned int sigma1 =
+                rotr32(schedule_2, 17) ^
+                rotr32(schedule_2, 19) ^
+                (schedule_2 >> 10);
+            message_word = schedule[slot] + sigma0 + schedule[(index + 9) & 15] + sigma1;
+            schedule[slot] = message_word;
+        }
+
         unsigned int sum1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);
         unsigned int choose = (e & f) ^ ((~e) & g);
-        unsigned int temp1 = h + sum1 + choose + SHA256_K[index] + schedule[index];
+        unsigned int temp1 = h + sum1 + choose + SHA256_K[index] + message_word;
+        unsigned int sum0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);
+        unsigned int majority = (a & b) ^ (a & c) ^ (b & c);
+        unsigned int temp2 = sum0 + majority;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+}
+
+__device__ void sha256_transform_words(unsigned int state[8], const unsigned int input_words[16]) {
+    unsigned int schedule[16];
+
+    #pragma unroll
+    for (int index = 0; index < 16; ++index) {
+        schedule[index] = input_words[index];
+    }
+
+    unsigned int a = state[0];
+    unsigned int b = state[1];
+    unsigned int c = state[2];
+    unsigned int d = state[3];
+    unsigned int e = state[4];
+    unsigned int f = state[5];
+    unsigned int g = state[6];
+    unsigned int h = state[7];
+
+    #pragma unroll
+    for (int index = 0; index < 64; ++index) {
+        unsigned int message_word;
+        if (index < 16) {
+            message_word = schedule[index];
+        } else {
+            int slot = index & 15;
+            unsigned int schedule_15 = schedule[(index + 1) & 15];
+            unsigned int schedule_2 = schedule[(index + 14) & 15];
+            unsigned int sigma0 =
+                rotr32(schedule_15, 7) ^
+                rotr32(schedule_15, 18) ^
+                (schedule_15 >> 3);
+            unsigned int sigma1 =
+                rotr32(schedule_2, 17) ^
+                rotr32(schedule_2, 19) ^
+                (schedule_2 >> 10);
+            message_word = schedule[slot] + sigma0 + schedule[(index + 9) & 15] + sigma1;
+            schedule[slot] = message_word;
+        }
+
+        unsigned int sum1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);
+        unsigned int choose = (e & f) ^ ((~e) & g);
+        unsigned int temp1 = h + sum1 + choose + SHA256_K[index] + message_word;
         unsigned int sum0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);
         unsigned int majority = (a & b) ^ (a & c) ^ (b & c);
         unsigned int temp2 = sum0 + majority;
@@ -239,6 +313,17 @@ __device__ void nonce_to_ascii_fixed_digits(
         output[index] = (unsigned char)('0' + (nonce % 10ULL));
         nonce /= 10ULL;
     }
+}
+
+__device__ void write_word_byte(
+    unsigned int words[16],
+    int byte_offset,
+    unsigned char value
+) {
+    int word_index = byte_offset >> 2;
+    int shift = (3 - (byte_offset & 3)) << 3;
+    unsigned int mask = 0xFFU << shift;
+    words[word_index] = (words[word_index] & ~mask) | ((unsigned int)value << shift);
 }
 
 __device__ int increment_ascii_fixed_digits_one(unsigned char buffer[32], int digit_count) {
@@ -574,6 +659,77 @@ __global__ void mine_pow_fixed_digits(
     }
 }
 
+__global__ void mine_pow_fixed_digits_single_block(
+    const unsigned int* prefix_state,
+    const unsigned int* base_words,
+    int nonce_byte_offset,
+    int difficulty_bits,
+    unsigned long long start_nonce,
+    unsigned long long total_attempts,
+    unsigned long long nonces_per_thread,
+    int digit_count,
+    unsigned long long* best_index
+) {
+    unsigned long long thread_index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    unsigned long long first_index = thread_index * nonces_per_thread;
+
+    if (first_index >= total_attempts) {
+        return;
+    }
+    if (first_index >= *best_index) {
+        return;
+    }
+
+    unsigned long long limit = first_index + nonces_per_thread;
+    if (limit > total_attempts) {
+        limit = total_attempts;
+    }
+
+    unsigned int words[16];
+    unsigned char nonce_buffer[32];
+    unsigned int digest_state[8];
+    unsigned long long nonce = start_nonce + first_index;
+
+    #pragma unroll
+    for (int index = 0; index < 16; ++index) {
+        words[index] = base_words[index];
+    }
+
+    nonce_to_ascii_fixed_digits(nonce, digit_count, nonce_buffer);
+    for (int index = 0; index < digit_count; ++index) {
+        write_word_byte(words, nonce_byte_offset + index, nonce_buffer[index]);
+    }
+
+    for (unsigned long long candidate_index = first_index;
+         candidate_index < limit;
+         ++candidate_index) {
+        #pragma unroll
+        for (int index = 0; index < 8; ++index) {
+            digest_state[index] = prefix_state[index];
+        }
+
+        sha256_transform_words(digest_state, words);
+        if (has_leading_zero_bits_state(digest_state, difficulty_bits)) {
+            atomicMin(best_index, candidate_index);
+            return;
+        }
+
+        if (candidate_index + 1ULL >= limit) {
+            return;
+        }
+
+        int changed_index = increment_ascii_fixed_digits_one(nonce_buffer, digit_count);
+        if (changed_index < 0) {
+            return;
+        }
+        for (int index = changed_index; index < digit_count; ++index) {
+            write_word_byte(words, nonce_byte_offset + index, nonce_buffer[index]);
+        }
+    }
+}
+
 }
 """
 
@@ -581,6 +737,7 @@ _cupy_module = None
 _raw_modules: dict[int, object] = {}
 _generic_kernels: dict[int, object] = {}
 _fixed_digits_kernels: dict[int, object] = {}
+_single_block_fixed_digits_kernels: dict[int, object] = {}
 _cupy_lock = threading.RLock()
 _cancel_event = threading.Event()
 
@@ -705,6 +862,24 @@ def mine_pow_gpu(
 ) -> tuple[int, str, bool]:
     prepared_prefix = prepare_prefix_context(prefix)
     prefix_bytes = prefix.encode("utf-8")
+
+    if progress_interval <= 0:
+        nonce, block_hash, found, cancelled, _attempts = _mine_pow_gpu_range(
+            prefix_bytes=prefix_bytes,
+            prepared_prefix=prepared_prefix,
+            difficulty_bits=difficulty_bits,
+            start_nonce=start_nonce,
+            max_attempts=max(1, _U64_MAX - max(0, start_nonce)),
+            batch_size=batch_size,
+            nonce_step=nonce_step,
+            nonces_per_thread=nonces_per_thread,
+            threads_per_group=threads_per_group,
+            device_id=device_id,
+        )
+        if found:
+            return nonce, block_hash, False
+        return nonce, block_hash, cancelled
+
     total_attempts = 0
     next_progress_mark = progress_interval
     current_nonce = start_nonce
@@ -796,6 +971,25 @@ def _resolve_cuda_dispatch_window(
     return dispatch_attempts, digit_count
 
 
+def _prepare_single_block_words(
+    prepared_prefix: PreparedPrefixContext,
+    digit_count: int,
+) -> tuple[int, ...] | None:
+    suffix_length = prepared_prefix.data_length + digit_count
+    if suffix_length >= 56:
+        return None
+
+    block = bytearray(64)
+    block[:prepared_prefix.data_length] = prepared_prefix.data[:prepared_prefix.data_length]
+    block[suffix_length] = 0x80
+    total_bits = prepared_prefix.bit_length + (suffix_length * 8)
+    block[56:64] = total_bits.to_bytes(8, "big")
+    return tuple(
+        int.from_bytes(block[index:index + 4], "big")
+        for index in range(0, 64, 4)
+    )
+
+
 def _mine_pow_gpu_range(
     prefix_bytes: bytes,
     prepared_prefix: PreparedPrefixContext,
@@ -823,12 +1017,13 @@ def _mine_pow_gpu_range(
     previous_device_id = _activate_cuda_device(device_id)
     try:
         cupy = _load_cupy()
-        generic_kernel, fixed_digits_kernel = _get_kernels()
+        generic_kernel, fixed_digits_kernel, single_block_fixed_digits_kernel = _get_kernels()
         launch_threads = _resolve_threads_per_group(threads_per_group)
         launch_nonces_per_thread = max(1, nonces_per_thread or DEFAULT_GPU_NONCES_PER_THREAD)
         dispatch_batch_size = max(1, batch_size or DEFAULT_GPU_BATCH_SIZE)
         prefix_state = cupy.asarray(prepared_prefix.state, dtype=cupy.uint32)
         prefix_data = cupy.asarray(list(prepared_prefix.data), dtype=cupy.uint8)
+        single_block_words_by_digits: dict[int, object] = {}
 
         attempts = 0
         current_start_nonce = start_nonce
@@ -850,7 +1045,38 @@ def _mine_pow_gpu_range(
             best_index = cupy.asarray([dispatch_attempts], dtype=cupy.uint64)
 
             try:
-                if fixed_digit_count is None:
+                single_block_words = None
+                if fixed_digit_count is not None:
+                    single_block_words = single_block_words_by_digits.get(fixed_digit_count)
+                    if single_block_words is None:
+                        prepared_words = _prepare_single_block_words(
+                            prepared_prefix,
+                            fixed_digit_count,
+                        )
+                        if prepared_words is not None:
+                            single_block_words = cupy.asarray(
+                                prepared_words,
+                                dtype=cupy.uint32,
+                            )
+                            single_block_words_by_digits[fixed_digit_count] = single_block_words
+
+                if single_block_words is not None:
+                    single_block_fixed_digits_kernel(
+                        (block_count,),
+                        (launch_threads,),
+                        (
+                            prefix_state,
+                            single_block_words,
+                            prepared_prefix.data_length,
+                            difficulty_bits,
+                            current_start_nonce,
+                            dispatch_attempts,
+                            launch_nonces_per_thread,
+                            fixed_digit_count,
+                            best_index,
+                        ),
+                    )
+                elif fixed_digit_count is None:
                     generic_kernel(
                         (block_count,),
                         (launch_threads,),
@@ -922,14 +1148,24 @@ def _get_kernels():
     device_id = _current_cuda_device_id()
     generic_kernel = _generic_kernels.get(device_id)
     fixed_digits_kernel = _fixed_digits_kernels.get(device_id)
+    single_block_fixed_digits_kernel = _single_block_fixed_digits_kernels.get(device_id)
 
-    if generic_kernel is not None and fixed_digits_kernel is not None:
-        return generic_kernel, fixed_digits_kernel
+    if (
+        generic_kernel is not None
+        and fixed_digits_kernel is not None
+        and single_block_fixed_digits_kernel is not None
+    ):
+        return generic_kernel, fixed_digits_kernel, single_block_fixed_digits_kernel
 
     with _cupy_lock:
         generic_kernel = _generic_kernels.get(device_id)
         fixed_digits_kernel = _fixed_digits_kernels.get(device_id)
-        if generic_kernel is None or fixed_digits_kernel is None:
+        single_block_fixed_digits_kernel = _single_block_fixed_digits_kernels.get(device_id)
+        if (
+            generic_kernel is None
+            or fixed_digits_kernel is None
+            or single_block_fixed_digits_kernel is None
+        ):
             cupy = _load_cupy()
             raw_module = _raw_modules.get(device_id)
             if raw_module is None:
@@ -937,9 +1173,13 @@ def _get_kernels():
                 _raw_modules[device_id] = raw_module
             generic_kernel = raw_module.get_function("mine_pow_generic")
             fixed_digits_kernel = raw_module.get_function("mine_pow_fixed_digits")
+            single_block_fixed_digits_kernel = raw_module.get_function(
+                "mine_pow_fixed_digits_single_block"
+            )
             _generic_kernels[device_id] = generic_kernel
             _fixed_digits_kernels[device_id] = fixed_digits_kernel
-    return generic_kernel, fixed_digits_kernel
+            _single_block_fixed_digits_kernels[device_id] = single_block_fixed_digits_kernel
+        return generic_kernel, fixed_digits_kernel, single_block_fixed_digits_kernel
 
 
 def _decimal_length_u64(value: int) -> int:

@@ -7,8 +7,10 @@ from core.block import Block
 from core.block import mine_serialized_block_prefix_resident
 from core.block import proof_of_work
 from core.cuda_pow import _mine_pow_gpu_range
+from core.cuda_pow import _prepare_single_block_words
 from core.cuda_pow import _resolve_cuda_dispatch_window
 from core.cuda_pow import hash_prepared_prefix_with_nonce
+from core.cuda_pow import mine_pow_gpu
 from core.cuda_pow import prepare_prefix_context
 from core.hashing import sha256_block_hash
 from core.mining_scheduler import ChunkedMiningResult
@@ -52,6 +54,20 @@ class CudaPowPreparationTests(unittest.TestCase):
                     hashlib.sha256((prefix + str(nonce)).encode("utf-8")).hexdigest(),
                 )
 
+    def test_single_block_words_only_apply_when_nonce_and_padding_fit(self) -> None:
+        self.assertIsNotNone(
+            _prepare_single_block_words(
+                prepare_prefix_context("x" * 53),
+                2,
+            )
+        )
+        self.assertIsNone(
+            _prepare_single_block_words(
+                prepare_prefix_context("x" * 54),
+                2,
+            )
+        )
+
 
 class CudaPowDispatchWindowTests(unittest.TestCase):
     def test_resolve_dispatch_window_clamps_to_digit_boundary(self) -> None:
@@ -62,6 +78,27 @@ class CudaPowDispatchWindowTests(unittest.TestCase):
 
 
 class CudaPowKernelSelectionTests(unittest.TestCase):
+    def test_gpu_mining_without_progress_stays_in_one_resident_range_call(self) -> None:
+        with mock.patch(
+            "core.cuda_pow._mine_pow_gpu_range",
+            return_value=(77, "0" * 64, True, False, 78),
+        ) as mine_range:
+            result = mine_pow_gpu(
+                "prefix|",
+                difficulty_bits=30,
+                start_nonce=0,
+                progress_interval=0,
+                batch_size=12345,
+                nonces_per_thread=16,
+                threads_per_group=256,
+                device_id=0,
+            )
+
+        self.assertEqual(result, (77, "0" * 64, False))
+        mine_range.assert_called_once()
+        self.assertGreater(mine_range.call_args.kwargs["max_attempts"], 12345)
+        self.assertEqual(mine_range.call_args.kwargs["batch_size"], 12345)
+
     def test_gpu_range_uses_fixed_digit_kernel_within_digit_band(self) -> None:
         fake_cupy = _FakeCupy()
         kernel_calls: list[tuple[str, int, int]] = []
@@ -74,11 +111,61 @@ class CudaPowKernelSelectionTests(unittest.TestCase):
             del grid, block
             kernel_calls.append(("fixed", int(args[6]), int(args[8])))
 
+        def single_block_fixed_digits_kernel(grid, block, args) -> None:
+            del grid, block, args
+            self.fail("single-block kernel should not be used when padding spills")
+
         with mock.patch("core.cuda_pow.gpu_available", return_value=True):
             with mock.patch("core.cuda_pow._load_cupy", return_value=fake_cupy):
                 with mock.patch(
                     "core.cuda_pow._get_kernels",
-                    return_value=(generic_kernel, fixed_digits_kernel),
+                    return_value=(
+                        generic_kernel,
+                        fixed_digits_kernel,
+                        single_block_fixed_digits_kernel,
+                    ),
+                ):
+                    prefix = "x" * 54
+                    result = _mine_pow_gpu_range(
+                        prefix_bytes=prefix.encode("utf-8"),
+                        prepared_prefix=prepare_prefix_context(prefix),
+                        difficulty_bits=1,
+                        start_nonce=98,
+                        max_attempts=2,
+                        batch_size=10,
+                        nonce_step=1,
+                        nonces_per_thread=4,
+                        threads_per_group=8,
+                    )
+
+        self.assertEqual(kernel_calls, [("fixed", 2, 2)])
+        self.assertEqual(result, (99, "", False, False, 2))
+
+    def test_gpu_range_uses_single_block_kernel_when_nonce_and_padding_fit(self) -> None:
+        fake_cupy = _FakeCupy()
+        kernel_calls: list[tuple[str, int, int, int]] = []
+
+        def generic_kernel(grid, block, args) -> None:
+            del grid, block, args
+            self.fail("generic kernel should not be used for a fixed-digit batch")
+
+        def fixed_digits_kernel(grid, block, args) -> None:
+            del grid, block, args
+            self.fail("full fixed-digit kernel should not be used when one block fits")
+
+        def single_block_fixed_digits_kernel(grid, block, args) -> None:
+            del grid, block
+            kernel_calls.append(("single", int(args[2]), int(args[5]), int(args[7])))
+
+        with mock.patch("core.cuda_pow.gpu_available", return_value=True):
+            with mock.patch("core.cuda_pow._load_cupy", return_value=fake_cupy):
+                with mock.patch(
+                    "core.cuda_pow._get_kernels",
+                    return_value=(
+                        generic_kernel,
+                        fixed_digits_kernel,
+                        single_block_fixed_digits_kernel,
+                    ),
                 ):
                     result = _mine_pow_gpu_range(
                         prefix_bytes=b"prefix|",
@@ -92,7 +179,7 @@ class CudaPowKernelSelectionTests(unittest.TestCase):
                         threads_per_group=8,
                     )
 
-        self.assertEqual(kernel_calls, [("fixed", 2, 2)])
+        self.assertEqual(kernel_calls, [("single", 7, 2, 2)])
         self.assertEqual(result, (99, "", False, False, 2))
 
     def test_gpu_range_uses_generic_kernel_when_nonce_step_is_not_one(self) -> None:
@@ -111,7 +198,7 @@ class CudaPowKernelSelectionTests(unittest.TestCase):
             with mock.patch("core.cuda_pow._load_cupy", return_value=fake_cupy):
                 with mock.patch(
                     "core.cuda_pow._get_kernels",
-                    return_value=(generic_kernel, fixed_digits_kernel),
+                    return_value=(generic_kernel, fixed_digits_kernel, fixed_digits_kernel),
                 ):
                     result = _mine_pow_gpu_range(
                         prefix_bytes=b"prefix|",
