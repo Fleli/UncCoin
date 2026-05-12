@@ -14,7 +14,10 @@ from core.block import PrefixProofOfWorkResult
 from core.block import ProofOfWorkCancelled
 from core.cloud_native_automine import CloudNativeAutomineConfig
 from core.cloud_native_automine import CloudNativeDifficultySchedule
+from core.cloud_native_automine import CloudNativeMiningPlan
 from core.cloud_native_automine import RewardOnlyBlockTemplate
+from core.cloud_native_automine import _build_cloud_native_mining_plan
+from core.cloud_native_automine import _mine_serialized_block_prefix_with_plan
 from core.cloud_native_automine import build_reward_only_block
 from core.cloud_native_automine import mine_reward_only_blocks
 from core.hashing import sha256_block_hash
@@ -31,6 +34,16 @@ from wallet import create_wallet
 
 
 class CloudNativeAutomineConsensusTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._gpu_plan_patcher = mock.patch(
+            "core.cloud_native_automine.cuda_pow.gpu_available",
+            return_value=False,
+        )
+        self._gpu_plan_patcher.start()
+
+    def tearDown(self) -> None:
+        self._gpu_plan_patcher.stop()
+
     def test_reward_only_block_uses_existing_consensus_serialization(self) -> None:
         wallet = create_wallet(name="cloud-native-serialization")
         timestamp = datetime(2026, 5, 11, 12, 30, 0)
@@ -292,6 +305,132 @@ class CloudNativeAutomineConsensusTests(unittest.TestCase):
         self.assertEqual(block_event.kind, "block")
         self.assertEqual(block_event.block.nonce, 100_000_007)
         self.assertEqual(seen_start_nonces[0], 100_000_000)
+
+    def test_cloud_native_gpu_plan_resolves_launch_settings_once(self) -> None:
+        with mock.patch(
+            "core.cloud_native_automine.cuda_pow.gpu_available",
+            return_value=True,
+        ) as gpu_available:
+            with mock.patch(
+                "core.cloud_native_automine.get_gpu_device_ids",
+                return_value=(0,),
+            ) as gpu_device_ids:
+                with mock.patch(
+                    "core.cloud_native_automine.get_tuned_gpu_launch_config",
+                    return_value=(16, 256),
+                ) as launch_config:
+                    with mock.patch(
+                        "core.cloud_native_automine.get_tuned_gpu_chunk_multiplier",
+                        return_value=64,
+                    ) as chunk_multiplier:
+                        with mock.patch.dict(os.environ, {}, clear=True):
+                            plan = _build_cloud_native_mining_plan("gpu")
+
+        self.assertTrue(plan.gpu_enabled)
+        self.assertEqual(plan.device_id, 0)
+        self.assertEqual(plan.dispatch_batch_size, 262_144 * 64)
+        self.assertEqual(plan.nonces_per_thread, 16)
+        self.assertEqual(plan.threads_per_group, 256)
+        gpu_available.assert_called_once()
+        gpu_device_ids.assert_called_once()
+        launch_config.assert_called_once_with(262_144, 0)
+        chunk_multiplier.assert_called_once_with(262_144, 16, 256, 0)
+
+    def test_cloud_native_gpu_plan_mines_without_resolving_backend_each_block(self) -> None:
+        plan = CloudNativeMiningPlan(
+            gpu_enabled=True,
+            device_id=0,
+            dispatch_batch_size=12345,
+            nonces_per_thread=16,
+            threads_per_group=256,
+        )
+
+        with mock.patch(
+            "core.cloud_native_automine.cuda_pow.mine_pow_gpu",
+            return_value=(107, "0" * 64, False),
+        ) as mine_pow_gpu:
+            with mock.patch(
+                "core.cloud_native_automine.mine_serialized_block_prefix_resident",
+                side_effect=AssertionError("generic backend should not be used"),
+            ):
+                result = _mine_serialized_block_prefix_with_plan(
+                    "prefix|",
+                    30,
+                    start_nonce=100,
+                    mining_backend="gpu",
+                    mining_plan=plan,
+                )
+
+        self.assertEqual(result.nonce, 107)
+        self.assertEqual(result.block_hash, "0" * 64)
+        self.assertEqual(result.attempts, 8)
+        mine_pow_gpu.assert_called_once_with(
+            "prefix|",
+            30,
+            100,
+            0,
+            12345,
+            1,
+            16,
+            256,
+            0,
+        )
+
+    def test_reward_only_worker_flushes_partial_batch_on_cancel(self) -> None:
+        wallet = create_wallet(name="cloud-native-partial-flush")
+        output_queue: queue.Queue = queue.Queue()
+        stop_event = threading.Event()
+        mined_prefixes = 0
+
+        def fake_mine_prefix(
+            prefix: str,
+            difficulty_bits: int,
+            start_nonce: int = 0,
+            mining_backend: str = "auto",
+        ):
+            nonlocal mined_prefixes
+            del difficulty_bits, start_nonce, mining_backend
+            mined_prefixes += 1
+            if mined_prefixes > 3:
+                raise ProofOfWorkCancelled("stop")
+            nonce = mined_prefixes
+            return PrefixProofOfWorkResult(
+                nonce=nonce,
+                block_hash=hashlib.sha256(f"{prefix}{nonce}".encode("utf-8")).hexdigest(),
+                attempts=nonce + 1,
+            )
+
+        with mock.patch(
+            "core.cloud_native_automine.mine_serialized_block_prefix_resident",
+            side_effect=fake_mine_prefix,
+        ):
+            mine_reward_only_blocks(
+                CloudNativeAutomineConfig(
+                    miner_address=wallet.address,
+                    description="cloud native partial flush",
+                    start_tip_hash="a" * 64,
+                    start_height=10,
+                    difficulty_schedule=CloudNativeDifficultySchedule(
+                        difficulty_bits=0,
+                        genesis_difficulty_bits=0,
+                        difficulty_growth_factor=10,
+                        difficulty_growth_start_height=100,
+                        difficulty_growth_bits=1,
+                        difficulty_schedule_activation_height=0,
+                    ),
+                    mining_backend="gpu",
+                    batch_blocks=10,
+                ),
+                output_queue,
+                stop_event,
+            )
+
+        batch_event = output_queue.get_nowait()
+        self.assertEqual(batch_event.kind, "blocks")
+        self.assertEqual(len(batch_event.blocks), 3)
+        self.assertEqual(batch_event.blocks[0].block_id, 11)
+        self.assertEqual(batch_event.blocks[-1].block_id, 13)
+        self.assertEqual(output_queue.get_nowait().kind, "cancelled")
 
 
 class CloudNativeAutomineNodeTests(unittest.IsolatedAsyncioTestCase):

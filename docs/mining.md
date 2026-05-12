@@ -109,14 +109,14 @@ locally mined blocks. If you want periodic mined-block saves, set
 Cloud summary output can be tuned with:
 
 - `UNCCOIN_CLOUD_NATIVE_SUMMARY_BLOCKS`: print every N accepted burst blocks, default `10`
-  for direct node launches and `100` for `scripts/cloud_automine.sh`.
+  for direct node launches and `250` for `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_NATIVE_SUMMARY_SECONDS`: if set, also print after this many seconds even
   if the block interval has not been reached.
 - `UNCCOIN_CLOUD_NATIVE_FULL_VERIFY_BLOCKS`: run full chain verification every N fast-path
   reward blocks before broadcast, default `100` for direct node launches and `0` for
   `scripts/cloud_automine.sh`. Set `0` to disable the periodic guard.
 - `UNCCOIN_CLOUD_NATIVE_BATCH_BLOCKS`: deliver mined blocks from the native worker to
-  Python in batches, default `1` for direct node launches and `50` for
+  Python in batches, default `1` for direct node launches and `250` for
   `scripts/cloud_automine.sh`.
 - `UNCCOIN_CLOUD_NATIVE_TRUST_WORKER_HASH`: skip the duplicate Python block-hash
   recompute while the cloud-native miner is offline, default `0` for direct node

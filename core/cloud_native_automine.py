@@ -1,4 +1,5 @@
 import json
+import os
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -6,11 +7,18 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from config import DEFAULT_GPU_BATCH_SIZE
+from core import cuda_pow
 from core.block import Block
 from core.block import ProofOfWorkCancelled
 from core.block import PrefixProofOfWorkResult
 from core.block import mine_serialized_block_prefix_resident
 from core.hashing import sha256_block_hash
+from core.mining_backend import MINING_BACKEND_GPU
+from core.mining_backend import normalize_mining_backend
+from core.mining_scheduler import get_gpu_device_ids
+from core.mining_tuning import get_tuned_gpu_chunk_multiplier
+from core.mining_tuning import get_tuned_gpu_launch_config
 from core.serialization import serialize_transaction
 from core.transaction import TRANSACTION_KIND_TRANSFER
 from core.transaction import TRANSACTION_VERSION_TYPED
@@ -84,6 +92,15 @@ class CloudNativeAutomineEvent:
     block: Block | None = None
     blocks: tuple[Block, ...] = ()
     error: BaseException | None = None
+
+
+@dataclass(frozen=True)
+class CloudNativeMiningPlan:
+    gpu_enabled: bool = False
+    device_id: int | None = None
+    dispatch_batch_size: int = DEFAULT_GPU_BATCH_SIZE
+    nonces_per_thread: int = 0
+    threads_per_group: int = 0
 
 
 @dataclass(frozen=True)
@@ -212,6 +229,7 @@ def mine_reward_only_blocks(
         miner_address=config.miner_address,
         description=config.description,
     )
+    mining_plan = _build_cloud_native_mining_plan(config.mining_backend)
 
     try:
         while not stop_event.is_set():
@@ -221,11 +239,12 @@ def mine_reward_only_blocks(
                 previous_hash=previous_hash,
                 timestamp=timestamp,
             )
-            proof_of_work_result = mine_serialized_block_prefix_resident(
+            proof_of_work_result = _mine_serialized_block_prefix_with_plan(
                 prefix,
                 config.difficulty_schedule.difficulty_bits_for_height(block_height),
                 start_nonce=start_nonce,
                 mining_backend=config.mining_backend,
+                mining_plan=mining_plan,
             )
             reward_transaction = block_template.reward_transaction(timestamp)
             block = hydrate_mined_reward_only_block(
@@ -237,6 +256,13 @@ def mine_reward_only_blocks(
             )
 
             if stop_event.is_set():
+                mined_batch.append(block)
+                _put_block_batch(
+                    output_queue,
+                    mined_batch,
+                    stop_event,
+                    allow_after_stop=True,
+                )
                 return
             mined_batch.append(block)
 
@@ -248,7 +274,12 @@ def mine_reward_only_blocks(
                 mined_batch = []
     except ProofOfWorkCancelled:
         if mined_batch:
-            _put_block_batch(output_queue, mined_batch, stop_event)
+            _put_block_batch(
+                output_queue,
+                mined_batch,
+                stop_event,
+                allow_after_stop=True,
+            )
         if not stop_event.is_set():
             _put_event(
                 output_queue,
@@ -269,6 +300,8 @@ def _put_block_batch(
     output_queue: "queue.Queue[CloudNativeAutomineEvent]",
     blocks: list[Block],
     stop_event: threading.Event,
+    *,
+    allow_after_stop: bool = False,
 ) -> bool:
     if not blocks:
         return True
@@ -276,14 +309,28 @@ def _put_block_batch(
         event = CloudNativeAutomineEvent(kind="block", block=blocks[0])
     else:
         event = CloudNativeAutomineEvent(kind="blocks", blocks=tuple(blocks))
-    return _put_event(output_queue, event, stop_event)
+    return _put_event(
+        output_queue,
+        event,
+        stop_event,
+        allow_after_stop=allow_after_stop,
+    )
 
 
 def _put_event(
     output_queue: "queue.Queue[CloudNativeAutomineEvent]",
     event: CloudNativeAutomineEvent,
     stop_event: threading.Event,
+    *,
+    allow_after_stop: bool = False,
 ) -> bool:
+    if allow_after_stop and stop_event.is_set():
+        try:
+            output_queue.put_nowait(event)
+            return True
+        except queue.Full:
+            return False
+
     while not stop_event.is_set():
         try:
             output_queue.put(event, timeout=0.1)
@@ -291,3 +338,100 @@ def _put_event(
         except queue.Full:
             continue
     return False
+
+
+def _build_cloud_native_mining_plan(mining_backend: str) -> CloudNativeMiningPlan:
+    if normalize_mining_backend(mining_backend) != MINING_BACKEND_GPU:
+        return CloudNativeMiningPlan()
+
+    if not cuda_pow.gpu_available():
+        return CloudNativeMiningPlan()
+
+    gpu_device_ids = get_gpu_device_ids()
+    if not gpu_device_ids:
+        return CloudNativeMiningPlan()
+
+    device_id = gpu_device_ids[0]
+    gpu_batch_size = _read_positive_int_env(
+        "UNCCOIN_GPU_BATCH_SIZE",
+        DEFAULT_GPU_BATCH_SIZE,
+    )
+    default_nonces_per_thread, default_threads_per_group = (
+        get_tuned_gpu_launch_config(
+            gpu_batch_size,
+            device_id,
+        )
+    )
+    nonces_per_thread = _read_positive_int_env(
+        "UNCCOIN_GPU_NONCES_PER_THREAD",
+        default_nonces_per_thread,
+    )
+    threads_per_group = _read_positive_int_env(
+        "UNCCOIN_GPU_THREADS_PER_GROUP",
+        default_threads_per_group,
+    )
+    chunk_multiplier = _read_positive_int_env(
+        "UNCCOIN_GPU_CHUNK_MULTIPLIER",
+        get_tuned_gpu_chunk_multiplier(
+            gpu_batch_size,
+            nonces_per_thread,
+            threads_per_group,
+            device_id,
+        ),
+    )
+    return CloudNativeMiningPlan(
+        gpu_enabled=True,
+        device_id=device_id,
+        dispatch_batch_size=gpu_batch_size * chunk_multiplier,
+        nonces_per_thread=nonces_per_thread,
+        threads_per_group=threads_per_group,
+    )
+
+
+def _mine_serialized_block_prefix_with_plan(
+    prefix: str,
+    difficulty_bits: int,
+    *,
+    start_nonce: int,
+    mining_backend: str,
+    mining_plan: CloudNativeMiningPlan,
+) -> PrefixProofOfWorkResult:
+    if mining_plan.gpu_enabled:
+        nonce, block_hash, cancelled = cuda_pow.mine_pow_gpu(
+            prefix,
+            difficulty_bits,
+            start_nonce,
+            0,
+            mining_plan.dispatch_batch_size,
+            1,
+            mining_plan.nonces_per_thread,
+            mining_plan.threads_per_group,
+            mining_plan.device_id,
+        )
+        if cancelled:
+            raise ProofOfWorkCancelled("Proof of work was cancelled.")
+        return PrefixProofOfWorkResult(
+            nonce=nonce,
+            block_hash=block_hash,
+            attempts=max(0, nonce - start_nonce) + 1,
+        )
+
+    return mine_serialized_block_prefix_resident(
+        prefix,
+        difficulty_bits,
+        start_nonce=start_nonce,
+        mining_backend=mining_backend,
+    )
+
+
+def _read_positive_int_env(name: str, default: int) -> int:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
